@@ -88,6 +88,18 @@ async def score_lead(
     except ValueError:
         pass
 
+    # Review count signal — high review count = active, established business
+    review_count = lead.get("google_review_count") or 0
+    if review_count >= 100:
+        fit_score = min(fit_score + 4, 40)
+    elif review_count >= 50:
+        fit_score = min(fit_score + 3, 40)
+    elif review_count >= 20:
+        fit_score = min(fit_score + 2, 40)
+    elif review_count >= 5:
+        fit_score = min(fit_score + 1, 40)
+    # 0 reviews = no boost (not penalized, but no signal of activity)
+
     result["fit_score"] = fit_score
 
     # -----------------------------------------------------------------------

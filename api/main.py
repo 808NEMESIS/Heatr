@@ -69,15 +69,19 @@ app.add_middleware(
 # Supabase client
 # =============================================================================
 
-_supabase: Client | None = None
+_supabase = None
 
 
-def get_supabase() -> Client:
+def get_supabase():
+    """Return a Supabase client wrapped with Heatr table prefix.
+
+    All .table("leads") calls automatically become .table("heatr_leads")
+    when HEATR_TABLE_PREFIX is set (default: "heatr_").
+    """
     global _supabase
     if _supabase is None:
-        url = os.environ["SUPABASE_URL"]
-        key = os.environ["SUPABASE_KEY"]
-        _supabase = create_client(url, key)
+        from config.database import get_heatr_supabase
+        _supabase = get_heatr_supabase()
     return _supabase
 
 
