@@ -343,7 +343,8 @@ function truncate(text, maxLen = 80) {
  */
 const SECTOR_LABELS = {
   makelaars: 'Makelaars',
-  behandelaren: 'Behandelaren & Coaches',
+  alternatieve_geneeskunde: 'Alternatieve Geneeskunde',
+  cosmetische_behandelaars: 'Cosmetische Behandelaars',
   bouwbedrijven: 'Bouwbedrijven',
 };
 

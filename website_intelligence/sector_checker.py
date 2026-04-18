@@ -138,5 +138,17 @@ def _check_criterion(
     if key == "has_instagram_feed_embed":
         return "instagram.com" in html_lower
 
+    # --- Cosmetische behandelaars ---
+    if key == "has_treatment_menu":
+        return any(w in html_lower for w in ["behandelmenu", "prijslijst", "tarieven", "behandelingen en prijzen", "onze behandelingen"])
+    if key == "has_certifications_visible":
+        return any(w in html_lower for w in ["gecertificeerd", "big-register", "certificaat", "diploma", "geregistreerd", "erkend"])
+    if key == "has_treatwell_profile":
+        return "treatwell" in html_lower
+
+    # --- Alternatieve geneeskunde ---
+    if key == "has_klachtenregeling":
+        return any(w in html_lower for w in ["klachtenregeling", "beroepsvereniging", "rbcz", "tcz", "nvao", "geschillencommissie"])
+
     logger.debug("Unknown sector check key: %s", key)
     return False

@@ -32,14 +32,22 @@ _INDUSTRY_LIST_MAKELAARS = [
     "Verhuurmakelaar", "Vastgoedadvies",
 ]
 
-_INDUSTRY_LIST_BEHANDELAREN = [
-    "Coaching praktijk", "Loopbaancoach", "Executive coach",
-    "Burnout coach", "Life coach", "Relatietherapeut",
-    "Fysiotherapie", "Osteopathie", "Diëtistenpraktijk",
-    "Personal training", "Yoga studio", "Mindfulness trainer",
-    "Gestalttherapie", "ACT therapeut", "Massagetherapie",
-    "Pilates studio", "Holistische praktijk",
-    "Overige coaching / therapie",
+_INDUSTRY_LIST_ALTERNATIEVE_GENEESKUNDE = [
+    "Acupunctuurpraktijk", "Osteopathiepraktijk", "Homeopathiepraktijk",
+    "Chiropractiepraktijk", "Natuurgeneeskunde", "Haptotherapie",
+    "Reflexologie", "Reiki / energetische therapie",
+    "Manuele therapie", "Integratieve therapie",
+    "Kruidengeneeskunde", "Ayurveda", "Chinese geneeskunde",
+    "Holistische therapie", "Overige alternatieve geneeskunde",
+]
+
+_INDUSTRY_LIST_COSMETISCHE_BEHANDELAARS = [
+    "Cosmetische kliniek", "Botox/filler kliniek", "Laserkliniek",
+    "Huidtherapiepraktijk", "Permanente make-up studio",
+    "Microblading studio", "Schoonheidssalon premium",
+    "Gezichtsbehandeling specialist", "Ontharing/waxing salon",
+    "Anti-aging kliniek", "Medisch esthetiek",
+    "Wimperextensions studio", "Overige cosmetische behandelingen",
 ]
 
 _INDUSTRY_LIST_BOUWBEDRIJVEN = [
@@ -54,7 +62,8 @@ _INDUSTRY_LIST_BOUWBEDRIJVEN = [
 
 _INDUSTRY_LISTS: dict[str, list[str]] = {
     "makelaars": _INDUSTRY_LIST_MAKELAARS,
-    "behandelaren": _INDUSTRY_LIST_BEHANDELAREN,
+    "alternatieve_geneeskunde": _INDUSTRY_LIST_ALTERNATIEVE_GENEESKUNDE,
+    "cosmetische_behandelaars": _INDUSTRY_LIST_COSMETISCHE_BEHANDELAARS,
     "bouwbedrijven": _INDUSTRY_LIST_BOUWBEDRIJVEN,
 }
 
@@ -375,7 +384,8 @@ async def generate_personalized_opener(
 
     tone_guidance = {
         "makelaars": "zakelijk, lokaal betrokken, persoonlijk — geen harde verkoop",
-        "behandelaren": "warm, persoonlijk, professioneel — geen harde verkoop",
+        "alternatieve_geneeskunde": "warm, persoonlijk, respectvol — geen harde verkoop",
+        "cosmetische_behandelaars": "stijlvol, resultaatgericht, professioneel — geen harde verkoop",
         "bouwbedrijven": "direct, vakkundig, no-nonsense — geen harde verkoop",
     }.get(sector_key, "professioneel en persoonlijk")
 

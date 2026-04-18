@@ -101,58 +101,70 @@ SECTORS: dict[str, dict] = {
     },
 
     # =========================================================================
-    # Sector: Behandelaren / Coaches
-    # Practitioners, coaches, therapists in private practice.
-    # EXPLICITLY NOT medical specialists — no GGZ institutions, hospitals, psychiatrists.
-    # Decision-maker: the owner = the practitioner. Usually 1-5 person practice.
+    # Sector: Alternatieve Geneeskunde
+    # Alternative medicine practitioners in private practice.
+    # Owner = practitioner = decision-maker. Usually 1-3 person practices.
+    # NOT medical specialists, hospitals, GGZ, or regular physiotherapy chains.
     # =========================================================================
-    "behandelaren": {
-        "name": "Behandelaren & Coaches",
+    "alternatieve_geneeskunde": {
+        "name": "Alternatieve Geneeskunde",
         "description": (
-            "Coaches (loopbaan, burnout, life, executive), therapeuten (relatie, "
-            "mindfulness, gestalt), fysiotherapeuten, osteopaten, diëtisten, "
-            "personal trainers, yogadocenten. Privépraktijken, geen instellingen."
+            "Acupuncturisten, osteopaten, homeopaten, chiropractoren, "
+            "natuurgeneeskundigen, haptotherapeuten, reflexologen, "
+            "energetisch therapeuten, manueel therapeuten, "
+            "integratief therapeuten. Privépraktijken, geen instellingen."
         ),
         "countries": ["NL", "BE"],
 
         "search_queries": [
-            "coach {city}",
-            "loopbaancoach {city}",
-            "burnout coach {city}",
-            "personal coach {city}",
-            "relatietherapeut {city}",
-            "fysiotherapeut {city}",
+            # Per micro-niche zoeken voor gerichte resultaten
+            "acupuncturist {city}",
+            "acupunctuur praktijk {city}",
             "osteopaat {city}",
-            "diëtist {city}",
-            "mindfulness trainer {city}",
-            "executive coach {city}",
-            "life coach {city}",
-            "yoga studio {city}",
-            "personal trainer {city}",
+            "osteopathie praktijk {city}",
+            "homeopaat {city}",
+            "homeopathie praktijk {city}",
+            "chiropractor {city}",
+            "chiropractie {city}",
+            "natuurgeneeskundige {city}",
+            "haptotherapeut {city}",
+            "reflexoloog {city}",
+            "voetreflexologie {city}",
+            "energetisch therapeut {city}",
+            "reiki therapeut {city}",
+            "manueel therapeut {city}",
+            "integratief therapeut {city}",
+            "holistische therapeut {city}",
+            "kruidengeneeskunde {city}",
+            "ayurvedisch therapeut {city}",
         ],
 
         "directory_urls": [
-            "https://www.coachfinder.nl/coaches/{city}",
             "https://www.natuurlijkbeter.nl/therapeuten/{city}",
-            "https://www.therapiepsycholoog.nl/zoeken/psycholoog/{city}",
+            "https://www.zorgkaart.nl/therapeut/{city}",
+            "https://www.holistische-therapeuten.nl/{city}",
         ],
 
-        "kvk_sbi_codes": ["85.59", "86.90", "86.21", "86.22", "86.23", "93.13"],
+        "kvk_sbi_codes": ["86.90", "86.21", "86.22", "86.23"],
 
         "icp_keywords": [
-            "coaching", "coach", "therapie", "therapeut", "praktijk",
-            "sessie", "traject", "intake", "persoonlijke ontwikkeling",
-            "mindfulness", "burnout", "loopbaan", "relatie", "gestalt",
-            "ACT", "EMDR", "fysiotherapie", "osteopathie", "diëtist",
-            "personal training", "yoga", "pilates", "hollistisch",
-            "gratis kennismaking", "kennismakingsgesprek",
+            "acupunctuur", "acupuncturist", "osteopathie", "osteopaat",
+            "homeopathie", "homeopaat", "chiropractie", "chiropractor",
+            "natuurgeneeskunde", "haptonomie", "haptotherapie",
+            "reflexologie", "voetreflex", "reiki", "energetisch",
+            "manuele therapie", "manueel therapeut", "healing",
+            "integratieve geneeskunde", "holistisch", "kruidengeneeskunde",
+            "ayurveda", "chinese geneeskunde", "TCM", "praktijk",
+            "behandeling", "sessie", "vergoeding", "zorgverzekering",
+            "natuurgeneeskundig", "complementair",
         ],
 
         "exclude_keywords": [
             "ziekenhuis", "ggz instelling", "ggz", "medisch specialist",
             "psychiater", "klinisch psycholoog", "revalidatiecentrum",
             "verpleeghuis", "thuiszorg", "apotheek", "huisartsenpraktijk",
-            "keten", "franchise landelijk",
+            "keten", "franchise", "fysiotherapie keten",
+            "sportschool", "fitness",
         ],
 
         "scoring_boosts": {
@@ -162,36 +174,141 @@ SECTORS: dict[str, dict] = {
             "kvk_sbi_match": 5,
             "google_rating_above_4_5": 3,
             "has_online_booking": 4,
+            "has_insurance_info": 3,
         },
 
         "sector_website_expectations": {
             "must_have": [
                 {"key": "has_qualifications_visible", "points": 5,
-                 "label": "Kwalificaties / opleiding / certificering zichtbaar"},
+                 "label": "Kwalificaties / opleiding / registratie zichtbaar (RBCZ, NVAO, etc.)"},
                 {"key": "has_services_explained", "points": 5,
-                 "label": "Diensten / behandelaanbod duidelijk beschreven"},
+                 "label": "Behandelaanbod duidelijk beschreven met werkwijze"},
                 {"key": "has_intake_or_booking", "points": 5,
-                 "label": "Intakeformulier of boekingsmogelijkheid"},
+                 "label": "Intakeformulier of online afspraak mogelijkheid"},
             ],
             "should_have": [
                 {"key": "has_gratis_kennismaking_cta", "bonus_points": 3,
                  "label": "Gratis kennismakingsgesprek CTA"},
                 {"key": "has_personal_photo", "bonus_points": 3,
-                 "label": "Persoonlijke foto van behandelaar/coach"},
+                 "label": "Persoonlijke foto van behandelaar"},
             ],
             "nice_to_have": [
-                {"key": "has_insurance_info", "label": "Vergoedingsinformatie / tarieven"},
-                {"key": "has_client_reviews", "label": "Klantreviews / testimonials"},
+                {"key": "has_insurance_info", "label": "Vergoedingsinformatie zorgverzekering"},
+                {"key": "has_client_reviews", "label": "Klantreviews / ervaringsverhalen"},
                 {"key": "has_blog_or_articles", "label": "Kennisartikelen of blog"},
-                {"key": "has_video", "label": "Introductievideo"},
+                {"key": "has_video", "label": "Introductievideo behandelaar"},
+                {"key": "has_klachtenregeling", "label": "Klachtenregeling / beroepsvereniging"},
             ],
         },
 
         "decision_maker_titles": [
             "eigenaar", "oprichter", "praktijkhouder", "behandelaar",
-            "coach", "therapeut", "trainer",
+            "therapeut", "acupuncturist", "osteopaat", "homeopaat",
+            "chiropractor", "natuurgeneeskundige",
         ],
-        "typical_company_size": "1-5",
+        "typical_company_size": "1-3",
+    },
+
+    # =========================================================================
+    # Sector: Cosmetische Behandelaars
+    # Aesthetic treatment providers — from premium clinics to solo practitioners.
+    # Instagram presence is a strong qualifying signal.
+    # Decision-maker: owner or clinic manager. Usually 1-10 persons.
+    # =========================================================================
+    "cosmetische_behandelaars": {
+        "name": "Cosmetische Behandelaars",
+        "description": (
+            "Botox/filler klinieken, laserklinieken, huidtherapeuten, "
+            "permanente make-up studios, premium schoonheidssalons, "
+            "microblading specialisten, ontharing/waxing studios, "
+            "gezichtsbehandeling specialisten."
+        ),
+        "countries": ["NL", "BE"],
+
+        "search_queries": [
+            "botox kliniek {city}",
+            "filler kliniek {city}",
+            "laserkliniek {city}",
+            "huidtherapeut {city}",
+            "huidtherapie praktijk {city}",
+            "permanente make-up {city}",
+            "microblading {city}",
+            "schoonheidssalon {city}",
+            "schoonheidsspecialiste {city}",
+            "gezichtsbehandeling {city}",
+            "cosmetische kliniek {city}",
+            "anti-aging behandeling {city}",
+            "ontharing laser {city}",
+            "waxing salon {city}",
+            "huidkliniek {city}",
+            "medisch esthetiek {city}",
+            "microneedling {city}",
+        ],
+
+        "directory_urls": [
+            "https://www.beautynetwerk.nl/klinieken/{city}",
+            "https://www.treatwell.nl/{city}/",
+            "https://www.beautysalon.nl/zoeken/{city}",
+        ],
+
+        "kvk_sbi_codes": ["86.21", "96.02", "96.01", "96.09"],
+
+        "icp_keywords": [
+            "botox", "filler", "hyaluronzuur", "laser", "huidtherapie",
+            "huidtherapeut", "schoonheidsbehandeling", "schoonheidssalon",
+            "anti-aging", "cosmetisch", "esthetiek", "kliniek",
+            "permanente make-up", "microblading", "ontharing",
+            "microneedling", "peeling", "gezichtsbehandeling",
+            "huidverjonging", "rejuvenation", "waxing", "epilatie",
+            "dermapen", "BB glow", "lash lift", "wimperextensions",
+            "medisch verantwoord", "behandelplan",
+        ],
+
+        "exclude_keywords": [
+            "ziekenhuis", "plastisch chirurg groot", "keten landelijk",
+            "drogisterij", "supermarkt", "apotheek keten",
+            "kapper", "barbershop", "nagelgroothandel",
+        ],
+
+        "scoring_boosts": {
+            "has_instagram": 5,
+            "has_before_after_gallery": 4,
+            "has_instagram_feed_embed": 3,
+            "has_online_booking": 4,
+            "kvk_sbi_match": 5,
+            "google_rating_above_4_5": 3,
+            "has_treatwell_profile": 3,
+        },
+
+        "sector_website_expectations": {
+            "must_have": [
+                {"key": "has_treatment_menu", "points": 5,
+                 "label": "Behandelmenu met prijzen of prijsindicatie"},
+                {"key": "has_certifications_visible", "points": 5,
+                 "label": "Certificaten / BIG-registratie / medische kwalificaties"},
+                {"key": "has_social_proof", "points": 5,
+                 "label": "Reviews, testimonials of voor/na foto's"},
+            ],
+            "should_have": [
+                {"key": "has_before_after_gallery", "bonus_points": 3,
+                 "label": "Voor/na galerij met resultaten"},
+                {"key": "has_instagram_feed_embed", "bonus_points": 3,
+                 "label": "Geëmbedde Instagram feed of link"},
+            ],
+            "nice_to_have": [
+                {"key": "has_team_page", "label": "Teamspagina met behandelaars"},
+                {"key": "has_video", "label": "Behandelingsvideo of clinic tour"},
+                {"key": "has_faq", "label": "FAQ over behandelingen"},
+                {"key": "has_online_booking", "label": "Online booking systeem"},
+            ],
+        },
+
+        "decision_maker_titles": [
+            "eigenaar", "oprichter", "kliniekhoudster", "kliniekhouder",
+            "directeur", "salon eigenaar", "schoonheidsspecialiste",
+            "huidtherapeut", "behandelaar",
+        ],
+        "typical_company_size": "1-10",
     },
 
     # =========================================================================
