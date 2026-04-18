@@ -96,7 +96,9 @@ async def cached_claude_call(
 
     response = await client.messages.create(**kwargs)
     text = response.content[0].text if response.content else ""
-    tokens_used = (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0)
+    input_tokens = response.usage.input_tokens or 0
+    output_tokens = response.usage.output_tokens or 0
+    tokens_used = input_tokens + output_tokens
 
     # --- Store in cache ---
     if supabase_client and text:
@@ -118,8 +120,14 @@ async def cached_claude_call(
     # --- Log cost ---
     if supabase_client:
         cost = tokens_used * COST_PER_1M_TOKENS.get(model, 0)
-        await _log_api_cost("claude_haiku" if "haiku" in model else "claude_sonnet",
-                            tokens_used, cost, supabase_client=supabase_client)
+        await _log_api_cost(
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_eur=cost,
+            context=cache_key_suffix[:50] if cache_key_suffix else "",
+            supabase_client=supabase_client,
+        )
 
     return text
 
@@ -137,32 +145,52 @@ async def invalidate_cache_for_domain(domain: str, supabase_client) -> int:
 
 
 async def _log_api_cost(
-    service: str,
-    units: int,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
     cost_eur: float,
+    context: str = "",
     workspace_id: str = "aerys",
+    lead_id: str | None = None,
     supabase_client=None,
 ) -> None:
-    """Log an external API cost entry."""
+    """Log a Claude API cost entry to heatr_api_cost_log."""
     if not supabase_client:
         return
     try:
-        supabase_client.table("api_cost_log").insert({
+        row: dict = {
             "workspace_id": workspace_id,
-            "service": service,
-            "units": units,
+            "model": model,
+            "prompt_tokens": input_tokens,
+            "response_tokens": output_tokens,
             "cost_eur": round(cost_eur, 6),
-        }).execute()
+            "context": context,
+        }
+        if lead_id:
+            row["lead_id"] = lead_id
+        supabase_client.table("api_cost_log").insert(row).execute()
     except Exception as e:
-        logger.debug("Cost log failed: %s", e)
+        logger.warning("Cost log failed (context=%s): %s", context, e)
 
 
 async def log_api_cost(
-    service: str,
-    units: int,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
     cost_eur: float,
     workspace_id: str,
     supabase_client,
+    context: str = "",
+    lead_id: str | None = None,
 ) -> None:
     """Public interface for cost logging from other modules."""
-    await _log_api_cost(service, units, cost_eur, workspace_id, supabase_client)
+    await _log_api_cost(
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_eur=cost_eur,
+        context=context,
+        workspace_id=workspace_id,
+        lead_id=lead_id,
+        supabase_client=supabase_client,
+    )
