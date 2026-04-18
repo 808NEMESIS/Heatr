@@ -106,72 +106,114 @@ async def test_google_maps_scrape(sector: str, city: str, max_results: int = 5):
 
         for i, link in enumerate(result_links[:max_results]):
             try:
+                # Get the place URL from the link before clicking
+                place_href = await link.get_attribute("href") or ""
+
                 # Click the result to open details panel
                 await link.click()
-                await asyncio.sleep(2)
+                await asyncio.sleep(2.5)
 
-                # Extract data from the details panel
+                # Wait for detail panel to load — the name heading appears
+                try:
+                    await page.wait_for_selector('h1.DUwDvf, h1.fontHeadlineLarge', timeout=5000)
+                except Exception:
+                    pass
+
                 company: dict = {"source": "google_maps", "city": city}
 
-                # Name
-                for sel in ['h1.DUwDvf', 'h1[class*="header"]', 'div.qBF1Pd', 'h1']:
-                    el = await page.query_selector(sel)
-                    if el:
-                        company["company_name"] = (await el.inner_text()).strip()
-                        break
+                # Store Google Maps URL
+                current_url = page.url
+                if "/maps/place/" in current_url:
+                    company["google_maps_url"] = current_url
+                elif "/maps/place/" in place_href:
+                    company["google_maps_url"] = place_href
 
-                if not company.get("company_name"):
+                # --- Extract from detail panel using page.evaluate for accuracy ---
+                # This runs JS in the browser to extract data from the active panel,
+                # avoiding stale selectors that match the wrong element.
+                detail_data = await page.evaluate("""() => {
+                    const result = {};
+
+                    // Name — the h1 in the detail panel
+                    const nameEl = document.querySelector('h1.DUwDvf') || document.querySelector('h1.fontHeadlineLarge');
+                    result.name = nameEl ? nameEl.innerText.trim() : '';
+
+                    // Rating — look for the star rating text near the name
+                    const ratingEl = document.querySelector('div.F7nice span[aria-hidden="true"]')
+                                  || document.querySelector('span.ceNzKf');
+                    if (ratingEl) {
+                        const ratingText = ratingEl.innerText.replace(',', '.');
+                        const match = ratingText.match(/(\\d\\.?\\d?)/);
+                        result.rating = match ? parseFloat(match[1]) : null;
+                    }
+
+                    // Review count — the "(123)" text next to rating
+                    const reviewEl = document.querySelector('div.F7nice span[aria-label*="review"]')
+                                  || document.querySelector('span.UY7F9');
+                    if (reviewEl) {
+                        const text = reviewEl.innerText.replace(/[^\\d]/g, '');
+                        result.reviews = text ? parseInt(text) : 0;
+                    } else {
+                        // Fallback: look for aria-label with review count
+                        const ratingBtn = document.querySelector('button[aria-label*="review"]');
+                        if (ratingBtn) {
+                            const match = ratingBtn.getAttribute('aria-label').match(/(\\d[\\d,.]*)/);
+                            result.reviews = match ? parseInt(match[1].replace(/[.,]/g, '')) : 0;
+                        }
+                    }
+
+                    // Category
+                    const catEl = document.querySelector('button[jsaction*="category"]')
+                               || document.querySelector('span.DkEaL');
+                    result.category = catEl ? catEl.innerText.trim() : '';
+
+                    // Website
+                    const websiteEl = document.querySelector('a[data-item-id="authority"]');
+                    result.website = websiteEl ? websiteEl.getAttribute('href') : '';
+
+                    // Phone
+                    const phoneEl = document.querySelector('button[data-item-id*="phone"] div.Io6YTe')
+                                 || document.querySelector('button[data-tooltip*="telefoon"] div.Io6YTe')
+                                 || document.querySelector('button[aria-label*="Telefoon"] div.Io6YTe');
+                    result.phone = phoneEl ? phoneEl.innerText.trim() : '';
+
+                    // Address
+                    const addrEl = document.querySelector('button[data-item-id="address"] div.Io6YTe')
+                                || document.querySelector('button[aria-label*="Adres"] div.Io6YTe');
+                    result.address = addrEl ? addrEl.innerText.trim() : '';
+
+                    return result;
+                }""")
+
+                # Map JS results to company dict
+                company["company_name"] = detail_data.get("name") or ""
+                if not company["company_name"]:
                     continue
 
-                # Rating
-                for sel in ['span.ceNzKf', 'span[role="img"][aria-label*="ster"]', 'span.MW4etd']:
-                    el = await page.query_selector(sel)
-                    if el:
-                        text = await el.get_attribute("aria-label") or await el.inner_text()
-                        rating_match = re.search(r"(\d[,.]?\d?)", text.replace(",", "."))
-                        if rating_match:
-                            company["google_rating"] = float(rating_match.group(1))
-                        break
+                if detail_data.get("rating"):
+                    company["google_rating"] = detail_data["rating"]
+                if detail_data.get("reviews"):
+                    company["google_review_count"] = detail_data["reviews"]
+                if detail_data.get("category"):
+                    company["google_category"] = detail_data["category"]
+                if detail_data.get("phone"):
+                    company["phone"] = detail_data["phone"]
+                if detail_data.get("address"):
+                    company["address"] = detail_data["address"]
 
-                # Review count
-                for sel in ['span.UY7F9', 'button[aria-label*="review"]', 'span[aria-label*="review"]']:
-                    el = await page.query_selector(sel)
-                    if el:
-                        text = await el.inner_text()
-                        count_match = re.search(r"(\d[\d.]*)", text.replace(".", ""))
-                        if count_match:
-                            company["google_review_count"] = int(count_match.group(1))
-                        break
-
-                # Category
-                for sel in ['button[jsaction*="category"]', 'span.DkEaL']:
-                    el = await page.query_selector(sel)
-                    if el:
-                        company["google_category"] = (await el.inner_text()).strip()
-                        break
-
-                # Website
-                website_el = await page.query_selector('a[data-item-id="authority"]')
-                if website_el:
-                    href = await website_el.get_attribute("href") or ""
-                    if href:
-                        from urllib.parse import urlparse
-                        parsed = urlparse(href)
+                # Parse domain from website URL
+                website_url = detail_data.get("website") or ""
+                if website_url:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(website_url)
+                    if parsed.netloc:
                         company["domain"] = parsed.netloc.replace("www.", "")
 
-                # Phone
-                phone_el = await page.query_selector('button[data-item-id*="phone"] div.Io6YTe')
-                if phone_el:
-                    company["phone"] = (await phone_el.inner_text()).strip()
-
-                # Address
-                addr_el = await page.query_selector('button[data-item-id="address"] div.Io6YTe')
-                if addr_el:
-                    company["address"] = (await addr_el.inner_text()).strip()
-
-                if company.get("company_name"):
-                    companies.append(company)
-                    print(f"  {i+1}. {company.get('company_name')} | {company.get('domain', 'no website')} | ★{company.get('google_rating', '?')} ({company.get('google_review_count', 0)} reviews)")
+                companies.append(company)
+                print(f"  {i+1}. {company.get('company_name')}")
+                print(f"     Domain: {company.get('domain', '—')} | ★{company.get('google_rating', '?')} ({company.get('google_review_count', 0)} reviews)")
+                print(f"     Cat: {company.get('google_category', '—')} | Tel: {company.get('phone', '—')}")
+                print(f"     Adres: {company.get('address', '—')}")
 
                 # Go back to results list
                 await page.go_back()
