@@ -1,0 +1,31 @@
+{
+  "name": "09 — Recontact Suggestions",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1" }]
+        }
+      },
+      "name": "Every Monday at 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HEATR_BASE_URL }}/leads/recontact-ready?limit=20",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "name": "Get recontact-ready leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    }
+  ],
+  "connections": {
+    "Every Monday at 09:00": { "main": [[{ "node": "Get recontact-ready leads", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "_comment": "Returns leads whose RECONTACT_COOLDOWN_DAYS (default 90) has passed. Extend with a Slack/email node to notify the operator."
+}

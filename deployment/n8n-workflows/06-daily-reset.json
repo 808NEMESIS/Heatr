@@ -1,0 +1,31 @@
+{
+  "name": "06 — Daily Rate Limit Reset",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 0 * * *" }]
+        }
+      },
+      "name": "Daily at midnight",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HEATR_BASE_URL }}/health",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "name": "Ping API (confirms it's alive for new day)",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    }
+  ],
+  "connections": {
+    "Daily at midnight": { "main": [[{ "node": "Ping API (confirms it's alive for new day)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "_comment": "SendingGuard daily counters reset by checking sent_at >= today in SQL — no explicit reset call needed."
+}

@@ -1,0 +1,51 @@
+{
+  "name": "01 — Sequence Due Sends",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 15 }] }
+      },
+      "name": "Every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HEATR_BASE_URL }}/sequences/due-sends",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "name": "GET due sends",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "due_sends",
+        "options": {}
+      },
+      "name": "Split records",
+      "type": "n8n-nodes-base.splitOut",
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HEATR_BASE_URL }}/sequences/process-send/{{ $json.id }}",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "name": "Process send",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 min": { "main": [[{ "node": "GET due sends", "type": "main", "index": 0 }]] },
+    "GET due sends": { "main": [[{ "node": "Split records", "type": "main", "index": 0 }]] },
+    "Split records": { "main": [[{ "node": "Process send", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

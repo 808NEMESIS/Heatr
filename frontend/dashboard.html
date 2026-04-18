@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <div class="main-wrap">
+      <header class="page-header">
+        <div class="page-header-left">
+          <h1 class="page-title">Dashboard</h1>
+          <span class="page-subtitle">Overzicht van je pipeline</span>
+        </div>
+        <div class="page-header-right">
+          <a href="/search.html" class="btn btn-primary">+ Nieuwe zoekopdracht</a>
+        </div>
+      </header>
+
+      <main class="page-content">
+        <!-- Pipeline stats -->
+        <section class="section-grid" id="stats-grid">
+          <div class="stat-card skeleton-card">
+            <div class="skeleton skeleton-text" style="width:50%"></div>
+            <div class="skeleton skeleton-text" style="width:30%;height:32px;margin-top:8px"></div>
+          </div>
+          <div class="stat-card skeleton-card">
+            <div class="skeleton skeleton-text" style="width:50%"></div>
+            <div class="skeleton skeleton-text" style="width:30%;height:32px;margin-top:8px"></div>
+          </div>
+          <div class="stat-card skeleton-card">
+            <div class="skeleton skeleton-text" style="width:50%"></div>
+            <div class="skeleton skeleton-text" style="width:30%;height:32px;margin-top:8px"></div>
+          </div>
+          <div class="stat-card skeleton-card">
+            <div class="skeleton skeleton-text" style="width:50%"></div>
+            <div class="skeleton skeleton-text" style="width:30%;height:32px;margin-top:8px"></div>
+          </div>
+        </section>
+
+        <!-- CRM stats bar -->
+        <section class="crm-stats-bar" id="crm-stats-bar">
+          <div class="crm-stat-card">
+            <div class="crm-stat-label">Open taken vandaag</div>
+            <div class="crm-stat-value" id="cs-tasks">—</div>
+          </div>
+          <div class="crm-stat-card">
+            <div class="crm-stat-label">Leads in pipeline</div>
+            <div class="crm-stat-value" id="cs-pipeline">—</div>
+          </div>
+          <div class="crm-stat-card">
+            <div class="crm-stat-label">Gewonnen deze maand</div>
+            <div class="crm-stat-value" id="cs-won">—</div>
+          </div>
+          <div class="crm-stat-card">
+            <div class="crm-stat-label">Gem. time to close</div>
+            <div class="crm-stat-value" id="cs-ttc">—</div>
+          </div>
+        </section>
+
+        <div class="dashboard-two-col">
+          <!-- Website kansen widget -->
+          <section>
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Website Kansen</h2>
+                <a href="/website-kansen.html" class="btn btn-ghost btn-sm">Alle kansen →</a>
+              </div>
+              <div id="opportunities-list">
+                <div class="skeleton skeleton-text" style="margin-bottom:12px"></div>
+                <div class="skeleton skeleton-text" style="margin-bottom:12px"></div>
+                <div class="skeleton skeleton-text"></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Right column -->
+          <div>
+            <!-- Inbox status -->
+            <div class="card" style="margin-bottom:20px">
+              <div class="card-header">
+                <h2 class="card-title">Warmr Inboxes</h2>
+                <a href="/campaigns.html" class="btn btn-ghost btn-sm">Campagnes →</a>
+              </div>
+              <div id="inbox-status">
+                <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+                <div class="skeleton skeleton-text"></div>
+              </div>
+            </div>
+
+            <!-- Recent activity -->
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Recente activiteit</h2>
+              </div>
+              <div id="activity-feed">
+                <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+                <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+                <div class="skeleton skeleton-text"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+  <script>
+    (async () => {
+      await requireAuth();
+      renderSidebar('dashboard');
+      await Promise.all([loadStats(), loadOpportunities(), loadInboxStatus(), loadActivity(), loadDashCrmStats()]);
+    })();
+
+    async function loadStats() {
+      const grid = document.getElementById('stats-grid');
+      try {
+        const data = await apiCall('/analytics/pipeline');
+        grid.innerHTML = [
+          { label: 'Leads ontdekt', value: data.total_leads ?? '—', icon: '◉', color: 'var(--accent)' },
+          { label: 'Geverifieerde emails', value: data.verified_emails ?? '—', icon: '✓', color: 'var(--green)' },
+          { label: 'Website kansen', value: data.website_opportunities ?? '—', icon: '◎', color: 'var(--orange)' },
+          { label: 'Verstuurd naar Warmr', value: data.sent_to_warmr ?? '—', icon: '▷', color: 'var(--accent-light)' },
+        ].map(s => `
+          <div class="stat-card">
+            <div class="stat-label">${s.label}</div>
+            <div class="stat-value" style="color:${s.color}">${s.value}</div>
+          </div>
+        `).join('');
+      } catch (e) {
+        grid.innerHTML = `<div class="error-banner" style="grid-column:1/-1">Statistieken konden niet worden geladen: ${e.message}</div>`;
+      }
+    }
+
+    async function loadOpportunities() {
+      const el = document.getElementById('opportunities-list');
+      try {
+        const data = await apiCall('/website-opportunities?limit=5&priority=urgent,high');
+        const items = data.opportunities || data || [];
+        if (!items.length) {
+          el.innerHTML = '<div class="empty-state-sm">Geen urgente kansen gevonden.</div>';
+          return;
+        }
+        el.innerHTML = items.map(o => `
+          <a href="/lead-detail.html?id=${o.lead_id}" class="opportunity-row">
+            <div class="opportunity-row-left">
+              <div class="opportunity-name">${o.company_name || '—'}</div>
+              <div class="opportunity-meta">${o.city || ''} · ${sectorLabel(o.sector)}</div>
+            </div>
+            <div class="opportunity-row-right">
+              ${formatScore(o.website_score)}
+              <span class="priority-dot priority-${o.priority || 'medium'}"></span>
+            </div>
+          </a>
+        `).join('');
+      } catch (e) {
+        el.innerHTML = `<div class="error-banner">Kansen konden niet worden geladen.</div>`;
+      }
+    }
+
+    async function loadInboxStatus() {
+      const el = document.getElementById('inbox-status');
+      try {
+        const data = await apiCall('/warmr/inboxes');
+        const inboxes = data.inboxes || data || [];
+        if (!inboxes.length) {
+          el.innerHTML = '<div class="empty-state-sm">Geen inboxes gevonden.</div>';
+          return;
+        }
+        const ready = inboxes.filter(i => i.status === 'ready' || i.daily_remaining > 0);
+        el.innerHTML = `
+          <div class="inbox-summary">
+            <span class="stat-value-sm">${ready.length}</span>
+            <span class="text-muted"> van ${inboxes.length} inboxes beschikbaar</span>
+          </div>
+          ${ready.slice(0, 3).map(i => `
+            <div class="inbox-row">
+              <span class="inbox-email">${i.email || i.id}</span>
+              <span class="badge badge-green">${i.daily_remaining ?? '?'} resterend</span>
+            </div>
+          `).join('')}
+        `;
+      } catch (e) {
+        el.innerHTML = `<div class="text-muted" style="font-size:13px">Warmr inboxes niet beschikbaar.</div>`;
+      }
+    }
+
+    async function loadDashCrmStats() {
+      try {
+        const data = await apiCall('/crm/stats');
+        const tasks = data.open_tasks_today ?? 0;
+        document.getElementById('cs-tasks').textContent = tasks;
+        if (tasks > 0) document.getElementById('cs-tasks').classList.add('alert');
+        document.getElementById('cs-pipeline').textContent = data.pipeline_count ?? '—';
+        document.getElementById('cs-won').textContent = data.won_this_month != null
+          ? `€ ${Math.round(data.won_this_month).toLocaleString('nl-NL')}` : '—';
+        document.getElementById('cs-ttc').textContent = data.avg_days_to_close != null
+          ? `${data.avg_days_to_close} dagen` : '—';
+      } catch (_) {}
+    }
+
+    async function loadActivity() {
+      const el = document.getElementById('activity-feed');
+      try {
+        // Use leads endpoint sorted by created_at desc as activity proxy
+        const data = await apiCall('/leads?limit=5&sort=created_at_desc');
+        const leads = data.leads || data || [];
+        if (!leads.length) {
+          el.innerHTML = '<div class="empty-state-sm">Nog geen activiteit.</div>';
+          return;
+        }
+        el.innerHTML = leads.map(l => `
+          <div class="activity-item">
+            <div class="activity-dot"></div>
+            <div class="activity-content">
+              <span class="activity-name">${l.company_name || l.domain || '—'}</span>
+              <span class="activity-time">${formatRelativeTime(l.created_at)}</span>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        el.innerHTML = `<div class="text-muted" style="font-size:13px">Activiteit niet beschikbaar.</div>`;
+      }
+    }
+  </script>
+</body>
+</html>

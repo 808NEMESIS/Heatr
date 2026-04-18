@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — Leads</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <div class="main-wrap">
+      <header class="page-header">
+        <div class="page-header-left">
+          <h1 class="page-title">Leads</h1>
+          <span class="page-subtitle" id="leads-count">Laden…</span>
+        </div>
+        <div class="page-header-right">
+          <button class="btn btn-ghost btn-sm" onclick="exportSelected()" id="btn-export" style="display:none">Exporteren</button>
+          <button class="btn btn-primary btn-sm" onclick="enrichSelected()" id="btn-enrich" style="display:none">Enrichen</button>
+          <a href="/search.html" class="btn btn-primary">+ Zoeken</a>
+        </div>
+      </header>
+
+      <main class="page-content">
+        <!-- Filters -->
+        <div class="filter-bar">
+          <input class="form-input filter-search" id="filter-q" type="search" placeholder="Zoek op bedrijf, stad, domein…" oninput="debouncedLoad()" />
+
+          <select class="form-select" id="filter-sector" onchange="loadLeads()">
+            <option value="">Alle sectoren</option>
+            <option value="alternatieve_zorg">Alternatieve Zorg</option>
+            <option value="cosmetische_klinieken">Cosmetische Klinieken</option>
+          </select>
+
+          <select class="form-select" id="filter-email" onchange="loadLeads()">
+            <option value="">Alle emails</option>
+            <option value="verified">Geverifieerd</option>
+            <option value="catch_all">Catch-all</option>
+            <option value="not_found">Niet gevonden</option>
+            <option value="pending">Wachtend</option>
+          </select>
+
+          <select class="form-select" id="filter-score" onchange="loadLeads()">
+            <option value="">Alle scores</option>
+            <option value="70">Score ≥ 70</option>
+            <option value="50">Score ≥ 50</option>
+            <option value="30">Score ≥ 30</option>
+          </select>
+
+          <select class="form-select" id="filter-sort" onchange="loadLeads()">
+            <option value="score_desc">Score ↓</option>
+            <option value="created_at_desc">Nieuwste eerst</option>
+            <option value="company_name_asc">Naam A–Z</option>
+          </select>
+        </div>
+
+        <!-- Bulk action bar (appears when rows selected) -->
+        <div class="bulk-bar" id="bulk-bar" style="display:none">
+          <span id="bulk-count">0 geselecteerd</span>
+          <button class="btn btn-primary btn-sm" onclick="enrichSelected()">Enrichen</button>
+          <button class="btn btn-ghost btn-sm" onclick="pushToWarmr()">Naar Warmr</button>
+          <button class="btn btn-danger btn-sm" onclick="disqualifySelected()">Diskwalificeren</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearSelection()">Deselecteer</button>
+        </div>
+
+        <!-- Table -->
+        <div class="card table-card">
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width:36px"><input type="checkbox" id="select-all" onchange="toggleAll(this)" /></th>
+                  <th>Bedrijf</th>
+                  <th>Stad</th>
+                  <th>Sector</th>
+                  <th>Email</th>
+                  <th>Score</th>
+                  <th>Website</th>
+                  <th>Gevonden</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="leads-tbody">
+                <!-- skeleton -->
+                <tr><td colspan="9"><div class="skeleton skeleton-text" style="width:100%"></div></td></tr>
+                <tr><td colspan="9"><div class="skeleton skeleton-text" style="width:80%"></div></td></tr>
+                <tr><td colspan="9"><div class="skeleton skeleton-text" style="width:90%"></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination"></div>
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+  <script>
+    let _page = 1;
+    const PAGE_SIZE = 25;
+    let _selected = new Set();
+    let _totalCount = 0;
+
+    const debouncedLoad = debounce(() => { _page = 1; loadLeads(); }, 350);
+
+    (async () => {
+      await requireAuth();
+      renderSidebar('leads');
+      await loadLeads();
+    })();
+
+    function getFilters() {
+      return {
+        q: document.getElementById('filter-q').value.trim() || undefined,
+        sector: document.getElementById('filter-sector').value || undefined,
+        email_status: document.getElementById('filter-email').value || undefined,
+        min_score: document.getElementById('filter-score').value || undefined,
+        sort: document.getElementById('filter-sort').value || undefined,
+        limit: PAGE_SIZE,
+        offset: (_page - 1) * PAGE_SIZE,
+      };
+    }
+
+    async function loadLeads() {
+      const tbody = document.getElementById('leads-tbody');
+      tbody.innerHTML = createSkeletonLoader(6, 9);
+
+      try {
+        const filters = getFilters();
+        const qs = buildQuery(filters);
+        const data = await apiCall(`/leads${qs}`);
+        const leads = data.leads || data || [];
+        _totalCount = data.total ?? leads.length;
+
+        document.getElementById('leads-count').textContent = `${_totalCount} leads`;
+
+        if (!leads.length) {
+          tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-muted)">Geen leads gevonden voor deze filters.</td></tr>`;
+          renderPagination(0);
+          return;
+        }
+
+        tbody.innerHTML = leads.map(l => `
+          <tr class="lead-row ${_selected.has(l.id) ? 'row-selected' : ''}" data-id="${l.id}">
+            <td><input type="checkbox" class="row-check" ${_selected.has(l.id) ? 'checked' : ''} onchange="toggleRow(this, '${l.id}')" /></td>
+            <td>
+              <div class="lead-name">${l.company_name || '—'}</div>
+              <div class="lead-domain text-muted">${l.domain || ''}</div>
+            </td>
+            <td>${l.city || '—'}</td>
+            <td><span class="badge badge-neutral">${sectorLabel(l.sector)}</span></td>
+            <td>${emailStatusBadge(l.email_status)}</td>
+            <td>${formatScore(l.score)}</td>
+            <td>${formatScore(l.website_score)}</td>
+            <td class="text-muted" style="font-size:12px">${formatRelativeTime(l.created_at)}</td>
+            <td>
+              <a href="/lead-detail.html?id=${l.id}" class="btn btn-ghost btn-sm">Bekijken</a>
+            </td>
+          </tr>
+        `).join('');
+
+        renderPagination(_totalCount);
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="9"><div class="error-banner">Kon leads niet laden: ${e.message}</div></td></tr>`;
+      }
+    }
+
+    function renderPagination(total) {
+      const el = document.getElementById('pagination');
+      const pages = Math.ceil(total / PAGE_SIZE);
+      if (pages <= 1) { el.innerHTML = ''; return; }
+      let html = '';
+      if (_page > 1) html += `<button class="btn btn-ghost btn-sm" onclick="goPage(${_page - 1})">← Vorige</button>`;
+      html += `<span class="pagination-info">Pagina ${_page} van ${pages}</span>`;
+      if (_page < pages) html += `<button class="btn btn-ghost btn-sm" onclick="goPage(${_page + 1})">Volgende →</button>`;
+      el.innerHTML = html;
+    }
+
+    function goPage(p) { _page = p; loadLeads(); }
+
+    function toggleRow(cb, id) {
+      if (cb.checked) _selected.add(id);
+      else _selected.delete(id);
+      updateBulkBar();
+      const row = cb.closest('tr');
+      row.classList.toggle('row-selected', cb.checked);
+    }
+
+    function toggleAll(masterCb) {
+      document.querySelectorAll('.row-check').forEach(cb => {
+        cb.checked = masterCb.checked;
+        const id = cb.closest('tr').dataset.id;
+        if (masterCb.checked) _selected.add(id);
+        else _selected.delete(id);
+        cb.closest('tr').classList.toggle('row-selected', masterCb.checked);
+      });
+      updateBulkBar();
+    }
+
+    function clearSelection() {
+      _selected.clear();
+      document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+      document.querySelectorAll('.lead-row').forEach(r => r.classList.remove('row-selected'));
+      document.getElementById('select-all').checked = false;
+      updateBulkBar();
+    }
+
+    function updateBulkBar() {
+      const bar = document.getElementById('bulk-bar');
+      bar.style.display = _selected.size > 0 ? '' : 'none';
+      document.getElementById('bulk-count').textContent = `${_selected.size} geselecteerd`;
+    }
+
+    async function enrichSelected() {
+      if (!_selected.size) return;
+      try {
+        await apiCall('/leads/enrich', { method: 'POST', body: JSON.stringify({ lead_ids: [..._selected] }) });
+        showToast(`${_selected.size} leads in wachtrij voor enrichment.`, 'success');
+        clearSelection();
+      } catch (e) {
+        showToast(`Fout: ${e.message}`, 'error');
+      }
+    }
+
+    async function pushToWarmr() {
+      if (!_selected.size) return;
+      try {
+        const res = await apiCall('/leads/send-to-warmr', {
+          method: 'POST',
+          body: JSON.stringify({ lead_ids: [..._selected], dry_run: false }),
+        });
+        showToast(`${res.pushed ?? 0} leads verstuurd naar Warmr.`, 'success');
+        clearSelection();
+      } catch (e) {
+        showToast(`Warmr push mislukt: ${e.message}`, 'error');
+      }
+    }
+
+    async function disqualifySelected() {
+      if (!_selected.size) return;
+      const reason = prompt('Reden voor diskwalificatie?');
+      if (!reason) return;
+      try {
+        for (const id of _selected) {
+          await apiCall(`/leads/disqualify`, {
+            method: 'POST',
+            body: JSON.stringify({ lead_id: id, reason }),
+          });
+        }
+        showToast(`${_selected.size} leads gediskwalificeerd.`, 'success');
+        clearSelection();
+        loadLeads();
+      } catch (e) {
+        showToast(`Fout: ${e.message}`, 'error');
+      }
+    }
+
+    function exportSelected() {
+      showToast('Export nog niet beschikbaar.', 'info');
+    }
+  </script>
+</body>
+</html>

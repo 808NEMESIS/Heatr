@@ -1,0 +1,31 @@
+# Environment & secrets
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Node (if frontend gets a build step)
+node_modules/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage

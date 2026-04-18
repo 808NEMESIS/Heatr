@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — Inloggen</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body class="auth-body">
+  <div class="auth-layout">
+    <!-- Left panel — brand -->
+    <div class="auth-brand">
+      <div class="auth-brand-inner">
+        <div class="auth-logo">H</div>
+        <h1 class="auth-tagline">Heatr</h1>
+        <p class="auth-sub">B2B outbound intelligentie voor de BENELUX markt. Ontdek leads, analyseer websites, stuur slimme campagnes.</p>
+        <div class="auth-features">
+          <div class="auth-feature">
+            <span class="auth-feature-icon">◎</span>
+            <span>Website intelligence in 5 lagen</span>
+          </div>
+          <div class="auth-feature">
+            <span class="auth-feature-icon">◉</span>
+            <span>AI-gedreven lead enrichment</span>
+          </div>
+          <div class="auth-feature">
+            <span class="auth-feature-icon">▷</span>
+            <span>Directe Warmr integratie</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right panel — form -->
+    <div class="auth-form-panel">
+      <div class="auth-form-wrap">
+        <div class="auth-tabs">
+          <button class="auth-tab active" id="tab-login" onclick="showTab('login')">Inloggen</button>
+          <button class="auth-tab" id="tab-signup" onclick="showTab('signup')">Account aanmaken</button>
+        </div>
+
+        <!-- Login form -->
+        <form id="form-login" class="auth-form" onsubmit="handleLogin(event)">
+          <div id="login-error" class="error-banner" style="display:none"></div>
+          <div class="form-group">
+            <label class="form-label" for="login-email">E-mailadres</label>
+            <input class="form-input" id="login-email" type="email" placeholder="jij@aerys.nl" required autocomplete="email" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="login-password">Wachtwoord</label>
+            <input class="form-input" id="login-password" type="password" placeholder="••••••••" required autocomplete="current-password" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-lg" id="btn-login" style="width:100%">
+            Inloggen
+          </button>
+        </form>
+
+        <!-- Signup form -->
+        <form id="form-signup" class="auth-form" style="display:none" onsubmit="handleSignup(event)">
+          <div id="signup-error" class="error-banner" style="display:none"></div>
+          <div id="signup-success" class="success-banner" style="display:none">
+            Check je inbox — we hebben een bevestigingslink gestuurd.
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="signup-email">E-mailadres</label>
+            <input class="form-input" id="signup-email" type="email" placeholder="jij@aerys.nl" required autocomplete="email" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="signup-password">Wachtwoord</label>
+            <input class="form-input" id="signup-password" type="password" placeholder="Minimaal 8 tekens" required autocomplete="new-password" minlength="8" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-lg" id="btn-signup" style="width:100%">
+            Account aanmaken
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+  <script>
+    // Redirect if already logged in
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) window.location.href = '/dashboard.html';
+    })();
+
+    function showTab(tab) {
+      document.getElementById('form-login').style.display = tab === 'login' ? '' : 'none';
+      document.getElementById('form-signup').style.display = tab === 'signup' ? '' : 'none';
+      document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+      document.getElementById('tab-signup').classList.toggle('active', tab === 'signup');
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('btn-login');
+      const errEl = document.getElementById('login-error');
+      btn.disabled = true;
+      btn.textContent = 'Bezig…';
+      errEl.style.display = 'none';
+
+      const email = document.getElementById('login-email').value.trim();
+      const password = document.getElementById('login-password').value;
+
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+      if (error) {
+        errEl.textContent = error.message === 'Invalid login credentials'
+          ? 'Onjuist e-mailadres of wachtwoord.'
+          : error.message;
+        errEl.style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Inloggen';
+        return;
+      }
+
+      sessionStorage.setItem('heatr_token', data.session.access_token);
+      window.location.href = '/dashboard.html';
+    }
+
+    async function handleSignup(e) {
+      e.preventDefault();
+      const btn = document.getElementById('btn-signup');
+      const errEl = document.getElementById('signup-error');
+      const succEl = document.getElementById('signup-success');
+      btn.disabled = true;
+      btn.textContent = 'Bezig…';
+      errEl.style.display = 'none';
+      succEl.style.display = 'none';
+
+      const email = document.getElementById('signup-email').value.trim();
+      const password = document.getElementById('signup-password').value;
+
+      const { error } = await supabase.auth.signUp({ email, password });
+
+      if (error) {
+        errEl.textContent = error.message;
+        errEl.style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Account aanmaken';
+        return;
+      }
+
+      succEl.style.display = '';
+      btn.disabled = false;
+      btn.textContent = 'Account aanmaken';
+    }
+  </script>
+</body>
+</html>

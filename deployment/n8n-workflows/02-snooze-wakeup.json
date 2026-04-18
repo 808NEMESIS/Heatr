@@ -1,0 +1,48 @@
+{
+  "name": "02 — Snooze Wake-up",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 15 }] }
+      },
+      "name": "Every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HEATR_BASE_URL }}/crm/wake-snoozed",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "name": "Wake snoozed leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 240]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HEATR_BASE_URL }}/tasks/reactivate-snoozed",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "name": "Reactivate snoozed tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 380]
+    }
+  ],
+  "connections": {
+    "Every 15 min": {
+      "main": [
+        [
+          { "node": "Wake snoozed leads", "type": "main", "index": 0 },
+          { "node": "Reactivate snoozed tasks", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

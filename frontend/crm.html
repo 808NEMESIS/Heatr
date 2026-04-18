@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <div class="main-wrap">
+    <!-- Page header -->
+    <header class="page-header">
+      <div class="page-header-left">
+        <h1 class="page-title" style="font-family:var(--font-display)">CRM</h1>
+        <div class="crm-header-stats" id="crm-header-stats">
+          <span class="crm-stat-item"><strong id="hs-tasks">—</strong> open taken</span>
+          <span class="crm-stat-item"><strong id="hs-pipeline">—</strong> in pipeline</span>
+          <span class="crm-stat-item"><strong id="hs-won">—</strong> gewonnen</span>
+        </div>
+      </div>
+      <div class="page-header-right">
+        <div class="view-switcher">
+          <button class="view-btn active" id="vbtn-focus"  onclick="switchView('focus')">Focus</button>
+          <button class="view-btn"        id="vbtn-kanban" onclick="switchView('kanban')">Kanban</button>
+          <button class="view-btn"        id="vbtn-lijst"  onclick="switchView('lijst')">Lijst</button>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="openAddTask()">+ Nieuwe taak</button>
+      </div>
+    </header>
+
+    <main class="page-content" id="crm-main">
+      <!-- views rendered here -->
+    </main>
+  </div>
+</div>
+
+<!-- =====================================================================
+     SLIDE PANEL
+     ===================================================================== -->
+<div class="panel-overlay" id="panel-overlay" onclick="closePanel()" style="display:none"></div>
+<div class="slide-panel-crm" id="slide-panel-crm">
+  <!-- Header -->
+  <div class="panel-header-crm" id="panel-header-crm">
+    <button class="panel-close-btn" onclick="closePanel()">×</button>
+    <div class="panel-company" id="panel-company">—</div>
+    <div class="panel-city" id="panel-city"></div>
+    <div class="panel-stage-pills" id="panel-stage-pills"></div>
+    <div class="panel-quick-stats" id="panel-quick-stats"></div>
+    <a class="panel-profile-link" id="panel-profile-link" href="#">Bekijk volledig profiel →</a>
+  </div>
+
+  <div class="panel-body-crm">
+    <!-- Tasks section -->
+    <div class="panel-tasks" id="panel-tasks-section">
+      <div class="panel-section-header">
+        <span class="panel-section-title">Taken</span>
+        <span class="panel-section-count" id="panel-task-count" style="display:none"></span>
+        <button class="panel-section-add" title="Taak toevoegen" onclick="togglePanelAddTask()">+</button>
+        <button class="panel-section-collapse" onclick="toggleTaskSection()">▾</button>
+      </div>
+      <div id="panel-add-task-wrap" style="display:none">
+        <div class="panel-add-task">
+          <input type="text" id="panel-task-input" placeholder="Nieuwe taak..." />
+          <div class="add-task-row">
+            <div class="task-type-btn-row" id="panel-type-row">
+              <button class="task-type-btn active" data-type="follow_up" onclick="selectTaskType(this)">📋 Follow up</button>
+              <button class="task-type-btn" data-type="call" onclick="selectTaskType(this)">📞 Bel</button>
+              <button class="task-type-btn" data-type="email" onclick="selectTaskType(this)">📧 Email</button>
+              <button class="task-type-btn" data-type="offerte" onclick="selectTaskType(this)">📄 Offerte</button>
+            </div>
+          </div>
+          <div class="add-task-row" style="margin-top:8px">
+            <div class="priority-selector">
+              <div class="priority-option active" data-priority="medium" style="background:var(--priority-medium)" onclick="selectPriority(this)"></div>
+              <div class="priority-option" data-priority="high" style="background:var(--priority-high)" onclick="selectPriority(this)"></div>
+              <div class="priority-option" data-priority="urgent" style="background:var(--priority-urgent)" onclick="selectPriority(this)"></div>
+              <div class="priority-option" data-priority="low" style="background:var(--priority-low)" onclick="selectPriority(this)"></div>
+            </div>
+            <div class="panel-task-quick-dates">
+              <button class="quick-date-btn" onclick="setPanelDue('today')">Vandaag</button>
+              <button class="quick-date-btn" onclick="setPanelDue('tomorrow')">Morgen</button>
+              <button class="quick-date-btn" onclick="setPanelDue('week')">Volgende week</button>
+            </div>
+            <input type="date" class="form-input" id="panel-due-input" style="width:130px;padding:4px 8px;font-size:12px" />
+          </div>
+          <div style="display:flex;gap:6px;margin-top:10px">
+            <button class="btn btn-primary btn-sm" onclick="savePanelTask()">Toevoegen</button>
+            <button class="btn btn-ghost btn-sm" onclick="togglePanelAddTask()">Annuleren</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel-task-list" id="panel-task-list"></div>
+    </div>
+
+    <!-- Timeline section -->
+    <div class="panel-timeline">
+      <div class="panel-section-header">
+        <span class="panel-section-title">Tijdlijn</span>
+      </div>
+      <!-- Quick log buttons -->
+      <div class="panel-quick-log">
+        <button class="log-btn" onclick="showLogForm('note')">📝 Notitie</button>
+        <button class="log-btn" onclick="showLogForm('call')">📞 Gesprek</button>
+        <button class="log-btn" onclick="showLogForm('meeting')">📅 Meeting</button>
+      </div>
+      <!-- Inline log form -->
+      <div id="panel-log-form" style="display:none"></div>
+      <!-- Timeline scroll -->
+      <div class="panel-timeline-scroll" id="panel-timeline-scroll"></div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="panel-footer-crm" id="panel-footer-crm">
+    <!-- Deal form (shown when stage = gewonnen) -->
+    <div id="deal-form-wrap" style="display:none">
+      <div class="deal-form" id="deal-form">
+        <div class="deal-form-row">
+          <div class="form-group" style="margin:0">
+            <label class="form-label" style="font-size:11px">Dienst type</label>
+            <select class="form-select" id="deal-type" style="font-size:12px">
+              <option value="website">Website</option>
+              <option value="conversie_optimalisatie">Conversie optimalisatie</option>
+              <option value="chatbot">Chatbot</option>
+              <option value="ai_audit">AI Audit</option>
+              <option value="combinatie">Combinatie</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label" style="font-size:11px">Deal waarde (€)</label>
+            <input class="form-input" type="number" id="deal-value" placeholder="2500" style="font-size:12px" />
+          </div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label" style="font-size:11px">Project startdatum</label>
+          <input class="form-input" type="date" id="deal-start" style="font-size:12px" />
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveDeal()" style="width:100%">Deal opslaan ⭐</button>
+      </div>
+    </div>
+    <!-- Snooze button -->
+    <div style="position:relative">
+      <button class="snooze-btn" onclick="toggleSnooze()">💤 Snooze lead</button>
+      <div class="snooze-popover" id="snooze-popover" style="display:none">
+        <h4>Snooze tot</h4>
+        <div class="snooze-options">
+          <button class="snooze-option" onclick="snoozeUntil('tomorrow')">Morgen</button>
+          <button class="snooze-option" onclick="snoozeUntil('nextweek')">Volgende week</button>
+          <button class="snooze-option" onclick="snoozeUntil('nextmonth')">Volgende maand</button>
+          <input type="date" class="form-input" id="snooze-date" style="font-size:12px;margin-top:6px" onchange="snoozeUntil('custom')" />
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="app.js"></script>
+<script>
+// =============================================================================
+// State
+// =============================================================================
+let _view = 'focus';
+let _activePanelLeadId = null;
+let _panelLead = null;
+let _panelTaskType = 'follow_up';
+let _panelPriority = 'medium';
+let _panelDueDate = null;
+let _dragLeadId = null;
+let _dragFromStage = null;
+let _activityRefreshTimer = null;
+let _taskSectionOpen = true;
+
+const STAGES_CRM = [
+  { key: 'ontdekt',            label: 'Ontdekt',            cls: 'stage-ontdekt' },
+  { key: 'review_verstuurd',   label: 'Review Verstuurd',   cls: 'stage-review-verstuurd' },
+  { key: 'gereageerd',         label: 'Gereageerd',         cls: 'stage-gereageerd' },
+  { key: 'gesprek_gepland',    label: 'Gesprek Gepland',    cls: 'stage-gesprek-gepland' },
+  { key: 'offerte_verstuurd',  label: 'Offerte Verstuurd',  cls: 'stage-offerte-verstuurd' },
+  { key: 'gewonnen',           label: 'Gewonnen ✓',         cls: 'stage-gewonnen', won: true },
+  { key: 'verloren',           label: 'Verloren ✗',         cls: 'stage-verloren' },
+  { key: 'later',              label: 'Later 💤',           cls: 'stage-later' },
+];
+
+const TASK_TYPE_ICONS = {
+  call: '📞', email: '📧', linkedin: '🔗', offerte: '📄',
+  follow_up: '📋', onboarding: '🚀', other: '⋯',
+};
+
+const TL_ICONS = {
+  discovered: '🔍', email_verified: '📧', website_analysed: '🌐',
+  email_sent: '📤', reply_received: '📥', stage_changed: '🔄',
+  task_created: '✓', task_completed: '✅', note_added: '📝',
+  call_logged: '📞', meeting_logged: '📅', review_email_sent: '🌐',
+  deal_won: '⭐', deal_lost: '✗', snoozed: '💤', warmr_event: '📡',
+};
+
+// =============================================================================
+// Init
+// =============================================================================
+(async () => {
+  await requireAuth();
+  renderSidebar('crm');
+  await Promise.all([loadCrmStats(), switchView('focus')]);
+  startActivityRefresh();
+})();
+
+async function loadCrmStats() {
+  try {
+    const data = await apiCall('/crm/stats');
+    const tasksEl = document.getElementById('hs-tasks');
+    const pipeEl  = document.getElementById('hs-pipeline');
+    const wonEl   = document.getElementById('hs-won');
+    if (tasksEl) { tasksEl.textContent = data.open_tasks_today ?? '—'; if ((data.open_tasks_today || 0) > 0) tasksEl.parentElement.classList.add('alert'); }
+    if (pipeEl)  pipeEl.textContent = data.pipeline_count ?? '—';
+    if (wonEl)   wonEl.textContent = data.won_this_month != null ? `€ ${Math.round(data.won_this_month).toLocaleString('nl-NL')}` : '—';
+  } catch (_) {}
+}
+
+// =============================================================================
+// View switcher
+// =============================================================================
+async function switchView(view) {
+  _view = view;
+  ['focus','kanban','lijst'].forEach(v => {
+    document.getElementById(`vbtn-${v}`).classList.toggle('active', v === view);
+  });
+  const main = document.getElementById('crm-main');
+  main.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Laden…</div>';
+  if (view === 'focus')  await renderFocusView();
+  if (view === 'kanban') await renderKanbanView();
+  if (view === 'lijst')  await renderLijstView();
+}
+
+// =============================================================================
+// FOCUS VIEW
+// =============================================================================
+async function renderFocusView() {
+  const main = document.getElementById('crm-main');
+  main.innerHTML = `
+    <div class="focus-layout">
+      <div id="focus-tasks-col">
+        <div class="task-section">
+          <div class="task-section-header urgent">
+            <span>Vandaag &amp; Achterstallig</span>
+            <span class="task-section-count" id="count-today">—</span>
+          </div>
+          <div id="tasks-today"></div>
+        </div>
+        <div class="add-task-wrap" id="add-task-inline-wrap">
+          <div class="add-task-trigger" id="add-task-trigger" onclick="expandAddTask()">
+            <span style="font-size:16px;color:var(--accent)">+</span>
+            <span>Nieuwe taak toevoegen…</span>
+          </div>
+          <div class="add-task-form" id="add-task-expanded" style="display:none">
+            <input class="add-task-input" id="inline-task-title" type="text" placeholder="Taakomschrijving…" onkeydown="if(event.key==='Enter')saveInlineTask()" />
+            <div class="add-task-row" style="margin-bottom:10px">
+              <select class="form-select" id="inline-lead-select" style="font-size:12px;flex:1">
+                <option value="">Selecteer lead…</option>
+              </select>
+            </div>
+            <div class="add-task-row">
+              ${Object.entries(TASK_TYPE_ICONS).map(([k,v]) => `<button class="task-type-btn ${k==='follow_up'?'active':''}" data-type="${k}" onclick="selectInlineType(this)">${v} ${k.replace('_',' ')}</button>`).join('')}
+            </div>
+            <div class="add-task-row" style="margin-top:8px">
+              <div class="priority-selector">
+                <div class="priority-option active" data-priority="medium" style="background:var(--priority-medium)" onclick="selectInlinePriority(this)"></div>
+                <div class="priority-option" data-priority="high"   style="background:var(--priority-high)"   onclick="selectInlinePriority(this)"></div>
+                <div class="priority-option" data-priority="urgent" style="background:var(--priority-urgent)" onclick="selectInlinePriority(this)"></div>
+                <div class="priority-option" data-priority="low"    style="background:var(--priority-low)"    onclick="selectInlinePriority(this)"></div>
+              </div>
+              <input type="date" class="form-input" id="inline-due" style="width:130px;padding:4px 8px;font-size:12px" />
+              <button class="btn btn-primary btn-sm" onclick="saveInlineTask()">Toevoegen</button>
+              <button class="btn btn-ghost btn-sm" onclick="collapseAddTask()">×</button>
+            </div>
+          </div>
+        </div>
+        <div class="task-section" style="margin-top:4px">
+          <div class="task-section-header" style="cursor:pointer" onclick="toggleWeekSection()">
+            <span>Deze week</span>
+            <span class="task-section-count" id="count-week">—</span>
+            <span class="task-section-toggle" id="week-toggle">▾</span>
+          </div>
+          <div id="tasks-week"></div>
+        </div>
+        <div class="task-section">
+          <div class="task-section-header" style="cursor:pointer" onclick="toggleLaterSection()">
+            <span>Later &amp; Gesnoozed</span>
+            <span class="task-section-count" id="count-later">—</span>
+            <span class="task-section-toggle" id="later-toggle">▾</span>
+          </div>
+          <div id="tasks-later" style="display:none"></div>
+        </div>
+      </div>
+      <div id="focus-activity-col">
+        <div class="activity-feed-wrap">
+          <div class="activity-feed-header">Recente activiteit</div>
+          <div class="activity-feed-scroll" id="activity-feed-scroll">
+            <div style="padding:20px;text-align:center;color:var(--text-muted)">Laden…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await Promise.all([loadFocusTasks(), loadActivityFeed(), loadInlineLeadSelect()]);
+}
+
+let _inlineTaskType = 'follow_up';
+let _inlineTaskPriority = 'medium';
+let _weekOpen = true;
+let _laterOpen = false;
+
+function expandAddTask() {
+  document.getElementById('add-task-trigger').style.display = 'none';
+  document.getElementById('add-task-expanded').style.display = '';
+  document.getElementById('inline-task-title').focus();
+}
+function collapseAddTask() {
+  document.getElementById('add-task-trigger').style.display = '';
+  document.getElementById('add-task-expanded').style.display = 'none';
+}
+function selectInlineType(btn) {
+  document.querySelectorAll('#add-task-expanded .task-type-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _inlineTaskType = btn.dataset.type;
+}
+function selectInlinePriority(el) {
+  document.querySelectorAll('#add-task-expanded .priority-option').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  _inlineTaskPriority = el.dataset.priority;
+}
+function toggleWeekSection() {
+  _weekOpen = !_weekOpen;
+  document.getElementById('tasks-week').style.display = _weekOpen ? '' : 'none';
+  document.getElementById('week-toggle').textContent = _weekOpen ? '▾' : '▸';
+}
+function toggleLaterSection() {
+  _laterOpen = !_laterOpen;
+  document.getElementById('tasks-later').style.display = _laterOpen ? '' : 'none';
+  document.getElementById('later-toggle').textContent = _laterOpen ? '▾' : '▸';
+}
+
+async function loadInlineLeadSelect() {
+  try {
+    const data = await apiCall('/leads?limit=100&sort=company_name_asc');
+    const leads = data.leads || data || [];
+    const sel = document.getElementById('inline-lead-select');
+    if (!sel) return;
+    leads.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.id;
+      opt.textContent = `${l.company_name || l.domain || '—'} (${l.city || '—'})`;
+      sel.appendChild(opt);
+    });
+  } catch (_) {}
+}
+
+async function saveInlineTask() {
+  const title = document.getElementById('inline-task-title').value.trim();
+  const leadId = document.getElementById('inline-lead-select').value;
+  if (!title || !leadId) { showToast('Vul taaktitel en lead in.', 'error'); return; }
+  const dueVal = document.getElementById('inline-due').value;
+  try {
+    await apiCall('/tasks', { method: 'POST', body: JSON.stringify({
+      lead_id: leadId, title, task_type: _inlineTaskType, priority: _inlineTaskPriority,
+      due_date: dueVal || null,
+    })});
+    showToast('Taak aangemaakt.', 'success');
+    document.getElementById('inline-task-title').value = '';
+    collapseAddTask();
+    await loadFocusTasks();
+    await loadCrmStats();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function loadFocusTasks() {
+  const now = new Date();
+  const todayEnd = new Date(now); todayEnd.setHours(23,59,59,999);
+  const weekEnd  = new Date(now); weekEnd.setDate(weekEnd.getDate() + 7);
+
+  try {
+    const data = await apiCall('/tasks?status=open');
+    const tasks = data.tasks || [];
+
+    const today = tasks.filter(t => t.due_date && new Date(t.due_date) <= todayEnd);
+    const week  = tasks.filter(t => t.due_date && new Date(t.due_date) > todayEnd && new Date(t.due_date) <= weekEnd);
+    const later = tasks.filter(t => !t.due_date || new Date(t.due_date) > weekEnd);
+
+    document.getElementById('count-today').textContent = today.length;
+    document.getElementById('count-week').textContent  = week.length;
+    document.getElementById('count-later').textContent = later.length;
+
+    renderTaskList('tasks-today', today, true);
+    renderTaskList('tasks-week', week, false);
+    renderTaskList('tasks-later', later, false);
+  } catch (e) {
+    ['tasks-today','tasks-week','tasks-later'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<div class="error-banner">${e.message}</div>`;
+    });
+  }
+}
+
+function renderTaskList(containerId, tasks, showOverdue) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!tasks.length) {
+    el.innerHTML = showOverdue
+      ? '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px">Niets te doen vandaag 🎉</div>'
+      : '<div style="padding:8px 0;color:var(--text-muted);font-size:12px">Geen taken.</div>';
+    return;
+  }
+  el.innerHTML = tasks.map(t => {
+    const lead = t.leads || {};
+    const due = t.due_date ? new Date(t.due_date) : null;
+    const overdue = due && due < new Date();
+    const dueStr = due ? due.toLocaleDateString('nl-NL', {day:'numeric',month:'short'}) + (due.getHours() ? ` ${due.toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'})}` : '') : '';
+    return `
+      <div class="task-item" id="task-${t.id}">
+        <div class="priority-dot ${t.priority || 'medium'}"></div>
+        <div class="task-type-icon">${TASK_TYPE_ICONS[t.task_type] || '📋'}</div>
+        <div class="task-content">
+          <div class="task-title">${t.title}</div>
+          ${lead.company_name ? `<a class="task-lead-link" onclick="openPanel('${t.lead_id}')">${lead.company_name}${lead.city ? ' · '+lead.city : ''}</a>` : ''}
+        </div>
+        ${dueStr ? `<div class="task-due ${overdue?'overdue':''}">${overdue?'⚠ ':''}${dueStr}</div>` : ''}
+        <div class="task-actions">
+          <button class="task-btn complete" title="Voltooien" onclick="completeTask('${t.id}')">✓</button>
+          <button class="task-btn" title="Snooze" onclick="snoozeTask('${t.id}')">💤</button>
+          <div class="task-kebab">
+            <button class="task-btn" onclick="toggleKebab('kebab-${t.id}')">⋯</button>
+            <div class="kebab-menu" id="kebab-${t.id}" style="display:none">
+              <div class="kebab-item" onclick="openPanel('${t.lead_id}');closeKebabs()">Lead bekijken</div>
+              <div class="kebab-item" onclick="postponeTask('${t.id}');closeKebabs()">Verplaats naar morgen</div>
+              <div class="kebab-item danger" onclick="cancelTask('${t.id}');closeKebabs()">Annuleer</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function toggleKebab(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const wasOpen = el.style.display !== 'none';
+  closeKebabs();
+  if (!wasOpen) el.style.display = '';
+}
+function closeKebabs() {
+  document.querySelectorAll('.kebab-menu').forEach(m => m.style.display = 'none');
+}
+document.addEventListener('click', (e) => { if (!e.target.closest('.task-kebab')) closeKebabs(); });
+
+async function completeTask(taskId) {
+  const el = document.getElementById(`task-${taskId}`);
+  if (el) el.classList.add('completing');
+  try {
+    await apiCall(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status: 'completed' }) });
+    setTimeout(() => { if (el) el.remove(); }, 600);
+    loadCrmStats();
+    if (_activePanelLeadId) loadPanelTasks(_activePanelLeadId);
+    if (_activePanelLeadId) loadPanelTimeline(_activePanelLeadId);
+  } catch (e) { showToast(e.message, 'error'); if (el) el.classList.remove('completing'); }
+}
+
+async function snoozeTask(taskId) {
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9,0,0,0);
+  try {
+    await apiCall(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status: 'snoozed', snoozed_until: tomorrow.toISOString() }) });
+    showToast('Taak gesnoozed tot morgen.', 'info');
+    loadFocusTasks();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function postponeTask(taskId) {
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+  try {
+    await apiCall(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ due_date: tomorrow.toISOString() }) });
+    showToast('Taak verplaatst naar morgen.', 'info');
+    loadFocusTasks();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function cancelTask(taskId) {
+  try {
+    await apiCall(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }) });
+    const el = document.getElementById(`task-${taskId}`);
+    if (el) el.remove();
+    loadCrmStats();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Activity feed
+let _activityEtag = null;
+async function loadActivityFeed() {
+  const el = document.getElementById('activity-feed-scroll');
+  if (!el) return;
+  try {
+    const data = await apiCall('/crm/timeline/recent');
+    const events = data.events || [];
+    if (!events.length) {
+      el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Nog geen activiteit.</div>';
+      return;
+    }
+    el.innerHTML = events.map(e => renderActivityItem(e)).join('');
+    _activityEtag = events[0]?.id;
+  } catch (_) {}
+}
+
+function renderActivityItem(e) {
+  const icon = TL_ICONS[e.event_type] || '•';
+  return `
+    <div class="timeline-event ${e.event_type === 'deal_won' ? 'deal-won-event' : ''}">
+      <div class="tl-dot ${e.event_type}"></div>
+      <div class="tl-content">
+        <div class="tl-title">
+          ${icon} ${e.title}
+          ${e.company_name ? `— <span class="tl-lead" onclick="openPanel('${e.lead_id}')">${e.company_name}</span>` : ''}
+        </div>
+        ${e.body ? `<div class="tl-body">${e.body}</div>` : ''}
+        <div class="tl-time">${formatRelativeTime(e.created_at)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function startActivityRefresh() {
+  if (_activityRefreshTimer) clearInterval(_activityRefreshTimer);
+  _activityRefreshTimer = setInterval(async () => {
+    if (_view !== 'focus') return;
+    try {
+      const data = await apiCall('/crm/timeline/recent');
+      const events = data.events || [];
+      if (!events.length || events[0]?.id === _activityEtag) return;
+      _activityEtag = events[0].id;
+      const el = document.getElementById('activity-feed-scroll');
+      if (!el) return;
+      const newEl = document.createElement('div');
+      newEl.innerHTML = renderActivityItem(events[0]);
+      const item = newEl.firstElementChild;
+      item.classList.add('new-event');
+      el.insertBefore(item, el.firstChild);
+    } catch (_) {}
+  }, 60000);
+}
+
+// =============================================================================
+// KANBAN VIEW
+// =============================================================================
+let _kanbanData = {};
+
+async function renderKanbanView() {
+  const main = document.getElementById('crm-main');
+  main.innerHTML = `<div class="kanban-scroll"><div class="kanban-board-crm" id="kanban-board-crm"></div></div>`;
+
+  try {
+    const data = await apiCall('/crm/pipeline');
+    _kanbanData = data.stages || {};
+
+    // Won column: load deal values
+    let wonValues = {};
+    if (_kanbanData['gewonnen']?.length) {
+      const leadIds = _kanbanData['gewonnen'].map(l => l.id);
+      try {
+        const dealData = await apiCall(`/crm/stats`);
+        wonValues._total = dealData.won_this_month || 0;
+      } catch (_) {}
+    }
+
+    const board = document.getElementById('kanban-board-crm');
+    board.innerHTML = STAGES_CRM.map(s => {
+      const leads = _kanbanData[s.key] || [];
+      return renderKanbanCol(s, leads, wonValues);
+    }).join('');
+
+    // Attach drag events to all cards
+    attachDragEvents();
+  } catch (e) {
+    document.getElementById('crm-main').innerHTML = `<div class="error-banner">Pipeline kon niet worden geladen: ${e.message}</div>`;
+  }
+}
+
+function renderKanbanCol(stage, leads, wonValues) {
+  const total = leads.reduce((acc, l) => acc + (l.deal_value || 0), 0);
+  return `
+    <div class="kanban-col-crm ${stage.won ? 'won-col' : ''}" id="kcol-${stage.key}"
+      ondragover="kanbanDragOver(event, '${stage.key}')"
+      ondragleave="kanbanDragLeave(event, '${stage.key}')"
+      ondrop="kanbanDrop(event, '${stage.key}')">
+      <div class="kanban-col-header-crm">
+        <div class="kanban-col-title-crm">
+          <span>${stage.label}</span>
+          <span class="kanban-col-count-crm" id="kcol-count-${stage.key}">${leads.length}</span>
+        </div>
+        ${stage.won && wonValues._total ? `<div class="kanban-col-value">€ ${Math.round(wonValues._total).toLocaleString('nl-NL')} deze maand</div>` : ''}
+      </div>
+      <div class="kanban-cards-crm" id="kcards-${stage.key}">
+        ${leads.length ? leads.map(l => renderKanbanCard(l, stage.key)).join('') : '<div class="kanban-empty-crm">Geen leads</div>'}
+      </div>
+    </div>
+  `;
+}
+
+function renderKanbanCard(lead, stage) {
+  const initials = (lead.company_name || '?').slice(0,2).toUpperCase();
+  const hasUrgentTask = (lead.open_tasks || 0) > 0;
+  return `
+    <div class="kanban-card-crm" id="kcard-${lead.id}"
+      draggable="true"
+      data-lead-id="${lead.id}"
+      data-stage="${stage}"
+      ondragstart="kanbanDragStart(event, '${lead.id}', '${stage}')">
+      <span class="drag-handle">⠿</span>
+      <div class="kanban-card-name">${lead.company_name || lead.domain || '—'}</div>
+      <div class="kanban-card-city">${lead.city || ''}</div>
+      <div class="kanban-card-badges">
+        <span class="badge badge-neutral" style="font-size:10px">${sectorLabel(lead.sector)}</span>
+        ${hasUrgentTask ? `<span class="badge badge-red" style="font-size:10px">⚡ ${lead.open_tasks} taak</span>` : ''}
+      </div>
+      <div class="kanban-card-footer">
+        <div style="display:flex;gap:4px">
+          ${formatScore(lead.score)}
+          ${lead.website_score != null ? `<span class="score-badge score-badge-${lead.website_score>=70?'green':lead.website_score>=45?'orange':'red'}" style="font-size:10px">W:${lead.website_score}</span>` : ''}
+        </div>
+        <div class="kanban-card-actions">
+          <button class="kcard-action" title="Taak toevoegen" onclick="event.stopPropagation();quickAddTask('${lead.id}','${(lead.company_name||'').replace(/'/g,"\\'")}')">✓</button>
+          <button class="kcard-action" title="Volgende stage" onclick="event.stopPropagation();moveToNextStage('${lead.id}','${stage}')">→</button>
+          <button class="kcard-action" title="Bekijk" onclick="event.stopPropagation();openPanel('${lead.id}')">⋯</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function attachDragEvents() {
+  // Drag events are inline; click on card body opens panel
+  document.querySelectorAll('.kanban-card-crm').forEach(card => {
+    card.addEventListener('click', function(e) {
+      if (e.target.closest('.kcard-action') || e.target.closest('.drag-handle')) return;
+      openPanel(this.dataset.leadId);
+    });
+  });
+}
+
+function kanbanDragStart(e, leadId, fromStage) {
+  _dragLeadId = leadId;
+  _dragFromStage = fromStage;
+  e.dataTransfer.effectAllowed = 'move';
+  document.getElementById(`kcard-${leadId}`)?.classList.add('dragging');
+}
+
+function kanbanDragOver(e, stage) {
+  e.preventDefault();
+  document.getElementById(`kcol-${stage}`)?.classList.add('drag-over');
+}
+
+function kanbanDragLeave(e, stage) {
+  document.getElementById(`kcol-${stage}`)?.classList.remove('drag-over');
+}
+
+async function kanbanDrop(e, toStage) {
+  e.preventDefault();
+  document.querySelectorAll('.kanban-col-crm').forEach(c => c.classList.remove('drag-over'));
+  const leadId = _dragLeadId;
+  const fromStage = _dragFromStage;
+  _dragLeadId = null; _dragFromStage = null;
+  if (!leadId || fromStage === toStage) return;
+
+  // Optimistic move
+  const card = document.getElementById(`kcard-${leadId}`);
+  if (card) {
+    card.classList.remove('dragging');
+    const targetCards = document.getElementById(`kcards-${toStage}`);
+    const fromCards = document.getElementById(`kcards-${fromStage}`);
+    if (targetCards) {
+      const empty = targetCards.querySelector('.kanban-empty-crm');
+      if (empty) empty.remove();
+      targetCards.insertBefore(card, targetCards.firstChild);
+      card.dataset.stage = toStage;
+    }
+    // Update from col count
+    const fromCount = document.getElementById(`kcol-count-${fromStage}`);
+    if (fromCount) fromCount.textContent = parseInt(fromCount.textContent || '0') - 1;
+    const toCount = document.getElementById(`kcol-count-${toStage}`);
+    if (toCount) toCount.textContent = parseInt(toCount.textContent || '0') + 1;
+    if (fromCards && !fromCards.querySelector('.kanban-card-crm')) {
+      fromCards.innerHTML = '<div class="kanban-empty-crm">Geen leads</div>';
+    }
+  }
+
+  try {
+    await apiCall(`/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify({ crm_stage: toStage }) });
+    // Flash stage badge
+    const stageBadges = document.querySelectorAll(`#kcard-${leadId} .stage-badge`);
+    stageBadges.forEach(b => { b.style.transition = 'background .3s'; });
+    showToast(`Lead verplaatst naar ${STAGES_CRM.find(s=>s.key===toStage)?.label || toStage}.`, 'success');
+  } catch (err) {
+    showToast(`Kon niet verplaatsen: ${err.message}`, 'error');
+    // Revert: reload board
+    renderKanbanView();
+  }
+}
+
+async function moveToNextStage(leadId, currentStage) {
+  const idx = STAGES_CRM.findIndex(s => s.key === currentStage);
+  const next = STAGES_CRM[Math.min(idx + 1, STAGES_CRM.length - 3)]; // don't auto-move to verloren/later
+  if (!next || next.key === currentStage) return;
+  try {
+    await apiCall(`/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify({ crm_stage: next.key }) });
+    showToast(`Verplaatst naar ${next.label}.`, 'success');
+    renderKanbanView();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function quickAddTask(leadId, companyName) {
+  const title = prompt(`Nieuwe taak voor ${companyName}:`);
+  if (!title) return;
+  try {
+    await apiCall('/tasks', { method: 'POST', body: JSON.stringify({ lead_id: leadId, title, priority: 'medium', task_type: 'follow_up' }) });
+    showToast('Taak aangemaakt.', 'success');
+    loadCrmStats();
+    // Refresh card task count
+    renderKanbanView();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// =============================================================================
+// LIJST VIEW
+// =============================================================================
+let _lijstPage = 1;
+const LIJST_PAGE_SIZE = 25;
+let _lijstSelected = new Set();
+
+async function renderLijstView() {
+  const main = document.getElementById('crm-main');
+  main.innerHTML = `
+    <div class="crm-list-filters">
+      <input class="form-input filter-search" id="lijst-q" type="search" placeholder="Zoek…" oninput="debouncedLijst()" style="width:220px" />
+      <select class="form-select" id="lijst-stage" onchange="loadLijst()">
+        <option value="">Alle stages</option>
+        ${STAGES_CRM.map(s => `<option value="${s.key}">${s.label}</option>`).join('')}
+      </select>
+      <select class="form-select" id="lijst-sector" onchange="loadLijst()">
+        <option value="">Alle sectoren</option>
+        <option value="alternatieve_zorg">Alternatieve Zorg</option>
+        <option value="cosmetische_klinieken">Cosmetische Klinieken</option>
+      </select>
+      <label class="toggle-filter" id="filter-tasks-toggle">
+        <input type="checkbox" onchange="loadLijst()" id="filter-has-tasks" /> Heeft open taken
+      </label>
+      <label class="toggle-filter" id="filter-snoozed-toggle">
+        <input type="checkbox" onchange="loadLijst()" id="filter-snoozed" /> Gesnoozed
+      </label>
+      <select class="form-select" id="lijst-sort" onchange="loadLijst()">
+        <option value="created_at_desc">Laatste activiteit</option>
+        <option value="score_desc">Score ↓</option>
+        <option value="company_name_asc">Naam A–Z</option>
+      </select>
+    </div>
+    <div class="bulk-bar" id="lijst-bulk-bar" style="display:none">
+      <span id="lijst-bulk-count">0 geselecteerd</span>
+      <select class="form-select" id="bulk-stage-sel" style="width:180px;font-size:12px">
+        ${STAGES_CRM.map(s=>`<option value="${s.key}">${s.label}</option>`).join('')}
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="bulkMoveStage()">Verplaats naar stage</button>
+      <button class="btn btn-ghost btn-sm" onclick="clearLijstSelection()">Deselecteer</button>
+    </div>
+    <div class="card table-card">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width:36px"><input type="checkbox" id="lijst-select-all" onchange="lijstToggleAll(this)" /></th>
+              <th>Bedrijf</th>
+              <th>Stage</th>
+              <th>Score</th>
+              <th>Open taken</th>
+              <th>Laatste activiteit</th>
+              <th>Deal waarde</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="lijst-tbody">
+            <tr><td colspan="8"><div class="skeleton skeleton-text"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pagination" id="lijst-pagination"></div>
+  `;
+  const debouncedLijst = debounce(() => { _lijstPage = 1; loadLijst(); }, 350);
+  window.debouncedLijst = debouncedLijst;
+  await loadLijst();
+}
+
+async function loadLijst() {
+  const tbody = document.getElementById('lijst-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = createSkeletonLoader(6, 8);
+
+  const q = document.getElementById('lijst-q')?.value.trim();
+  const stage = document.getElementById('lijst-stage')?.value;
+  const sector = document.getElementById('lijst-sector')?.value;
+  const sort = document.getElementById('lijst-sort')?.value || 'created_at_desc';
+
+  const params = {
+    q: q || undefined,
+    crm_stage: stage || undefined,
+    sector: sector || undefined,
+    sort,
+    limit: LIJST_PAGE_SIZE,
+    offset: (_lijstPage - 1) * LIJST_PAGE_SIZE,
+  };
+
+  try {
+    const data = await apiCall(`/leads${buildQuery(params)}`);
+    const leads = data.leads || data || [];
+    const total = data.total ?? leads.length;
+
+    if (!leads.length) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted)">Geen leads gevonden.</td></tr>`;
+      renderLijstPagination(0);
+      return;
+    }
+
+    // Get task counts
+    let taskCountMap = {};
+    try {
+      const taskData = await apiCall('/tasks?status=open');
+      (taskData.tasks || []).forEach(t => { taskCountMap[t.lead_id] = (taskCountMap[t.lead_id] || 0) + 1; });
+    } catch (_) {}
+
+    tbody.innerHTML = leads.map(l => {
+      const stage = STAGES_CRM.find(s => s.key === l.crm_stage) || STAGES_CRM[0];
+      const openTasks = taskCountMap[l.id] || 0;
+      return `
+        <tr class="lead-row ${_lijstSelected.has(l.id) ? 'row-selected' : ''}" data-id="${l.id}">
+          <td><input type="checkbox" class="row-check" ${_lijstSelected.has(l.id)?'checked':''} onchange="lijstToggleRow(this,'${l.id}')" /></td>
+          <td>
+            <div class="lead-name">${l.company_name || '—'}</div>
+            <div class="lead-domain text-muted">${l.city || ''} · <span class="badge badge-neutral" style="font-size:10px">${sectorLabel(l.sector)}</span></div>
+          </td>
+          <td><span class="stage-badge ${stage.cls}">${stage.label}</span></td>
+          <td>${formatScore(l.score)}</td>
+          <td>${openTasks > 0 ? `<span class="open-tasks-badge">${openTasks}</span>` : '<span class="text-muted">—</span>'}</td>
+          <td class="text-muted" style="font-size:12px">${formatRelativeTime(l.updated_at || l.created_at)}</td>
+          <td class="deal-value-cell">—</td>
+          <td>
+            <button class="btn btn-ghost btn-sm" onclick="openPanel('${l.id}')">Bekijk</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    renderLijstPagination(total);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="error-banner">${e.message}</div></td></tr>`;
+  }
+}
+
+function renderLijstPagination(total) {
+  const el = document.getElementById('lijst-pagination');
+  if (!el) return;
+  const pages = Math.ceil(total / LIJST_PAGE_SIZE);
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  let html = '';
+  if (_lijstPage > 1) html += `<button class="btn btn-ghost btn-sm" onclick="_lijstPage--;loadLijst()">← Vorige</button>`;
+  html += `<span class="pagination-info">Pagina ${_lijstPage} van ${pages}</span>`;
+  if (_lijstPage < pages) html += `<button class="btn btn-ghost btn-sm" onclick="_lijstPage++;loadLijst()">Volgende →</button>`;
+  el.innerHTML = html;
+}
+
+function lijstToggleRow(cb, id) {
+  if (cb.checked) _lijstSelected.add(id); else _lijstSelected.delete(id);
+  cb.closest('tr').classList.toggle('row-selected', cb.checked);
+  updateLijstBulk();
+}
+function lijstToggleAll(master) {
+  document.querySelectorAll('.row-check').forEach(cb => {
+    cb.checked = master.checked;
+    const id = cb.closest('tr').dataset.id;
+    if (master.checked) _lijstSelected.add(id); else _lijstSelected.delete(id);
+    cb.closest('tr').classList.toggle('row-selected', master.checked);
+  });
+  updateLijstBulk();
+}
+function clearLijstSelection() {
+  _lijstSelected.clear();
+  document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+  document.querySelectorAll('.lead-row').forEach(r => r.classList.remove('row-selected'));
+  document.getElementById('lijst-select-all').checked = false;
+  updateLijstBulk();
+}
+function updateLijstBulk() {
+  const bar = document.getElementById('lijst-bulk-bar');
+  if (!bar) return;
+  bar.style.display = _lijstSelected.size > 0 ? '' : 'none';
+  const el = document.getElementById('lijst-bulk-count');
+  if (el) el.textContent = `${_lijstSelected.size} geselecteerd`;
+}
+async function bulkMoveStage() {
+  const stage = document.getElementById('bulk-stage-sel')?.value;
+  if (!stage || !_lijstSelected.size) return;
+  try {
+    for (const id of _lijstSelected) {
+      await apiCall(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify({ crm_stage: stage }) });
+    }
+    showToast(`${_lijstSelected.size} leads verplaatst.`, 'success');
+    clearLijstSelection();
+    loadLijst();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// =============================================================================
+// SLIDE PANEL
+// =============================================================================
+async function openPanel(leadId) {
+  _activePanelLeadId = leadId;
+  document.getElementById('panel-overlay').style.display = '';
+  const panel = document.getElementById('slide-panel-crm');
+  panel.style.display = 'flex';
+  requestAnimationFrame(() => panel.classList.add('panel-open'));
+
+  // Reset
+  document.getElementById('panel-company').textContent = 'Laden…';
+  document.getElementById('panel-city').textContent = '';
+  document.getElementById('panel-quick-stats').innerHTML = '';
+  document.getElementById('panel-stage-pills').innerHTML = '';
+  document.getElementById('panel-task-list').innerHTML = '';
+  document.getElementById('panel-timeline-scroll').innerHTML = '';
+  document.getElementById('deal-form-wrap').style.display = 'none';
+  document.getElementById('panel-log-form').style.display = 'none';
+
+  try {
+    _panelLead = await apiCall(`/leads/${leadId}`);
+    renderPanelHeader();
+    await Promise.all([loadPanelTasks(leadId), loadPanelTimeline(leadId)]);
+  } catch (e) {
+    document.getElementById('panel-company').textContent = 'Fout bij laden';
+    showToast(e.message, 'error');
+  }
+}
+
+function renderPanelHeader() {
+  const l = _panelLead;
+  document.getElementById('panel-company').textContent = l.company_name || l.domain || '—';
+  document.getElementById('panel-city').textContent = [l.city, sectorLabel(l.sector)].filter(Boolean).join(' · ');
+  document.getElementById('panel-profile-link').href = `/lead-detail.html?id=${l.id}`;
+
+  document.getElementById('panel-quick-stats').innerHTML = `
+    <div class="panel-stat"><span class="panel-stat-label">Score</span>${formatScore(l.score)}</div>
+    <div class="panel-stat"><span class="panel-stat-label">Website</span>${formatScore(l.website_score)}</div>
+    <div class="panel-stat"><span class="panel-stat-label">ICP</span><span class="score-badge ${(l.icp_match||0)>=.7?'score-badge-green':(l.icp_match||0)>=.4?'score-badge-orange':'score-badge-red'}">${l.icp_match?Math.round(l.icp_match*100)+'%':'—'}</span></div>
+  `;
+
+  const currentStage = l.crm_stage || 'ontdekt';
+  document.getElementById('panel-stage-pills').innerHTML = STAGES_CRM.map(s => `
+    <button class="panel-stage-pill ${s.key === currentStage ? 'active' : ''}"
+      onclick="setPanelStage('${s.key}')">${s.label}</button>
+  `).join('');
+
+  // Show deal form if stage is gewonnen
+  document.getElementById('deal-form-wrap').style.display = currentStage === 'gewonnen' ? '' : 'none';
+}
+
+async function setPanelStage(stage) {
+  if (!_activePanelLeadId) return;
+  try {
+    await apiCall(`/leads/${_activePanelLeadId}`, { method: 'PATCH', body: JSON.stringify({ crm_stage: stage }) });
+    _panelLead.crm_stage = stage;
+    renderPanelHeader();
+    // Flash active pill
+    showToast(`Stage: ${STAGES_CRM.find(s=>s.key===stage)?.label || stage}`, 'success');
+    // Refresh kanban/lijst if visible
+    if (_view === 'kanban') renderKanbanView();
+    if (_view === 'lijst') loadLijst();
+    loadCrmStats();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function loadPanelTasks(leadId) {
+  const listEl = document.getElementById('panel-task-list');
+  try {
+    const data = await apiCall(`/tasks?lead_id=${leadId}&status=open`);
+    const tasks = data.tasks || [];
+    const countEl = document.getElementById('panel-task-count');
+    if (tasks.length > 0) {
+      countEl.textContent = tasks.length;
+      countEl.style.display = '';
+    } else {
+      countEl.style.display = 'none';
+    }
+    listEl.innerHTML = tasks.length ? tasks.map(t => {
+      const due = t.due_date ? new Date(t.due_date) : null;
+      const overdue = due && due < new Date();
+      const dueStr = due ? due.toLocaleDateString('nl-NL', {day:'numeric',month:'short'}) : '';
+      return `
+        <div class="panel-task-item" id="ptask-${t.id}">
+          <div class="priority-dot ${t.priority || 'medium'}"></div>
+          <span class="panel-task-title">${TASK_TYPE_ICONS[t.task_type]||'📋'} ${t.title}</span>
+          ${dueStr ? `<span class="panel-task-due ${overdue?'overdue':''}">${dueStr}</span>` : ''}
+          <button class="task-btn complete" onclick="completePanelTask('${t.id}')" style="width:24px;height:24px;font-size:11px">✓</button>
+          <button class="task-btn" onclick="snoozeTask('${t.id}')" style="width:24px;height:24px;font-size:11px">💤</button>
+        </div>
+      `;
+    }).join('') : '<div style="padding:8px 0;font-size:12px;color:var(--text-muted)">Geen open taken.</div>';
+  } catch (_) {}
+}
+
+async function completePanelTask(taskId) {
+  const el = document.getElementById(`ptask-${taskId}`);
+  if (el) el.style.opacity = '0.4';
+  try {
+    await apiCall(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status: 'completed' }) });
+    if (el) el.remove();
+    await Promise.all([loadPanelTasks(_activePanelLeadId), loadPanelTimeline(_activePanelLeadId)]);
+    loadCrmStats();
+    if (_view === 'focus') loadFocusTasks();
+  } catch (e) { showToast(e.message, 'error'); if (el) el.style.opacity = '1'; }
+}
+
+// Panel task form
+let _panelTaskType = 'follow_up';
+let _panelPriority = 'medium';
+let _panelDueDate = null;
+
+function togglePanelAddTask() {
+  const el = document.getElementById('panel-add-task-wrap');
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+  if (el.style.display !== 'none') document.getElementById('panel-task-input').focus();
+}
+function toggleTaskSection() {
+  _taskSectionOpen = !_taskSectionOpen;
+  document.getElementById('panel-task-list').style.display = _taskSectionOpen ? '' : 'none';
+}
+function selectTaskType(btn) {
+  document.querySelectorAll('#panel-type-row .task-type-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _panelTaskType = btn.dataset.type;
+}
+function selectPriority(el) {
+  document.querySelectorAll('.panel-add-task .priority-option').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  _panelPriority = el.dataset.priority;
+}
+function setPanelDue(when) {
+  const d = new Date();
+  if (when === 'today') { /* keep today */ }
+  else if (when === 'tomorrow') d.setDate(d.getDate() + 1);
+  else if (when === 'week') d.setDate(d.getDate() + 7);
+  const iso = d.toISOString().split('T')[0];
+  document.getElementById('panel-due-input').value = iso;
+  _panelDueDate = iso;
+}
+async function savePanelTask() {
+  if (!_activePanelLeadId) return;
+  const title = document.getElementById('panel-task-input').value.trim();
+  if (!title) { showToast('Vul een taakomschrijving in.', 'error'); return; }
+  const due = document.getElementById('panel-due-input').value;
+  try {
+    await apiCall('/tasks', { method: 'POST', body: JSON.stringify({
+      lead_id: _activePanelLeadId, title, task_type: _panelTaskType,
+      priority: _panelPriority, due_date: due || null,
+    })});
+    document.getElementById('panel-task-input').value = '';
+    togglePanelAddTask();
+    await loadPanelTasks(_activePanelLeadId);
+    await loadPanelTimeline(_activePanelLeadId);
+    if (_view === 'focus') loadFocusTasks();
+    loadCrmStats();
+    showToast('Taak aangemaakt.', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Timeline
+async function loadPanelTimeline(leadId) {
+  const el = document.getElementById('panel-timeline-scroll');
+  el.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:12px">Laden…</div>';
+  try {
+    const data = await apiCall(`/timeline/${leadId}`);
+    const events = data.events || [];
+    if (!events.length) {
+      el.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:12px">Geen tijdlijn events.</div>';
+      return;
+    }
+    el.innerHTML = events.map((e, i) => `
+      <div class="panel-tl-item ${e.event_type === 'deal_won' ? 'deal-won-event' : ''}">
+        ${i < events.length - 1 ? '<div class="panel-tl-line"></div>' : ''}
+        <div class="panel-tl-dot tl-dot ${e.event_type}"></div>
+        <div class="panel-tl-body">
+          ${e.event_type === 'deal_won'
+            ? `<div class="panel-tl-deal-won"><div class="panel-tl-deal-title">⭐ ${e.title}</div></div>`
+            : `<div class="panel-tl-title">${TL_ICONS[e.event_type]||'•'} ${e.title}</div>`
+          }
+          ${e.body ? `<div class="panel-tl-text">${e.body}</div>` : ''}
+          <div class="panel-tl-time">${formatRelativeTime(e.created_at)}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch (_) {
+    el.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:12px">Tijdlijn kon niet worden geladen.</div>';
+  }
+}
+
+// Log forms
+let _logType = null;
+function showLogForm(type) {
+  _logType = type;
+  const el = document.getElementById('panel-log-form');
+  const labels = { note: '📝 Notitie opslaan', call: '📞 Gesprek opslaan', meeting: '📅 Meeting opslaan' };
+  const placeholders = { note: 'Schrijf een notitie…', call: 'Gespreksnotities…', meeting: 'Meeting details en afspraken…' };
+  el.style.display = '';
+  el.innerHTML = `
+    <div class="log-form">
+      ${type === 'meeting' || type === 'call' ? `
+        <div class="add-task-row" style="margin-bottom:8px">
+          <input type="date" class="form-input" id="log-date" value="${new Date().toISOString().split('T')[0]}" style="font-size:12px;width:140px" />
+          ${type === 'meeting' ? `<input type="text" class="form-input" id="log-duration" placeholder="30 min" style="font-size:12px;width:80px" />` : ''}
+        </div>
+      ` : ''}
+      <textarea id="log-body" placeholder="${placeholders[type]}" rows="3"></textarea>
+      <div class="log-form-footer">
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('panel-log-form').style.display='none'">Annuleer</button>
+        <button class="btn btn-primary btn-sm" onclick="saveLogEntry()">${labels[type]}</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('log-body').focus();
+}
+
+async function saveLogEntry() {
+  if (!_activePanelLeadId || !_logType) return;
+  const body = document.getElementById('log-body').value.trim();
+  if (!body) { showToast('Vul tekst in.', 'error'); return; }
+  const dateVal = document.getElementById('log-date')?.value;
+  const duration = document.getElementById('log-duration')?.value;
+
+  const typeMap = { note: 'note_added', call: 'call_logged', meeting: 'meeting_logged' };
+  const titleMap = { note: 'Notitie', call: 'Gesprek gelogd', meeting: `Meeting gelogd${dateVal ? ' op ' + dateVal : ''}` };
+
+  try {
+    const res = await apiCall(`/timeline/${_activePanelLeadId}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        event_type: typeMap[_logType],
+        title: titleMap[_logType],
+        body,
+        metadata: { date: dateVal, duration },
+      }),
+    });
+    document.getElementById('panel-log-form').style.display = 'none';
+    // Prepend new event to timeline with animation
+    const scroll = document.getElementById('panel-timeline-scroll');
+    const newEl = document.createElement('div');
+    newEl.innerHTML = `
+      <div class="panel-tl-item new-event">
+        <div class="panel-tl-dot tl-dot ${typeMap[_logType]}"></div>
+        <div class="panel-tl-body">
+          <div class="panel-tl-title">${TL_ICONS[typeMap[_logType]]||'•'} ${titleMap[_logType]}</div>
+          <div class="panel-tl-text">${body}</div>
+          <div class="panel-tl-time">zojuist</div>
+        </div>
+      </div>
+    `;
+    scroll.insertBefore(newEl.firstElementChild, scroll.firstChild);
+    showToast('Opgeslagen.', 'success');
+    if (_view === 'focus') loadActivityFeed();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Deal form
+async function saveDeal() {
+  if (!_activePanelLeadId) return;
+  const value = parseFloat(document.getElementById('deal-value').value);
+  if (!value || value <= 0) { showToast('Voer een geldige dealwaarde in.', 'error'); return; }
+  try {
+    await apiCall('/crm/deals', { method: 'POST', body: JSON.stringify({
+      lead_id: _activePanelLeadId,
+      dienst_type: document.getElementById('deal-type').value,
+      value,
+      project_start_date: document.getElementById('deal-start').value || null,
+    })});
+    showToast(`Deal van € ${value.toLocaleString('nl-NL')} opgeslagen! ⭐`, 'success');
+    await loadPanelTimeline(_activePanelLeadId);
+    loadCrmStats();
+    if (_view === 'kanban') renderKanbanView();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Snooze
+function toggleSnooze() {
+  const pop = document.getElementById('snooze-popover');
+  pop.style.display = pop.style.display === 'none' ? '' : 'none';
+}
+async function snoozeUntil(when) {
+  const d = new Date();
+  if (when === 'tomorrow') d.setDate(d.getDate() + 1);
+  else if (when === 'nextweek') d.setDate(d.getDate() + 7);
+  else if (when === 'nextmonth') d.setMonth(d.getMonth() + 1);
+  else if (when === 'custom') { const v = document.getElementById('snooze-date').value; if (v) { const dd = new Date(v); d.setTime(dd.getTime()); } else return; }
+  d.setHours(9,0,0,0);
+  try {
+    await apiCall(`/leads/${_activePanelLeadId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ crm_stage: 'later', snoozed_until: d.toISOString() }),
+    });
+    showToast(`Lead gesnoozed tot ${d.toLocaleDateString('nl-NL')}.`, 'success');
+    document.getElementById('snooze-popover').style.display = 'none';
+    renderPanelHeader();
+    if (_view === 'kanban') renderKanbanView();
+    if (_view === 'lijst') loadLijst();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function closePanel() {
+  _activePanelLeadId = null;
+  _panelLead = null;
+  const panel = document.getElementById('slide-panel-crm');
+  panel.classList.remove('panel-open');
+  setTimeout(() => { panel.style.display = 'none'; }, 210);
+  document.getElementById('panel-overlay').style.display = 'none';
+}
+
+// Open global add task (header button)
+function openAddTask() {
+  if (_view !== 'focus') { switchView('focus').then(() => setTimeout(expandAddTask, 200)); }
+  else expandAddTask();
+}
+</script>
+</body>
+</html>

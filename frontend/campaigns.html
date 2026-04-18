@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — Campagnes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <div class="main-wrap">
+      <header class="page-header">
+        <div class="page-header-left">
+          <h1 class="page-title">Campagnes</h1>
+        </div>
+        <div class="page-header-right">
+          <button class="btn btn-primary" onclick="showWizard()">+ Nieuwe campagne</button>
+        </div>
+      </header>
+
+      <main class="page-content">
+        <!-- Warmr inboxes overview -->
+        <div class="card" style="margin-bottom:24px">
+          <div class="card-header">
+            <h2 class="card-title">Warmr Inboxes</h2>
+            <button class="btn btn-ghost btn-sm" onclick="loadInboxes()">Vernieuwen</button>
+          </div>
+          <div id="inboxes-grid" class="inboxes-grid">
+            <div class="skeleton skeleton-text"></div>
+          </div>
+        </div>
+
+        <!-- Campaign wizard (hidden by default) -->
+        <div id="wizard-wrap" style="display:none">
+          <div class="card">
+            <!-- Wizard steps indicator -->
+            <div class="wizard-steps">
+              <div class="wizard-step active" id="wstep-1">
+                <span class="wstep-num">1</span><span class="wstep-label">Leads</span>
+              </div>
+              <div class="wizard-connector"></div>
+              <div class="wizard-step" id="wstep-2">
+                <span class="wstep-num">2</span><span class="wstep-label">Sequence</span>
+              </div>
+              <div class="wizard-connector"></div>
+              <div class="wizard-step" id="wstep-3">
+                <span class="wstep-num">3</span><span class="wstep-label">Inboxes</span>
+              </div>
+              <div class="wizard-connector"></div>
+              <div class="wizard-step" id="wstep-4">
+                <span class="wstep-num">4</span><span class="wstep-label">Versturen</span>
+              </div>
+            </div>
+
+            <div id="wizard-body" style="padding:24px">
+              <!-- Filled by JS -->
+            </div>
+
+            <div class="wizard-footer">
+              <button class="btn btn-ghost" id="btn-prev" onclick="prevStep()" style="display:none">← Vorige</button>
+              <button class="btn btn-primary" id="btn-next" onclick="nextStep()">Volgende →</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+  <script>
+    let _step = 1;
+    let _wizard = {
+      selectedLeads: [],
+      campaignName: '',
+      sequence: [{ subject: '', body: '', delay_days: 0 }],
+      selectedInboxes: [],
+    };
+    let _availableInboxes = [];
+    let _availableLeads = [];
+
+    (async () => {
+      await requireAuth();
+      renderSidebar('campaigns');
+      await loadInboxes();
+    })();
+
+    async function loadInboxes() {
+      const el = document.getElementById('inboxes-grid');
+      el.innerHTML = '<div class="skeleton skeleton-text"></div>';
+      try {
+        const data = await apiCall('/warmr/inboxes');
+        _availableInboxes = data.inboxes || data || [];
+        if (!_availableInboxes.length) {
+          el.innerHTML = '<div class="empty-state-sm">Geen Warmr inboxes gevonden.</div>';
+          return;
+        }
+        el.innerHTML = _availableInboxes.map(i => `
+          <div class="inbox-card">
+            <div class="inbox-rep-ring">
+              <svg viewBox="0 0 36 36" class="rep-ring">
+                <circle cx="18" cy="18" r="16" fill="none" stroke="var(--border)" stroke-width="2"/>
+                <circle cx="18" cy="18" r="16" fill="none" stroke="var(--accent)" stroke-width="2"
+                  stroke-dasharray="${Math.round((i.reputation_score || 0) * 100.53)} 100.53"
+                  transform="rotate(-90 18 18)"/>
+              </svg>
+              <span class="rep-score">${Math.round((i.reputation_score || 0) * 100)}%</span>
+            </div>
+            <div class="inbox-card-body">
+              <div class="inbox-email-str">${i.email || i.id}</div>
+              <div class="inbox-provider text-muted">${i.provider || '—'}</div>
+              <div class="inbox-capacity">
+                <span class="badge ${(i.daily_remaining ?? 0) > 0 ? 'badge-green' : 'badge-red'}">${i.daily_remaining ?? 0} resterend vandaag</span>
+              </div>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        el.innerHTML = `<div class="error-banner">Kon inboxes niet laden: ${e.message}</div>`;
+      }
+    }
+
+    function showWizard() {
+      _step = 1;
+      _wizard = { selectedLeads: [], campaignName: '', sequence: [{ subject: '', body: '', delay_days: 0 }], selectedInboxes: [] };
+      document.getElementById('wizard-wrap').style.display = '';
+      document.getElementById('wizard-wrap').scrollIntoView({ behavior: 'smooth' });
+      renderStep();
+    }
+
+    function updateStepIndicators() {
+      for (let i = 1; i <= 4; i++) {
+        const el = document.getElementById(`wstep-${i}`);
+        el.classList.toggle('active', i === _step);
+        el.classList.toggle('done', i < _step);
+      }
+      document.getElementById('btn-prev').style.display = _step > 1 ? '' : 'none';
+      document.getElementById('btn-next').textContent = _step === 4 ? 'Campagne lanceren' : 'Volgende →';
+    }
+
+    function renderStep() {
+      updateStepIndicators();
+      const body = document.getElementById('wizard-body');
+
+      if (_step === 1) {
+        body.innerHTML = `
+          <h3 style="margin-bottom:16px">Stap 1 — Leads selecteren</h3>
+          <div class="form-group">
+            <label class="form-label" for="camp-name">Campagnenaam</label>
+            <input class="form-input" id="camp-name" type="text" value="${_wizard.campaignName}" placeholder="bijv. Alternatieve Zorg — Amsterdam — April" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Leads filteren</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+              <select class="form-select" id="lead-sector-filter" onchange="loadWizardLeads()">
+                <option value="">Alle sectoren</option>
+                <option value="alternatieve_zorg">Alternatieve Zorg</option>
+                <option value="cosmetische_klinieken">Cosmetische Klinieken</option>
+              </select>
+              <select class="form-select" id="lead-score-filter" onchange="loadWizardLeads()">
+                <option value="65">Score ≥ 65 (aanbevolen)</option>
+                <option value="50">Score ≥ 50</option>
+                <option value="0">Alle scores</option>
+              </select>
+            </div>
+          </div>
+          <div id="wizard-leads-list" style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-input)">
+            <div class="skeleton skeleton-text" style="margin:12px"></div>
+          </div>
+          <div style="margin-top:8px;font-size:13px;color:var(--text-muted)" id="lead-select-count">${_wizard.selectedLeads.length} leads geselecteerd</div>
+        `;
+        loadWizardLeads();
+      }
+
+      else if (_step === 2) {
+        body.innerHTML = `
+          <h3 style="margin-bottom:16px">Stap 2 — Email sequence</h3>
+          <div id="sequence-steps">
+            ${_wizard.sequence.map((s, i) => renderSequenceStep(s, i)).join('')}
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="addStep()" style="margin-top:12px">+ Stap toevoegen</button>
+          <div class="variable-chips" style="margin-top:20px">
+            <span style="font-size:12px;color:var(--text-muted)">Beschikbare variabelen:</span>
+            ${['{{first_name}}','{{company}}','{{city}}','{{opener}}','{{sector}}'].map(v => `<span class="var-chip" onclick="copyVar('${v}')">${v}</span>`).join('')}
+          </div>
+        `;
+      }
+
+      else if (_step === 3) {
+        body.innerHTML = `
+          <h3 style="margin-bottom:16px">Stap 3 — Inboxes kiezen</h3>
+          <p class="text-muted" style="margin-bottom:16px;font-size:14px">Selecteer één of meer Warmr inboxes. Heatr verdeel leads automatisch op basis van capaciteit en reputatie.</p>
+          <div class="inboxes-checklist">
+            ${_availableInboxes.map(i => `
+              <label class="inbox-check-row ${(i.daily_remaining ?? 0) === 0 ? 'inbox-disabled' : ''}">
+                <input type="checkbox" value="${i.id}" ${_wizard.selectedInboxes.includes(i.id) ? 'checked' : ''} ${(i.daily_remaining ?? 0) === 0 ? 'disabled' : ''} onchange="toggleInbox('${i.id}', this)" />
+                <span class="inbox-check-email">${i.email || i.id}</span>
+                <span class="badge ${(i.daily_remaining ?? 0) > 0 ? 'badge-green' : 'badge-neutral'}">${i.daily_remaining ?? 0} beschikbaar</span>
+                <span class="text-muted" style="font-size:12px">${i.provider || ''}</span>
+              </label>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      else if (_step === 4) {
+        const totalCapacity = _availableInboxes
+          .filter(i => _wizard.selectedInboxes.includes(i.id))
+          .reduce((acc, i) => acc + (i.daily_remaining ?? 0), 0);
+        body.innerHTML = `
+          <h3 style="margin-bottom:16px">Stap 4 — Review & versturen</h3>
+          <div class="review-summary">
+            <div class="info-row"><span class="info-label">Campagnenaam</span><strong>${_wizard.campaignName || '—'}</strong></div>
+            <div class="info-row"><span class="info-label">Leads</span><strong>${_wizard.selectedLeads.length}</strong></div>
+            <div class="info-row"><span class="info-label">Sequence stappen</span><strong>${_wizard.sequence.length}</strong></div>
+            <div class="info-row"><span class="info-label">Inboxes</span><strong>${_wizard.selectedInboxes.length}</strong></div>
+            <div class="info-row"><span class="info-label">Totale capaciteit vandaag</span><strong>${totalCapacity} emails</strong></div>
+          </div>
+          <div id="launch-error" class="error-banner" style="display:none;margin-top:16px"></div>
+          <div id="launch-success" class="success-banner" style="display:none;margin-top:16px">Campagne gelanceerd!</div>
+        `;
+      }
+    }
+
+    function renderSequenceStep(step, idx) {
+      return `
+        <div class="sequence-step-card" data-idx="${idx}">
+          <div class="sequence-step-header">
+            <span class="sequence-step-num">Stap ${idx + 1}</span>
+            ${idx === 0 ? '' : `<button class="btn btn-ghost btn-sm" onclick="removeStep(${idx})">Verwijderen</button>`}
+          </div>
+          ${idx > 0 ? `
+            <div class="form-group">
+              <label class="form-label">Vertraging (dagen)</label>
+              <input class="form-input" type="number" min="1" max="30" value="${step.delay_days || 3}" style="width:80px"
+                onchange="updateStep(${idx}, 'delay_days', this.value)" />
+            </div>
+          ` : ''}
+          <div class="form-group">
+            <label class="form-label">Onderwerp</label>
+            <input class="form-input" type="text" value="${step.subject}" placeholder="bijv. Gratis website review voor {{company}}"
+              onchange="updateStep(${idx}, 'subject', this.value)" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Berichttekst</label>
+            <textarea class="form-textarea" rows="5" placeholder="{Hoi|Goedemiddag} {{first_name}},&#10;&#10;{{opener}}"
+              onchange="updateStep(${idx}, 'body', this.value)">${step.body}</textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    function updateStep(idx, field, value) {
+      _wizard.sequence[idx][field] = field === 'delay_days' ? parseInt(value) : value;
+    }
+
+    function addStep() {
+      _wizard.sequence.push({ subject: '', body: '', delay_days: 3 });
+      document.getElementById('sequence-steps').innerHTML =
+        _wizard.sequence.map((s, i) => renderSequenceStep(s, i)).join('');
+    }
+
+    function removeStep(idx) {
+      _wizard.sequence.splice(idx, 1);
+      document.getElementById('sequence-steps').innerHTML =
+        _wizard.sequence.map((s, i) => renderSequenceStep(s, i)).join('');
+    }
+
+    function toggleInbox(id, cb) {
+      if (cb.checked) { if (!_wizard.selectedInboxes.includes(id)) _wizard.selectedInboxes.push(id); }
+      else { _wizard.selectedInboxes = _wizard.selectedInboxes.filter(i => i !== id); }
+    }
+
+    async function loadWizardLeads() {
+      const el = document.getElementById('wizard-leads-list');
+      const sector = document.getElementById('lead-sector-filter')?.value;
+      const minScore = document.getElementById('lead-score-filter')?.value;
+      try {
+        const qs = buildQuery({ sector, min_score: minScore, email_status: 'verified', limit: 50 });
+        const data = await apiCall(`/leads${qs}`);
+        const leads = data.leads || data || [];
+        _availableLeads = leads;
+        el.innerHTML = leads.length ? leads.map(l => `
+          <label class="lead-check-row">
+            <input type="checkbox" value="${l.id}" ${_wizard.selectedLeads.includes(l.id) ? 'checked' : ''} onchange="toggleLead('${l.id}', this)" />
+            <span>${l.company_name || l.domain || '—'}</span>
+            <span class="text-muted" style="font-size:12px">${l.city || ''}</span>
+            ${formatScore(l.score)}
+          </label>
+        `).join('') : '<div class="empty-state-sm" style="margin:16px">Geen leads gevonden met deze filters.</div>';
+      } catch (e) {
+        el.innerHTML = `<div class="error-banner" style="margin:12px">Fout: ${e.message}</div>`;
+      }
+    }
+
+    function toggleLead(id, cb) {
+      if (cb.checked) { if (!_wizard.selectedLeads.includes(id)) _wizard.selectedLeads.push(id); }
+      else { _wizard.selectedLeads = _wizard.selectedLeads.filter(l => l !== id); }
+      const countEl = document.getElementById('lead-select-count');
+      if (countEl) countEl.textContent = `${_wizard.selectedLeads.length} leads geselecteerd`;
+    }
+
+    function copyVar(v) {
+      navigator.clipboard.writeText(v).then(() => showToast(`${v} gekopieerd`, 'info'));
+    }
+
+    function prevStep() {
+      if (_step > 1) { _step--; renderStep(); }
+    }
+
+    function nextStep() {
+      // Validate current step
+      if (_step === 1) {
+        _wizard.campaignName = document.getElementById('camp-name')?.value?.trim() || '';
+        if (!_wizard.campaignName) { showToast('Voer een campagnenaam in.', 'error'); return; }
+        if (!_wizard.selectedLeads.length) { showToast('Selecteer minimaal 1 lead.', 'error'); return; }
+        _step++;
+        renderStep();
+      } else if (_step === 2) {
+        const invalid = _wizard.sequence.find(s => !s.subject || !s.body);
+        if (invalid) { showToast('Vul alle sequencestappen in.', 'error'); return; }
+        _step++;
+        renderStep();
+      } else if (_step === 3) {
+        if (!_wizard.selectedInboxes.length) { showToast('Selecteer minimaal 1 inbox.', 'error'); return; }
+        _step++;
+        renderStep();
+      } else if (_step === 4) {
+        launchCampaign();
+      }
+    }
+
+    async function launchCampaign() {
+      const errEl = document.getElementById('launch-error');
+      const succEl = document.getElementById('launch-success');
+      const btn = document.getElementById('btn-next');
+      btn.disabled = true;
+      btn.textContent = 'Bezig…';
+      errEl.style.display = 'none';
+
+      try {
+        await apiCall('/campaigns/launch', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: _wizard.campaignName,
+            lead_ids: _wizard.selectedLeads,
+            sequence: _wizard.sequence,
+            inbox_ids: _wizard.selectedInboxes,
+          }),
+        });
+        succEl.style.display = '';
+        showToast('Campagne gelanceerd via Warmr!', 'success');
+        btn.textContent = 'Klaar';
+        setTimeout(() => { document.getElementById('wizard-wrap').style.display = 'none'; }, 2000);
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Campagne lanceren';
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — Zoeken</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <div class="main-wrap">
+      <header class="page-header">
+        <div class="page-header-left">
+          <h1 class="page-title">Lead Discovery</h1>
+          <span class="page-subtitle">Start een nieuwe zoekopdracht</span>
+        </div>
+      </header>
+
+      <main class="page-content">
+        <div class="search-layout">
+          <!-- Search form -->
+          <div class="card search-form-card">
+            <h2 class="card-title" style="margin-bottom:24px">Zoekopdracht</h2>
+
+            <div id="search-error" class="error-banner" style="display:none"></div>
+
+            <div class="form-group">
+              <label class="form-label">Sector</label>
+              <div class="pill-group" id="sector-pills">
+                <button class="pill active" data-value="alternatieve_zorg" onclick="selectSector(this)">Alternatieve Zorg</button>
+                <button class="pill" data-value="cosmetische_klinieken" onclick="selectSector(this)">Cosmetische Klinieken</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="input-city">Stad of regio</label>
+              <input class="form-input" id="input-city" type="text" placeholder="Amsterdam, Rotterdam, Utrecht…" />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="input-max">Maximaal aantal resultaten</label>
+              <select class="form-select" id="input-max">
+                <option value="20">20 leads</option>
+                <option value="40">40 leads</option>
+                <option value="60" selected>60 leads</option>
+                <option value="100">100 leads</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Bronnen</label>
+              <div class="checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="src-maps" checked /> Google Maps
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="src-dirs" checked /> Branchegidsen
+                </label>
+              </div>
+            </div>
+
+            <button class="btn btn-primary btn-lg" id="btn-start" onclick="startSearch()" style="width:100%">
+              Zoekopdracht starten
+            </button>
+          </div>
+
+          <!-- Progress + results -->
+          <div class="search-results-col">
+            <!-- Active job progress -->
+            <div id="job-panel" style="display:none">
+              <div class="card" style="margin-bottom:20px">
+                <div class="card-header">
+                  <h2 class="card-title">Bezig met scrapen…</h2>
+                  <span class="badge badge-yellow" id="job-status-badge">actief</span>
+                </div>
+                <div class="progress-wrap" style="margin:16px 0">
+                  <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+                  </div>
+                  <div class="progress-label" id="progress-label">0 van ? resultaten</div>
+                </div>
+                <div class="job-log" id="job-log"></div>
+                <div style="margin-top:16px">
+                  <button class="btn btn-ghost btn-sm" onclick="stopPolling()">Stop volgen</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recent jobs -->
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Recente zoekopdrachten</h2>
+                <button class="btn btn-ghost btn-sm" onclick="loadRecentJobs()">Vernieuwen</button>
+              </div>
+              <div id="recent-jobs">
+                <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+                <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+                <div class="skeleton skeleton-text"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+  <script>
+    let _selectedSector = 'alternatieve_zorg';
+    let _pollTimer = null;
+    let _activeJobId = null;
+
+    (async () => {
+      await requireAuth();
+      renderSidebar('search');
+      await loadRecentJobs();
+    })();
+
+    function selectSector(btn) {
+      document.querySelectorAll('#sector-pills .pill').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      _selectedSector = btn.dataset.value;
+    }
+
+    async function startSearch() {
+      const city = document.getElementById('input-city').value.trim();
+      const errEl = document.getElementById('search-error');
+      errEl.style.display = 'none';
+
+      if (!city) {
+        errEl.textContent = 'Vul een stad of regio in.';
+        errEl.style.display = '';
+        return;
+      }
+
+      const btn = document.getElementById('btn-start');
+      btn.disabled = true;
+      btn.textContent = 'Starten…';
+
+      const payload = {
+        sector: _selectedSector,
+        city,
+        max_results: parseInt(document.getElementById('input-max').value),
+        sources: {
+          google_maps: document.getElementById('src-maps').checked,
+          directories: document.getElementById('src-dirs').checked,
+        },
+      };
+
+      try {
+        const res = await apiCall('/search', { method: 'POST', body: JSON.stringify(payload) });
+        _activeJobId = res.job_id;
+        startPolling(_activeJobId);
+        showToast('Zoekopdracht gestart!', 'success');
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.style.display = '';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Zoekopdracht starten';
+      }
+    }
+
+    function startPolling(jobId) {
+      const panel = document.getElementById('job-panel');
+      panel.style.display = '';
+      document.getElementById('job-log').innerHTML = '';
+
+      stopPolling();
+      _pollTimer = setInterval(() => pollJob(jobId), 3000);
+      pollJob(jobId);
+    }
+
+    function stopPolling() {
+      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+    }
+
+    async function pollJob(jobId) {
+      try {
+        const job = await apiCall(`/jobs/${jobId}`);
+        const statusBadge = document.getElementById('job-status-badge');
+        const fill = document.getElementById('progress-fill');
+        const label = document.getElementById('progress-label');
+        const log = document.getElementById('job-log');
+
+        statusBadge.textContent = job.status;
+        statusBadge.className = `badge ${job.status === 'completed' ? 'badge-green' : job.status === 'failed' ? 'badge-red' : 'badge-yellow'}`;
+
+        const pct = job.total > 0 ? Math.round((job.found / job.total) * 100) : 0;
+        fill.style.width = `${pct}%`;
+        label.textContent = `${job.found ?? 0} resultaten gevonden`;
+
+        if (job.log_messages && job.log_messages.length) {
+          log.innerHTML = job.log_messages.slice(-5).map(m => `<div class="log-line">${m}</div>`).join('');
+        }
+
+        if (job.status === 'completed' || job.status === 'failed') {
+          stopPolling();
+          statusBadge.className = `badge ${job.status === 'completed' ? 'badge-green' : 'badge-red'}`;
+          if (job.status === 'completed') {
+            showToast(`Klaar! ${job.found ?? 0} leads gevonden.`, 'success');
+            setTimeout(() => window.location.href = '/leads.html', 1500);
+          } else {
+            showToast('Zoekopdracht mislukt.', 'error');
+          }
+          loadRecentJobs();
+        }
+      } catch (_) {}
+    }
+
+    async function loadRecentJobs() {
+      const el = document.getElementById('recent-jobs');
+      try {
+        const data = await apiCall('/jobs?limit=10&type=scraping');
+        const jobs = data.jobs || data || [];
+        if (!jobs.length) {
+          el.innerHTML = '<div class="empty-state-sm">Nog geen zoekopdrachten.</div>';
+          return;
+        }
+        el.innerHTML = `<div class="job-list">${jobs.map(j => `
+          <div class="job-card">
+            <div class="job-card-left">
+              <div class="job-title">${j.sector ? sectorLabel(j.sector) : '—'} · ${j.city || '—'}</div>
+              <div class="job-meta">${formatRelativeTime(j.created_at)} · ${j.found ?? 0} gevonden</div>
+            </div>
+            <div class="job-card-right">
+              <span class="badge ${j.status === 'completed' ? 'badge-green' : j.status === 'failed' ? 'badge-red' : 'badge-yellow'}">${j.status}</span>
+              ${j.status === 'completed' ? `<a href="/leads.html" class="btn btn-ghost btn-sm">Leads →</a>` : ''}
+            </div>
+          </div>
+        `).join('')}</div>`;
+      } catch (e) {
+        el.innerHTML = `<div class="error-banner">Kon recente opdrachten niet laden.</div>`;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+{
+  "name": "07 — Blacklist Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 6 * * *" }]
+        }
+      },
+      "name": "Daily at 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HEATR_BASE_URL }}/warmr/inboxes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "name": "Get inbox list",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.inboxes.filter(i => (i.reputation || 100) < 70).length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Low reputation?",
+      "type": "n8n-nodes-base.if",
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HEATR_BASE_URL }}/alerts",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "alert_type", "value": "low_inbox_reputation" },
+            { "name": "message", "value": "One or more inboxes have reputation below 70 — check Warmr dashboard." },
+            { "name": "severity", "value": "warning" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Send alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [900, 240]
+    }
+  ],
+  "connections": {
+    "Daily at 06:00": { "main": [[{ "node": "Get inbox list", "type": "main", "index": 0 }]] },
+    "Get inbox list": { "main": [[{ "node": "Low reputation?", "type": "main", "index": 0 }]] },
+    "Low reputation?": { "main": [[{ "node": "Send alert", "type": "main", "index": 0 }], []] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

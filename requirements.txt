@@ -1,0 +1,41 @@
+# =============================================================================
+# Heatr — Python Dependencies
+# Python 3.11+ required. Install with: pip install -r requirements.txt
+# After install run: playwright install chromium
+# =============================================================================
+
+# --- API framework -----------------------------------------------------------
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# --- HTTP client -------------------------------------------------------------
+httpx==0.27.0
+
+# --- Browser automation (scraping + screenshots) -----------------------------
+playwright==1.44.0
+
+# --- Database ----------------------------------------------------------------
+supabase==2.4.6
+
+# --- Configuration -----------------------------------------------------------
+python-dotenv==1.0.1
+
+# --- AI (Claude Haiku + Sonnet) ----------------------------------------------
+anthropic==0.28.0
+
+# --- DNS / email verification ------------------------------------------------
+dnspython==2.6.1
+
+# --- Auth / security ---------------------------------------------------------
+python-jose[cryptography]==3.3.0
+
+# --- Image processing (screenshot resize before Vision upload) ---------------
+pillow==10.3.0
+
+# --- Utilities ---------------------------------------------------------------
+pydantic==2.7.1            # FastAPI data validation
+pydantic-settings==2.2.1   # Settings management from .env
+tenacity==8.3.0            # Retry logic for flaky scrapers / API calls
+asyncio-throttle==1.0.2    # Async rate limiting helper
+python-multipart==0.0.9    # FastAPI file uploads
+aiofiles==23.2.1           # Async file I/O for screenshot saving

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — Inbox</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <div class="main-wrap" style="overflow:hidden">
+      <header class="page-header">
+        <div class="page-header-left">
+          <h1 class="page-title">Inbox</h1>
+          <span class="page-subtitle" id="inbox-count">Laden…</span>
+        </div>
+        <div class="page-header-right">
+          <div class="pill-group">
+            <button class="pill active" data-filter="all" onclick="setFilter('all', this)">Alle</button>
+            <button class="pill" data-filter="interested" onclick="setFilter('interested', this)">Geïnteresseerd</button>
+            <button class="pill" data-filter="replied" onclick="setFilter('replied', this)">Beantwoord</button>
+            <button class="pill" data-filter="bounced" onclick="setFilter('bounced', this)">Bounced</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="inbox-layout">
+        <!-- Left: message list -->
+        <div class="inbox-list" id="inbox-list">
+          <div class="skeleton skeleton-text" style="margin:12px"></div>
+          <div class="skeleton skeleton-text" style="margin:12px;width:80%"></div>
+          <div class="skeleton skeleton-text" style="margin:12px;width:90%"></div>
+        </div>
+
+        <!-- Right: message detail -->
+        <div class="inbox-detail" id="inbox-detail">
+          <div class="inbox-empty-detail">
+            <div class="empty-icon" style="font-size:32px">◻</div>
+            <div class="empty-sub">Selecteer een bericht</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+  <script>
+    let _filter = 'all';
+    let _messages = [];
+    let _activeId = null;
+
+    (async () => {
+      await requireAuth();
+      renderSidebar('inbox');
+      await loadMessages();
+    })();
+
+    function setFilter(f, btn) {
+      _filter = f;
+      document.querySelectorAll('.inbox-list .pill, .page-header-right .pill').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      loadMessages();
+    }
+
+    async function loadMessages() {
+      const list = document.getElementById('inbox-list');
+      list.innerHTML = `
+        <div class="skeleton skeleton-text" style="margin:12px"></div>
+        <div class="skeleton skeleton-text" style="margin:12px;width:80%"></div>
+        <div class="skeleton skeleton-text" style="margin:12px;width:70%"></div>
+      `;
+
+      try {
+        const qs = buildQuery({ status: _filter !== 'all' ? _filter : undefined, limit: 50 });
+        const data = await apiCall(`/inbox${qs}`);
+        _messages = data.messages || data || [];
+
+        document.getElementById('inbox-count').textContent = `${_messages.length} berichten`;
+
+        if (!_messages.length) {
+          list.innerHTML = `
+            <div class="empty-state" style="padding:40px">
+              <div class="empty-icon">◻</div>
+              <div class="empty-title">Geen berichten</div>
+              <div class="empty-sub">Warmr webhooks verschijnen hier zodra leads reageren.</div>
+            </div>`;
+          return;
+        }
+
+        list.innerHTML = _messages.map(m => `
+          <div class="inbox-row ${m.id === _activeId ? 'active' : ''} ${!m.read_at ? 'unread' : ''}"
+            onclick="openMessage('${m.id}')" data-id="${m.id}">
+            <div class="inbox-row-top">
+              <span class="inbox-sender">${m.from_name || m.from_email || '—'}</span>
+              <span class="inbox-time">${formatRelativeTime(m.received_at)}</span>
+            </div>
+            <div class="inbox-subject">${m.subject || '(geen onderwerp)'}</div>
+            <div class="inbox-preview">${truncate(m.body_text || m.body_html, 70)}</div>
+            <div class="inbox-tags">
+              ${m.event_type ? `<span class="badge ${eventBadgeCls(m.event_type)}">${m.event_type}</span>` : ''}
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        list.innerHTML = `<div class="error-banner" style="margin:12px">Fout: ${e.message}</div>`;
+      }
+    }
+
+    function eventBadgeCls(type) {
+      return { interested: 'badge-green', replied: 'badge-accent', bounced: 'badge-red', unsubscribed: 'badge-yellow' }[type] || 'badge-neutral';
+    }
+
+    async function openMessage(id) {
+      _activeId = id;
+      // Highlight active row
+      document.querySelectorAll('.inbox-row').forEach(r => r.classList.toggle('active', r.dataset.id === id));
+
+      const detail = document.getElementById('inbox-detail');
+      detail.innerHTML = `<div style="padding:24px"><div class="skeleton skeleton-text" style="margin-bottom:8px"></div><div class="skeleton skeleton-text" style="width:70%"></div></div>`;
+
+      try {
+        const msg = _messages.find(m => m.id === id) || await apiCall(`/inbox/${id}`);
+
+        detail.innerHTML = `
+          <div class="inbox-detail-header">
+            <div class="inbox-detail-subject">${msg.subject || '(geen onderwerp)'}</div>
+            <div class="inbox-detail-meta">
+              <span>Van: <strong>${msg.from_name || ''} &lt;${msg.from_email || '—'}&gt;</strong></span>
+              <span>${formatDate(msg.received_at)}</span>
+              <span class="badge ${eventBadgeCls(msg.event_type)}">${msg.event_type || '—'}</span>
+            </div>
+            ${msg.lead_id ? `<div style="margin-top:8px"><a href="/lead-detail.html?id=${msg.lead_id}" class="btn btn-ghost btn-sm">Lead bekijken →</a></div>` : ''}
+          </div>
+
+          <div class="inbox-detail-body">
+            ${msg.body_html
+              ? `<div class="email-body-html">${msg.body_html}</div>`
+              : `<pre class="email-body-text">${msg.body_text || '(leeg bericht)'}</pre>`
+            }
+          </div>
+
+          <div class="inbox-detail-actions">
+            ${msg.event_type === 'interested' ? `
+              <button class="btn btn-primary" onclick="moveToCrm('${msg.lead_id}', 'gereageerd')">Verplaats naar CRM</button>
+              <a href="/lead-detail.html?id=${msg.lead_id}" class="btn btn-ghost">Lead profiel</a>
+            ` : ''}
+            ${msg.event_type === 'bounced' ? `
+              <button class="btn btn-danger btn-sm" onclick="disqualifyLead('${msg.lead_id}')">Lead diskwalificeren</button>
+            ` : ''}
+          </div>
+        `;
+      } catch (e) {
+        detail.innerHTML = `<div class="error-banner" style="margin:24px">Fout: ${e.message}</div>`;
+      }
+    }
+
+    async function moveToCrm(leadId, stage) {
+      if (!leadId) return;
+      try {
+        await apiCall(`/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify({ crm_stage: stage }) });
+        showToast(`Lead verplaatst naar "${stage}".`, 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function disqualifyLead(leadId) {
+      if (!leadId) return;
+      try {
+        await apiCall('/leads/disqualify', { method: 'POST', body: JSON.stringify({ lead_id: leadId, reason: 'bounced' }) });
+        showToast('Lead gediskwalificeerd.', 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — Analytics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <div class="main-wrap">
+      <header class="page-header">
+        <div class="page-header-left">
+          <h1 class="page-title">Analytics</h1>
+          <span class="page-subtitle">Funnel, email coverage en conversie</span>
+        </div>
+        <div class="page-header-right">
+          <button class="btn btn-ghost btn-sm" onclick="loadAll()">Vernieuwen</button>
+        </div>
+      </header>
+
+      <main class="page-content">
+        <!-- KPI row -->
+        <section class="section-grid" id="kpi-grid" style="margin-bottom:28px">
+          <div class="stat-card"><div class="skeleton skeleton-text" style="width:60%"></div><div class="skeleton skeleton-text" style="height:32px;width:40%;margin-top:8px"></div></div>
+          <div class="stat-card"><div class="skeleton skeleton-text" style="width:60%"></div><div class="skeleton skeleton-text" style="height:32px;width:40%;margin-top:8px"></div></div>
+          <div class="stat-card"><div class="skeleton skeleton-text" style="width:60%"></div><div class="skeleton skeleton-text" style="height:32px;width:40%;margin-top:8px"></div></div>
+          <div class="stat-card"><div class="skeleton skeleton-text" style="width:60%"></div><div class="skeleton skeleton-text" style="height:32px;width:40%;margin-top:8px"></div></div>
+        </section>
+
+        <!-- Charts row 1 -->
+        <div class="analytics-two-col" style="margin-bottom:24px">
+          <!-- Funnel -->
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom:16px">Pipeline Funnel</h3>
+            <div class="chart-container"><canvas id="chart-funnel"></canvas></div>
+          </div>
+
+          <!-- Email coverage -->
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom:16px">Email Coverage</h3>
+            <div class="chart-container"><canvas id="chart-email"></canvas></div>
+          </div>
+        </div>
+
+        <!-- Charts row 2 -->
+        <div class="analytics-two-col">
+          <!-- Website score distribution -->
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom:16px">Website Score Verdeling</h3>
+            <div class="chart-container"><canvas id="chart-website"></canvas></div>
+          </div>
+
+          <!-- Leads per sector -->
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom:16px">Leads per Sector</h3>
+            <div class="chart-container"><canvas id="chart-sector"></canvas></div>
+          </div>
+        </div>
+
+        <!-- Website opportunities breakdown -->
+        <div class="card" style="margin-top:24px">
+          <h3 class="card-title" style="margin-bottom:16px">Website Intelligence Samenvatting</h3>
+          <div id="website-breakdown" class="section-grid">
+            <div class="stat-card"><div class="skeleton skeleton-text"></div></div>
+            <div class="stat-card"><div class="skeleton skeleton-text"></div></div>
+            <div class="stat-card"><div class="skeleton skeleton-text"></div></div>
+            <div class="stat-card"><div class="skeleton skeleton-text"></div></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+  <script>
+    // Chart.js global defaults
+    Chart.defaults.font.family = "'Plus Jakarta Sans', sans-serif";
+    Chart.defaults.color = '#6b6880';
+
+    const ACCENT = '#6c5ce7';
+    const ACCENT_LIGHT = '#a29bfe';
+    const GREEN = '#00b894';
+    const ORANGE = '#fd9644';
+    const RED = '#e17055';
+    const YELLOW = '#fdcb6e';
+
+    let _charts = {};
+
+    (async () => {
+      await requireAuth();
+      renderSidebar('analytics');
+      await loadAll();
+    })();
+
+    async function loadAll() {
+      await Promise.all([loadPipeline(), loadWebsiteStats()]);
+    }
+
+    async function loadPipeline() {
+      try {
+        const data = await apiCall('/analytics/pipeline');
+        renderKPIs(data);
+        renderFunnelChart(data);
+        renderEmailChart(data);
+        renderSectorChart(data);
+      } catch (e) {
+        document.getElementById('kpi-grid').innerHTML = `<div class="error-banner" style="grid-column:1/-1">Pipeline data kon niet worden geladen: ${e.message}</div>`;
+      }
+    }
+
+    async function loadWebsiteStats() {
+      try {
+        const data = await apiCall('/analytics/website');
+        renderWebsiteChart(data);
+        renderWebsiteBreakdown(data);
+      } catch (e) {
+        console.warn('Website analytics failed:', e.message);
+      }
+    }
+
+    function renderKPIs(data) {
+      const kpis = [
+        { label: 'Leads ontdekt', value: data.total_leads ?? '—', sub: 'totaal in database' },
+        { label: 'Email coverage', value: data.email_coverage_pct != null ? `${data.email_coverage_pct}%` : '—', sub: 'geverifieerd of catch-all' },
+        { label: 'Naar Warmr', value: data.sent_to_warmr ?? '—', sub: 'verstuurd voor outreach' },
+        { label: 'Reply rate', value: data.reply_rate_pct != null ? `${data.reply_rate_pct}%` : '—', sub: 'gereageerd op outreach' },
+      ];
+      document.getElementById('kpi-grid').innerHTML = kpis.map(k => `
+        <div class="stat-card">
+          <div class="stat-label">${k.label}</div>
+          <div class="stat-value">${k.value}</div>
+          <div class="stat-sub">${k.sub}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderFunnelChart(data) {
+      const labels = ['Ontdekt', 'Email gevonden', 'Geenriched', 'Naar Warmr', 'Gereageerd'];
+      const values = [
+        data.total_leads ?? 0,
+        data.verified_emails ?? 0,
+        data.enriched_leads ?? 0,
+        data.sent_to_warmr ?? 0,
+        data.total_replies ?? 0,
+      ];
+      destroyChart('funnel');
+      _charts.funnel = new Chart(document.getElementById('chart-funnel'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            backgroundColor: [ACCENT, ACCENT_LIGHT, ORANGE, GREEN, YELLOW],
+            borderRadius: 6,
+            borderSkipped: false,
+          }],
+        },
+        options: {
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' } },
+            x: { grid: { display: false } },
+          },
+          responsive: true,
+          maintainAspectRatio: false,
+        },
+      });
+    }
+
+    function renderEmailChart(data) {
+      const emailData = data.email_breakdown || {
+        verified: data.verified_emails ?? 0,
+        catch_all: data.catchall_emails ?? 0,
+        not_found: data.not_found_emails ?? 0,
+        pending: data.pending_emails ?? 0,
+      };
+      destroyChart('email');
+      _charts.email = new Chart(document.getElementById('chart-email'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Geverifieerd', 'Catch-all', 'Niet gevonden', 'Wachtend'],
+          datasets: [{
+            data: [emailData.verified, emailData.catch_all, emailData.not_found, emailData.pending],
+            backgroundColor: [GREEN, YELLOW, RED, ACCENT_LIGHT],
+            borderWidth: 2,
+            borderColor: '#ffffff',
+          }],
+        },
+        options: {
+          plugins: {
+            legend: { position: 'bottom', labels: { padding: 16, boxWidth: 12 } },
+          },
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '65%',
+        },
+      });
+    }
+
+    function renderSectorChart(data) {
+      const sectors = data.sector_breakdown || {};
+      const labels = Object.keys(sectors).map(k => sectorLabel(k));
+      const values = Object.values(sectors);
+      destroyChart('sector');
+      _charts.sector = new Chart(document.getElementById('chart-sector'), {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            backgroundColor: [ACCENT, ACCENT_LIGHT, ORANGE, GREEN],
+            borderWidth: 2,
+            borderColor: '#ffffff',
+          }],
+        },
+        options: {
+          plugins: { legend: { position: 'bottom', labels: { padding: 16, boxWidth: 12 } } },
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '65%',
+        },
+      });
+    }
+
+    function renderWebsiteChart(data) {
+      const buckets = data.score_distribution || {};
+      const labels = ['0–20', '20–40', '40–60', '60–80', '80–100'];
+      const values = labels.map(l => buckets[l] ?? 0);
+      destroyChart('website');
+      _charts.website = new Chart(document.getElementById('chart-website'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Aantal leads',
+            data: values,
+            backgroundColor: [RED, ORANGE, YELLOW, ACCENT_LIGHT, GREEN],
+            borderRadius: 6,
+            borderSkipped: false,
+          }],
+        },
+        options: {
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' } },
+            x: { grid: { display: false } },
+          },
+          responsive: true,
+          maintainAspectRatio: false,
+        },
+      });
+    }
+
+    function renderWebsiteBreakdown(data) {
+      const el = document.getElementById('website-breakdown');
+      const stats = [
+        { label: 'Geanalyseerd', value: data.total_analysed ?? '—' },
+        { label: 'Website rebuild kansen', value: data.website_rebuild_count ?? '—' },
+        { label: 'Conversie kansen', value: data.conversion_count ?? '—' },
+        { label: 'Gem. website score', value: data.avg_website_score != null ? Math.round(data.avg_website_score) : '—' },
+      ];
+      el.innerHTML = stats.map(s => `
+        <div class="stat-card">
+          <div class="stat-label">${s.label}</div>
+          <div class="stat-value">${s.value}</div>
+        </div>
+      `).join('');
+    }
+
+    function destroyChart(key) {
+      if (_charts[key]) { _charts[key].destroy(); delete _charts[key]; }
+    }
+  </script>
+</body>
+</html>

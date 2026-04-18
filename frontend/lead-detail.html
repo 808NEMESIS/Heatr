@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heatr — Lead detail</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    window.HEATR_CONFIG = {
+      SUPABASE_URL: 'YOUR_SUPABASE_URL',
+      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      API_BASE: 'http://localhost:8000',
+    };
+  </script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <div class="main-wrap">
+      <header class="page-header">
+        <div class="page-header-left">
+          <a href="/leads.html" class="btn btn-ghost btn-sm" style="margin-right:12px">← Terug</a>
+          <h1 class="page-title" id="lead-title">Laden…</h1>
+        </div>
+        <div class="page-header-right" id="lead-actions"></div>
+      </header>
+
+      <main class="page-content">
+        <!-- Tabs -->
+        <div class="tabs" style="margin-bottom:24px">
+          <button class="tab active" onclick="showTab('profiel')" id="tab-profiel">Profiel</button>
+          <button class="tab" onclick="showTab('website')" id="tab-website">Website Analyse</button>
+          <button class="tab" onclick="showTab('campagnes')" id="tab-campagnes">Campagnes</button>
+          <button class="tab" onclick="showTab('inbox')" id="tab-inbox">Inbox</button>
+          <button class="tab" onclick="showTab('crm')" id="tab-crm">CRM</button>
+        </div>
+
+        <!-- Tab: Profiel -->
+        <div id="pane-profiel" class="tab-pane">
+          <div class="detail-two-col">
+            <div>
+              <div class="card" style="margin-bottom:20px">
+                <h3 class="card-title" style="margin-bottom:16px">Bedrijfsinfo</h3>
+                <div id="company-info">
+                  <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+                  <div class="skeleton skeleton-text" style="width:70%"></div>
+                </div>
+              </div>
+              <div class="card" style="margin-bottom:20px">
+                <h3 class="card-title" style="margin-bottom:16px">Contactpersoon</h3>
+                <div id="contact-info">
+                  <div class="skeleton skeleton-text" style="width:60%"></div>
+                </div>
+              </div>
+              <div class="card">
+                <h3 class="card-title" style="margin-bottom:16px">Enrichment</h3>
+                <div id="enrichment-info">
+                  <div class="skeleton skeleton-text" style="width:80%"></div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="card" style="margin-bottom:20px">
+                <h3 class="card-title" style="margin-bottom:16px">Heatr Score</h3>
+                <div id="score-info">
+                  <div class="skeleton skeleton-text" style="height:48px;width:80px"></div>
+                </div>
+              </div>
+              <div class="card">
+                <h3 class="card-title" style="margin-bottom:16px">AI Samenvatting</h3>
+                <div id="ai-summary" class="text-muted" style="font-size:14px;line-height:1.6">
+                  <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+                  <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+                  <div class="skeleton skeleton-text" style="width:60%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Website Analyse -->
+        <div id="pane-website" class="tab-pane" style="display:none">
+          <div id="website-content">
+            <div class="skeleton skeleton-text" style="width:50%;margin-bottom:16px"></div>
+            <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
+            <div class="skeleton skeleton-text" style="width:70%"></div>
+          </div>
+        </div>
+
+        <!-- Tab: Campagnes -->
+        <div id="pane-campagnes" class="tab-pane" style="display:none">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Campagne geschiedenis</h3>
+            </div>
+            <div id="campaign-history">
+              <div class="skeleton skeleton-text"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Inbox -->
+        <div id="pane-inbox" class="tab-pane" style="display:none">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Berichten</h3>
+            </div>
+            <div id="lead-inbox">
+              <div class="skeleton skeleton-text"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: CRM -->
+        <div id="pane-crm" class="tab-pane" style="display:none">
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom:16px">Pipeline status</h3>
+            <div id="crm-stage-selector"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+  <script>
+    const _params = new URLSearchParams(location.search);
+    const LEAD_ID = _params.get('id');
+    let _lead = null;
+    let _websiteLoaded = false;
+
+    (async () => {
+      await requireAuth();
+      renderSidebar('leads');
+      if (!LEAD_ID) { document.getElementById('lead-title').textContent = 'Geen lead ID'; return; }
+      await loadLead();
+    })();
+
+    async function loadLead() {
+      try {
+        _lead = await apiCall(`/leads/${LEAD_ID}`);
+        renderProfile();
+        renderActions();
+      } catch (e) {
+        document.getElementById('lead-title').textContent = 'Fout bij laden';
+        showToast(e.message, 'error');
+      }
+    }
+
+    function renderProfile() {
+      document.getElementById('lead-title').textContent = _lead.company_name || _lead.domain || '—';
+
+      // Company info
+      document.getElementById('company-info').innerHTML = `
+        <div class="info-row"><span class="info-label">Domein</span><a href="https://${_lead.domain}" target="_blank" class="link">${_lead.domain || '—'}</a></div>
+        <div class="info-row"><span class="info-label">Stad</span><span>${_lead.city || '—'}</span></div>
+        <div class="info-row"><span class="info-label">Sector</span><span>${sectorLabel(_lead.sector)}</span></div>
+        <div class="info-row"><span class="info-label">KvK</span><span>${_lead.kvk_number || '—'}</span></div>
+        <div class="info-row"><span class="info-label">Industrie</span><span>${_lead.industry || '—'}</span></div>
+        <div class="info-row"><span class="info-label">Grootte</span><span>${_lead.company_size_estimate || '—'}</span></div>
+        <div class="info-row"><span class="info-label">Google rating</span><span>${_lead.google_rating ? `${_lead.google_rating} ★ (${_lead.google_review_count || 0} reviews)` : '—'}</span></div>
+        <div class="info-row"><span class="info-label">Instagram</span><span>${_lead.has_instagram ? '✓ Aanwezig' : '—'}</span></div>
+      `;
+
+      // Contact
+      const name = [_lead.contact_first_name, _lead.contact_last_name].filter(Boolean).join(' ');
+      document.getElementById('contact-info').innerHTML = `
+        <div class="info-row"><span class="info-label">Naam</span><span>${name || '—'}</span></div>
+        <div class="info-row"><span class="info-label">Email</span><span>${_lead.email || '—'} ${emailStatusBadge(_lead.email_status)}</span></div>
+        <div class="info-row"><span class="info-label">Telefoon</span><span>${_lead.phone || '—'}</span></div>
+      `;
+
+      // Enrichment
+      document.getElementById('enrichment-info').innerHTML = `
+        <div class="info-row"><span class="info-label">Opener</span><span style="font-style:italic;color:var(--text-muted)">${_lead.personalized_opener || '—'}</span></div>
+        <div class="info-row"><span class="info-label">Bron</span><span>${_lead.source || '—'}</span></div>
+        <div class="info-row"><span class="info-label">Gevonden</span><span>${formatDate(_lead.created_at)}</span></div>
+      `;
+
+      // Scores
+      document.getElementById('score-info').innerHTML = `
+        <div style="display:flex;gap:20px;flex-wrap:wrap">
+          <div class="score-block">
+            <div class="score-block-label">Heatr score</div>
+            ${formatScore(_lead.score)}
+          </div>
+          <div class="score-block">
+            <div class="score-block-label">ICP match</div>
+            <div class="score-badge ${(_lead.icp_match || 0) >= 0.7 ? 'score-badge-green' : (_lead.icp_match || 0) >= 0.4 ? 'score-badge-orange' : 'score-badge-red'}">${_lead.icp_match ? Math.round(_lead.icp_match * 100) + '%' : '—'}</div>
+          </div>
+          <div class="score-block">
+            <div class="score-block-label">Website score</div>
+            ${formatScore(_lead.website_score)}
+          </div>
+        </div>
+      `;
+
+      // Summary
+      document.getElementById('ai-summary').textContent = _lead.company_summary || 'Nog geen samenvatting gegenereerd.';
+    }
+
+    function renderActions() {
+      document.getElementById('lead-actions').innerHTML = `
+        <button class="btn btn-ghost btn-sm" onclick="triggerEnrich()">Enrichen</button>
+        <button class="btn btn-primary btn-sm" onclick="sendToWarmr()">Naar Warmr</button>
+      `;
+    }
+
+    function showTab(tab) {
+      ['profiel', 'website', 'campagnes', 'inbox', 'crm'].forEach(t => {
+        document.getElementById(`pane-${t}`).style.display = t === tab ? '' : 'none';
+        document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
+      });
+
+      if (tab === 'website' && !_websiteLoaded) {
+        _websiteLoaded = true;
+        loadWebsiteAnalysis();
+      }
+      if (tab === 'campagnes') loadCampaignHistory();
+      if (tab === 'inbox') loadLeadInbox();
+      if (tab === 'crm') renderCrmStage();
+    }
+
+    async function loadWebsiteAnalysis() {
+      const el = document.getElementById('website-content');
+      try {
+        const wi = await apiCall(`/leads/${LEAD_ID}/website`);
+        if (!wi || !wi.id) {
+          el.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">◎</div>
+              <div class="empty-title">Nog geen website analyse</div>
+              <div class="empty-sub">Trigger een enrichment om de website te analyseren.</div>
+              <button class="btn btn-primary" onclick="triggerEnrich()">Analyse starten</button>
+            </div>`;
+          return;
+        }
+
+        const layers = [
+          { label: 'Technisch', score: wi.technical_score, max: 25 },
+          { label: 'Visueel', score: wi.visual_score, max: 25 },
+          { label: 'Conversie', score: wi.conversion_score, max: 30 },
+          { label: 'Sector specifiek', score: wi.sector_score, max: 15 },
+        ];
+
+        const opps = wi.opportunity_types || [];
+
+        el.innerHTML = `
+          <div class="detail-two-col">
+            <div>
+              <!-- Screenshot -->
+              ${wi.screenshot_url ? `<div class="screenshot-thumb screenshot-lg" style="margin-bottom:20px"><img src="${wi.screenshot_url}" alt="Screenshot" loading="lazy" /></div>` : ''}
+
+              <!-- Score bars -->
+              <div class="card" style="margin-bottom:20px">
+                <h3 class="card-title" style="margin-bottom:16px">Score per laag</h3>
+                <div class="total-score-row">
+                  <span>Totaal</span>
+                  ${formatScore(wi.total_score)}
+                </div>
+                ${layers.map(l => `
+                  <div class="score-bar-row">
+                    <div class="score-bar-label">
+                      <span>${l.label}</span>
+                      <span>${l.score ?? '—'}/${l.max}</span>
+                    </div>
+                    <div class="score-bar">
+                      <div class="score-bar-fill" style="width:${l.score != null ? Math.round((l.score / l.max) * 100) : 0}%"></div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+
+              <!-- Opportunities -->
+              <div class="card">
+                <h3 class="card-title" style="margin-bottom:12px">Kansen</h3>
+                <div>${opportunityBadges(opps) || '<span class="text-muted">Geen kansen gedetecteerd</span>'}</div>
+                <div class="priority-row" style="margin-top:12px">
+                  Prioriteit: <strong>${wi.priority || '—'}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <!-- Claude Vision analysis -->
+              ${wi.visual_analysis_text ? `
+                <div class="card" style="margin-bottom:20px">
+                  <h3 class="card-title" style="margin-bottom:12px">Claude Vision analyse</h3>
+                  <div class="analysis-text">${wi.visual_analysis_text.replace(/\n/g, '<br/>')}</div>
+                </div>
+              ` : ''}
+
+              <!-- Top issues -->
+              ${wi.improvement_points && wi.improvement_points.length ? `
+                <div class="card" style="margin-bottom:20px">
+                  <h3 class="card-title" style="margin-bottom:12px">Verbeterpunten</h3>
+                  <ol class="improvement-list">
+                    ${wi.improvement_points.map(p => `<li>${p}</li>`).join('')}
+                  </ol>
+                </div>
+              ` : ''}
+
+              <!-- Competitor comparison -->
+              ${wi.score_vs_market != null ? `
+                <div class="card">
+                  <h3 class="card-title" style="margin-bottom:12px">Marktpositie</h3>
+                  <div class="market-comparison">
+                    <span class="market-diff ${wi.score_vs_market < 0 ? 'text-red' : 'text-green'}">${wi.score_vs_market > 0 ? '+' : ''}${wi.score_vs_market} punten t.o.v. markt</span>
+                  </div>
+                  <div style="margin-top:8px">
+                    <button class="btn btn-primary btn-sm" onclick="sendReviewEmail()">Stuur review email</button>
+                    <button class="btn btn-ghost btn-sm" onclick="markWebsiteOk()">Markeer OK</button>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      } catch (e) {
+        el.innerHTML = `<div class="error-banner">Website analyse kon niet worden geladen: ${e.message}</div>`;
+      }
+    }
+
+    async function loadCampaignHistory() {
+      const el = document.getElementById('campaign-history');
+      try {
+        const data = await apiCall(`/leads/${LEAD_ID}`);
+        const history = data.campaign_history || [];
+        if (!history.length) {
+          el.innerHTML = '<div class="empty-state-sm">Nog niet in een campagne.</div>';
+          return;
+        }
+        el.innerHTML = history.map(h => `
+          <div class="info-row">
+            <span class="info-label">${formatDate(h.sent_at)}</span>
+            <span>${h.campaign_name || h.campaign_id}</span>
+            <span class="badge badge-neutral">${h.status}</span>
+          </div>
+        `).join('');
+      } catch (_) {
+        el.innerHTML = '<div class="empty-state-sm">Geen campagne data.</div>';
+      }
+    }
+
+    async function loadLeadInbox() {
+      const el = document.getElementById('lead-inbox');
+      el.innerHTML = '<div class="empty-state-sm">Nog geen berichten voor deze lead.</div>';
+    }
+
+    function renderCrmStage() {
+      const stages = ['ontdekt', 'benaderd', 'gereageerd', 'meeting', 'gewonnen', 'verloren'];
+      const current = _lead?.crm_stage || 'ontdekt';
+      document.getElementById('crm-stage-selector').innerHTML = `
+        <div class="stage-pills">
+          ${stages.map(s => `
+            <button class="stage-pill ${s === current ? 'active' : ''}" onclick="setCrmStage('${s}')">${s.charAt(0).toUpperCase() + s.slice(1)}</button>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    async function setCrmStage(stage) {
+      try {
+        await apiCall(`/leads/${LEAD_ID}`, { method: 'PATCH', body: JSON.stringify({ crm_stage: stage }) });
+        _lead.crm_stage = stage;
+        renderCrmStage();
+        showToast(`Status bijgewerkt: ${stage}`, 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function triggerEnrich() {
+      try {
+        await apiCall('/leads/enrich', { method: 'POST', body: JSON.stringify({ lead_ids: [LEAD_ID] }) });
+        showToast('Enrichment in wachtrij geplaatst.', 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function sendToWarmr() {
+      try {
+        const res = await apiCall('/leads/send-to-warmr', {
+          method: 'POST', body: JSON.stringify({ lead_ids: [LEAD_ID], dry_run: false })
+        });
+        showToast(`Lead verstuurd naar Warmr (${res.pushed ?? 1}).`, 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function sendReviewEmail() {
+      try {
+        await apiCall(`/leads/${LEAD_ID}/send-review-email`, { method: 'POST' });
+        showToast('Review email verstuurd via Warmr.', 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function markWebsiteOk() {
+      try {
+        await apiCall(`/leads/${LEAD_ID}/website-review`, {
+          method: 'PATCH', body: JSON.stringify({ status: 'ok' })
+        });
+        showToast('Gemarkeerd als OK.', 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+  </script>
+</body>
+</html>
