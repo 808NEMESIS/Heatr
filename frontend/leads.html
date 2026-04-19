@@ -14,53 +14,80 @@
   </script>
 </head>
 <body>
-  <div class="app-layout">
+  <div class="app-shell">
     <aside class="sidebar" id="sidebar"></aside>
 
-    <div class="main-wrapper">
-      <main class="page-content">
-        <header class="page-header">
+    <div class="main">
+      <header class="topbar">
+        <div class="topbar-crumbs">
+          <span>Heatr</span><span class="sep">·</span><span>Leads</span>
+        </div>
+        <div class="topbar-spacer"></div>
+        <div class="topbar-search">
+          <span class="icon">🔍</span>
+          <input type="text" id="search-input" placeholder="Zoek bedrijf, domein, stad…" />
+          <span class="topbar-kbd">⌘K</span>
+        </div>
+      </header>
+
+      <div class="content">
+        <div class="page-head">
           <div>
-            <h1 class="page-title">Leads</h1>
-            <div class="page-subtitle" id="lead-count">Bezig met laden…</div>
+            <div class="page-head-eyebrow">Lead database</div>
+            <h1>Leads</h1>
+            <p class="page-head-sub" id="lead-count">Bezig met laden…</p>
           </div>
-          <div class="page-actions">
-            <a href="/search.html" class="btn btn-primary">+ Nieuwe zoekopdracht</a>
-          </div>
-        </header>
-
-        <div class="filter-bar">
-          <input type="text" id="search-input" placeholder="Zoek op bedrijf, domein, stad…" />
-          <select id="filter-sector">
-            <option value="">Alle sectoren</option>
-            <option value="makelaars">Makelaars</option>
-            <option value="alternatieve_geneeskunde">Alternatieve Geneeskunde</option>
-            <option value="cosmetische_behandelaars">Cosmetische Behandelaars</option>
-            <option value="bouwbedrijven">Bouwbedrijven</option>
-          </select>
-          <select id="filter-score">
-            <option value="">Alle scores</option>
-            <option value="80">80+ (push-klaar)</option>
-            <option value="60">60+ (sterk)</option>
-            <option value="40">40+ (medium)</option>
-            <option value="0">Onder 40</option>
-          </select>
-          <select id="sort-by">
-            <option value="score">Score (hoog → laag)</option>
-            <option value="name">Naam (A → Z)</option>
-            <option value="reviews">Meeste reviews</option>
-            <option value="rating">Hoogste rating</option>
-          </select>
-        </div>
-
-        <div id="leads-list">
-          <div class="card" style="padding: 0;">
-            <div class="lead-row" style="border-bottom: 1px solid var(--border);"><div class="skeleton" style="height: 60px;"></div></div>
-            <div class="lead-row" style="border-bottom: 1px solid var(--border);"><div class="skeleton" style="height: 60px;"></div></div>
-            <div class="lead-row"><div class="skeleton" style="height: 60px;"></div></div>
+          <div class="page-head-actions">
+            <a href="/search.html" class="btn btn-primary"><span>+</span> Nieuwe zoekopdracht</a>
           </div>
         </div>
-      </main>
+
+        <div class="table-wrap">
+          <div class="table-toolbar">
+            <div class="table-filters">
+              <button class="filter-chip active" data-filter="sector" data-value="">Alle sectoren</button>
+              <button class="filter-chip" data-filter="sector" data-value="makelaars">Makelaars</button>
+              <button class="filter-chip" data-filter="sector" data-value="alternatieve_geneeskunde">Alt. geneeskunde</button>
+              <button class="filter-chip" data-filter="sector" data-value="cosmetische_behandelaars">Cosmetisch</button>
+              <button class="filter-chip" data-filter="sector" data-value="bouwbedrijven">Bouw</button>
+            </div>
+            <div style="margin-left:auto; display:flex; gap: var(--space-3);">
+              <select id="filter-score" class="select" style="width: 150px;">
+                <option value="">Alle scores</option>
+                <option value="70">Hot (70+)</option>
+                <option value="45">Warm (45+)</option>
+                <option value="30">Koud (30-44)</option>
+                <option value="0">Onder 30</option>
+              </select>
+              <select id="sort-by" class="select" style="width: 170px;">
+                <option value="score">Score (hoog → laag)</option>
+                <option value="name">Naam (A → Z)</option>
+                <option value="reviews">Meeste reviews</option>
+                <option value="rating">Hoogste rating</option>
+              </select>
+            </div>
+          </div>
+
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Bedrijf</th>
+                <th>Sector</th>
+                <th>Rating</th>
+                <th>Website</th>
+                <th>Score</th>
+                <th>Email</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="leads-body">
+              <tr><td colspan="7"><div class="skeleton" style="height: 40px;"></div></td></tr>
+              <tr><td colspan="7"><div class="skeleton" style="height: 40px;"></div></td></tr>
+              <tr><td colspan="7"><div class="skeleton" style="height: 40px;"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -70,30 +97,40 @@
     function escapeHtml(str) {
       return String(str || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
+    function initials(name) {
+      return (name || '?').split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+    }
+    function scoreBar(value) {
+      const v = Math.max(0, Math.min(100, value || 0));
+      let color = 'var(--score-poor)';
+      if (v >= 70) color = 'var(--score-good)';
+      else if (v >= 45) color = 'var(--score-mid)';
+      else if (v >= 30) color = 'var(--score-weak)';
+      return `<div class="score-bar"><div class="score-bar-value">${v}</div><div class="score-bar-track"><div class="score-bar-fill" style="width:${v}%; background:${color};"></div></div></div>`;
+    }
 
     let _allLeads = [];
+    let _filters = { search: '', sector: '', minScore: NaN, sort: 'score' };
 
     function applyFilters() {
-      const search = document.getElementById('search-input').value.toLowerCase();
-      const sector = document.getElementById('filter-sector').value;
-      const minScore = parseInt(document.getElementById('filter-score').value, 10);
-      const sortBy = document.getElementById('sort-by').value;
-
       let filtered = _allLeads.filter(l => {
-        if (search && !(l.company_name || '').toLowerCase().includes(search) &&
-            !(l.domain || '').toLowerCase().includes(search) &&
-            !(l.city || '').toLowerCase().includes(search)) return false;
-        if (sector && l.sector !== sector) return false;
-        if (!isNaN(minScore)) {
-          const s = l.score || 0;
-          if (minScore === 0) { if (s >= 40) return false; }
-          else if (s < minScore) return false;
+        if (_filters.search) {
+          const s = _filters.search.toLowerCase();
+          if (!(l.company_name || '').toLowerCase().includes(s) &&
+              !(l.domain || '').toLowerCase().includes(s) &&
+              !(l.city || '').toLowerCase().includes(s)) return false;
+        }
+        if (_filters.sector && l.sector !== _filters.sector) return false;
+        if (!isNaN(_filters.minScore)) {
+          const sc = l.score || 0;
+          if (_filters.minScore === 0) { if (sc >= 30) return false; }
+          else if (sc < _filters.minScore) return false;
         }
         return true;
       });
 
       filtered.sort((a, b) => {
-        switch (sortBy) {
+        switch (_filters.sort) {
           case 'name': return (a.company_name || '').localeCompare(b.company_name || '');
           case 'reviews': return (b.google_review_count || 0) - (a.google_review_count || 0);
           case 'rating': return (b.google_rating || 0) - (a.google_rating || 0);
@@ -101,58 +138,36 @@
         }
       });
 
-      renderLeads(filtered);
-      document.getElementById('lead-count').textContent = `${filtered.length} van ${_allLeads.length} leads`;
+      render(filtered);
+      document.getElementById('lead-count').textContent =
+        `${filtered.length} van ${_allLeads.length} leads tonen`;
     }
 
-    function renderLeads(leads) {
+    function render(leads) {
+      const body = document.getElementById('leads-body');
       if (!leads.length) {
-        document.getElementById('leads-list').innerHTML = '<div class="card empty-state"><div class="empty-state-icon">⊘</div>Geen leads gevonden</div>';
+        body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">⊘</div>Geen leads gevonden met deze filters</div></td></tr>';
         return;
       }
-
-      const html = '<div class="card" style="padding: 0;">' + leads.map(l => `
-        <a href="/lead-detail.html?id=${l.id}" class="lead-row" style="display:block; border-bottom: 1px solid var(--border); text-decoration:none; color:inherit; transition: background var(--transition);" onmouseover="this.style.background='var(--surface-2)'" onmouseout="this.style.background='transparent'">
-          <div class="lead-row-main">
-            <div class="lead-row-name">
-              <div style="display:flex; align-items:center; gap:10px;">
-                <span class="lead-row-company">${escapeHtml(l.company_name)}</span>
-                <span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span>
-              </div>
-              <div class="lead-row-meta">
-                <span class="lead-row-domain">${escapeHtml(l.domain || 'geen domein')}</span>
-                <span style="color: var(--text-muted);">·</span>
-                <span style="color: var(--text-muted); font-size: .8125rem;">${escapeHtml(l.city || '—')}</span>
-                ${l.email ? `<span style="color: var(--text-muted);">·</span><span style="color: var(--green); font-size: .8125rem;">✓ email</span>` : ''}
+      body.innerHTML = leads.map(l => `
+        <tr onclick="window.location.href='/lead-detail.html?id=${l.id}'">
+          <td class="strong">
+            <div class="cell-lead">
+              <div class="cell-lead-avatar">${initials(l.company_name)}</div>
+              <div>
+                <div class="cell-lead-name">${escapeHtml(l.company_name || '—').slice(0, 50)}</div>
+                <div class="cell-lead-sub">${escapeHtml(l.domain || '')}${l.city ? ' · ' + escapeHtml(l.city) : ''}</div>
               </div>
             </div>
-
-            <div class="lead-row-stats">
-              <div style="text-align: right;">
-                <div style="font-weight: 600; color: var(--text);">${(l.google_rating || '—')}${l.google_rating ? '★' : ''}</div>
-                <div style="font-size: .75rem;">${l.google_review_count || 0} reviews</div>
-              </div>
-            </div>
-
-            <div style="text-align: right;">
-              <div style="font-size: .6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; margin-bottom: 2px;">Website</div>
-              ${formatScore(l.website_score || 0)}
-            </div>
-
-            <div style="text-align: right;">
-              <div style="font-size: .6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; margin-bottom: 2px;">Lead</div>
-              ${formatScore(l.score || 0)}
-            </div>
-          </div>
-          ${l.personalized_opener ? `
-            <div style="margin-top: 12px; padding: 10px 12px; background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-input) var(--radius-input) 0; font-size: .8125rem; color: var(--text-2); line-height: 1.5; font-style: italic;">
-              "${escapeHtml(l.personalized_opener.slice(0, 220))}${l.personalized_opener.length > 220 ? '…' : ''}"
-            </div>
-          ` : ''}
-        </a>
-      `).join('') + '</div>';
-
-      document.getElementById('leads-list').innerHTML = html;
+          </td>
+          <td><span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span></td>
+          <td class="tabular">${l.google_rating ? l.google_rating + '★' : '—'} <span class="muted" style="font-size: var(--fs-xs);">${l.google_review_count ? '(' + l.google_review_count + ')' : ''}</span></td>
+          <td style="min-width: 100px;">${scoreBar(l.website_score || 0)}</td>
+          <td>${formatScore(l.score || 0)}</td>
+          <td>${l.email ? `<span class="badge badge-success"><span class="badge-dot"></span>Verified</span>` : `<span class="badge badge-neutral"><span class="badge-dot"></span>Niet gevonden</span>`}</td>
+          <td style="text-align:right;"><button class="btn btn-ghost btn-sm btn-icon" onclick="event.stopPropagation();window.location.href='/lead-detail.html?id=${l.id}'">→</button></td>
+        </tr>
+      `).join('');
     }
 
     (async function init() {
@@ -164,12 +179,26 @@
         _allLeads = res.leads || [];
         applyFilters();
 
-        ['search-input', 'filter-sector', 'filter-score', 'sort-by'].forEach(id => {
-          document.getElementById(id).addEventListener('input', debounce(applyFilters, 200));
-          document.getElementById(id).addEventListener('change', applyFilters);
+        document.getElementById('search-input').addEventListener('input', debounce((e) => {
+          _filters.search = e.target.value; applyFilters();
+        }, 200));
+        document.getElementById('filter-score').addEventListener('change', (e) => {
+          _filters.minScore = parseInt(e.target.value, 10); applyFilters();
+        });
+        document.getElementById('sort-by').addEventListener('change', (e) => {
+          _filters.sort = e.target.value; applyFilters();
+        });
+        document.querySelectorAll('.filter-chip[data-filter="sector"]').forEach(chip => {
+          chip.addEventListener('click', () => {
+            document.querySelectorAll('.filter-chip[data-filter="sector"]').forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+            _filters.sector = chip.dataset.value;
+            applyFilters();
+          });
         });
       } catch (e) {
-        document.getElementById('leads-list').innerHTML = `<div class="card empty-state">Fout bij laden: ${escapeHtml(e.message)}</div>`;
+        document.getElementById('leads-body').innerHTML =
+          `<tr><td colspan="7"><div class="empty-state">Fout: ${escapeHtml(e.message)}</div></td></tr>`;
       }
     })();
   </script>

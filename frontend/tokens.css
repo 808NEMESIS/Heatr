@@ -1,0 +1,364 @@
+/* ============================================================
+   Heatr Design System — colors_and_type.css
+   Aligned to Aerys parent brand: warm blush, editorial aesthetic,
+   with cherry-blossom accent. Calibrated for data-density
+   (tables, scores, filters) — readability > statement typography.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ------------------------------------------------------------
+     COLOR — base palette
+     ------------------------------------------------------------ */
+
+  /* Neutrals — warm off-whites and deep charcoal, never pure white */
+  --ivory:           #FBF7F2;  /* app background — warm off-white */
+  --paper:           #FFFFFF;  /* cards, surfaces */
+  --linen:           #F5EFE6;  /* secondary surface, subtle blocks */
+  --stone-50:        #F2EBE1;  /* hover state / tertiary surface */
+  --stone-100:       #E8DFD2;  /* border strong, dividers */
+  --stone-200:       #D6C9B6;  /* muted chrome */
+  --ink:             #1C1917;  /* primary text — near-black, warm tinted */
+  --ink-2:           #44403C;  /* secondary text */
+  --ink-3:           #78716C;  /* muted/tertiary text */
+  --ink-4:           #A8A29E;  /* placeholder/disabled */
+
+  /* Blush — the signature warm accent */
+  --blush-50:        #FDF4F0;  /* softest wash */
+  --blush-100:       #FCE7DC;  /* background tint */
+  --blush-200:       #F8CDB8;  /* soft chip */
+  --blush-300:       #F1A98A;  /* hover accent */
+  --blush-400:       #E88B68;  /* secondary accent */
+  --blush-500:       #D97757;  /* PRIMARY — warm terracotta */
+  --blush-600:       #BD5B3D;  /* primary pressed */
+  --blush-700:       #9A4731;  /* deep warm */
+
+  /* Cherry-blossom — signature highlight motif */
+  --sakura-50:       #FDF2F4;
+  --sakura-100:      #FBE3E7;
+  --sakura-200:      #F7C7CE;
+  --sakura-300:      #F0A2AE;  /* cherry blossom soft */
+  --sakura-400:      #E57A8B;
+  --sakura-500:      #D85E74;  /* highlight accent */
+  --sakura-600:      #B8465B;
+
+  /* Semantic — tuned to live in a warm palette, never neon */
+  --success:         #5B8A6C;  /* sage green */
+  --success-soft:    #E4EEE5;
+  --warning:         #C38A3C;  /* ochre */
+  --warning-soft:    #F5E9D0;
+  --danger:          #B8493A;  /* rust red */
+  --danger-soft:     #F4DDD6;
+  --info:            #4A6D82;  /* slate blue */
+  --info-soft:       #DDE6EC;
+
+  /* Score scale — used across website/lead scoring badges
+     Running from cold (poor) to warm (excellent) */
+  --score-poor:      #B8493A;  /* 0-29 */
+  --score-poor-bg:   #F4DDD6;
+  --score-weak:      #C38A3C;  /* 30-44 */
+  --score-weak-bg:   #F5E9D0;
+  --score-mid:       #A67B4A;  /* 45-69 */
+  --score-mid-bg:    #EFE4D4;
+  --score-good:      #5B8A6C;  /* 70-100 */
+  --score-good-bg:   #E4EEE5;
+
+  /* Sector tones — each sector gets a subtle identity */
+  --sector-zorg-bg:      #E4EEE5;  /* alt. zorg — sage */
+  --sector-zorg-fg:      #3F6A52;
+  --sector-klinieken-bg: #F7C7CE;  /* cosmetische klinieken — sakura */
+  --sector-klinieken-fg: #9A3A4F;
+  --sector-makelaars-bg: #DDE6EC;  /* makelaars — slate */
+  --sector-makelaars-fg: #365A75;
+  --sector-bouw-bg:      #F5E9D0;  /* bouw — ochre */
+  --sector-bouw-fg:      #7A5420;
+
+  /* Pipeline stage tones — progress from cool (discovery) to warm (won) */
+  --stage-ontdekt-bg:    #F2EBE1;  --stage-ontdekt-fg:    #78716C;
+  --stage-review-bg:     #DDE6EC;  --stage-review-fg:     #4A6D82;
+  --stage-reageerd-bg:   #FCE7DC;  --stage-reageerd-fg:   #BD5B3D;
+  --stage-gesprek-bg:    #FBE3E7;  --stage-gesprek-fg:    #B8465B;
+  --stage-offerte-bg:    #F5E9D0;  --stage-offerte-fg:    #C38A3C;
+  --stage-gewonnen-bg:   #E4EEE5;  --stage-gewonnen-fg:   #3F6A52;
+  --stage-verloren-bg:   #F4DDD6;  --stage-verloren-fg:   #9A4731;
+  --stage-later-bg:      #EDE5E0;  --stage-later-fg:      #A8998C;
+
+  /* Focus ring — warm and subtle */
+  --focus-ring:      0 0 0 3px rgba(217, 119, 87, 0.18);
+
+  /* ------------------------------------------------------------
+     TYPE — scale & tokens
+     ------------------------------------------------------------ */
+
+  --font-display:    'Fraunces', 'Playfair Display', Georgia, serif;
+  --font-ui:         'Plus Jakarta Sans', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:       'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+
+  /* Display settings for Fraunces — warm editorial feel */
+  --display-settings: "opsz" 120, "SOFT" 50;
+
+  /* Size scale — calibrated for data density (small body, big display)  */
+  --fs-xs:    11px;   --lh-xs:    15px;
+  --fs-sm:    12px;   --lh-sm:    17px;
+  --fs-base:  13.5px; --lh-base:  20px;   /* default UI body */
+  --fs-md:    14.5px; --lh-md:    22px;
+  --fs-lg:    16px;   --lh-lg:    24px;
+  --fs-xl:    18px;   --lh-xl:    26px;
+  --fs-2xl:   22px;   --lh-2xl:   30px;
+  --fs-3xl:   28px;   --lh-3xl:   34px;
+  --fs-4xl:   36px;   --lh-4xl:   42px;
+  --fs-5xl:   48px;   --lh-5xl:   54px;
+
+  /* Semantic weights */
+  --fw-regular:   400;
+  --fw-medium:    500;
+  --fw-semibold:  600;
+  --fw-bold:      700;
+
+  /* Letter spacing */
+  --tracking-tight:   -0.02em;
+  --tracking-snug:    -0.01em;
+  --tracking-normal:  0;
+  --tracking-wide:    0.04em;
+  --tracking-wider:   0.08em;   /* for eyebrow/uppercase */
+
+  /* ------------------------------------------------------------
+     SHADOW + ELEVATION
+     ------------------------------------------------------------ */
+  --shadow-xs:   0 1px 2px rgba(28, 25, 23, 0.04);
+  --shadow-sm:   0 1px 3px rgba(28, 25, 23, 0.06), 0 1px 2px rgba(28, 25, 23, 0.03);
+  --shadow-md:   0 2px 6px rgba(28, 25, 23, 0.06), 0 4px 16px rgba(28, 25, 23, 0.04);
+  --shadow-lg:   0 8px 24px rgba(28, 25, 23, 0.10), 0 16px 40px rgba(28, 25, 23, 0.06);
+  --shadow-warm: 0 2px 12px rgba(217, 119, 87, 0.12);  /* blush-tinted for CTAs */
+
+  /* ------------------------------------------------------------
+     RADIUS + BORDER
+     ------------------------------------------------------------ */
+  --radius-xs:    4px;
+  --radius-sm:    6px;
+  --radius-md:    8px;    /* default inputs, buttons */
+  --radius-lg:    10px;   /* default card */
+  --radius-xl:    14px;   /* hero / panel */
+  --radius-pill:  999px;
+
+  --border:       1px solid var(--stone-100);
+  --border-soft:  1px solid var(--stone-50);
+  --border-strong:1px solid var(--stone-200);
+
+  /* ------------------------------------------------------------
+     SPACING
+     ------------------------------------------------------------ */
+  --space-0:   0;
+  --space-1:   2px;
+  --space-2:   4px;
+  --space-3:   6px;
+  --space-4:   8px;
+  --space-5:   12px;
+  --space-6:   16px;
+  --space-7:   20px;
+  --space-8:   24px;
+  --space-9:   32px;
+  --space-10:  40px;
+  --space-11:  56px;
+  --space-12:  72px;
+
+  /* ------------------------------------------------------------
+     LAYOUT
+     ------------------------------------------------------------ */
+  --sidebar-w:       232px;
+  --header-h:        56px;
+  --content-max:     1360px;
+
+  /* ------------------------------------------------------------
+     MOTION — gentle, editorial (no bounces)
+     ------------------------------------------------------------ */
+  --ease-out:     cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out:  cubic-bezier(0.4, 0, 0.2, 1);
+  --t-fast:       120ms;
+  --t-base:       180ms;
+  --t-slow:       260ms;
+
+  --transition:   all var(--t-base) var(--ease-out);
+}
+
+/* ============================================================
+   SEMANTIC TYPE STYLES — drop these classes on elements directly
+   ============================================================ */
+
+/* Eyebrow — for KPI labels, category labels */
+.eyebrow {
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Display — for page titles, KPI values, hero numbers */
+.display-xl {
+  font-family: var(--font-display);
+  font-variation-settings: var(--display-settings);
+  font-size: var(--fs-5xl);
+  line-height: var(--lh-5xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink);
+}
+.display-lg {
+  font-family: var(--font-display);
+  font-variation-settings: var(--display-settings);
+  font-size: var(--fs-4xl);
+  line-height: var(--lh-4xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink);
+}
+.display-md {
+  font-family: var(--font-display);
+  font-variation-settings: var(--display-settings);
+  font-size: var(--fs-3xl);
+  line-height: var(--lh-3xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-snug);
+  color: var(--ink);
+}
+.display-sm {
+  font-family: var(--font-display);
+  font-variation-settings: var(--display-settings);
+  font-size: var(--fs-2xl);
+  line-height: var(--lh-2xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-snug);
+  color: var(--ink);
+}
+
+/* Headings — UI stack for in-page titles */
+.h1 {
+  font-family: var(--font-display);
+  font-variation-settings: var(--display-settings);
+  font-size: var(--fs-3xl);
+  line-height: var(--lh-3xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink);
+}
+.h2 {
+  font-family: var(--font-ui);
+  font-size: var(--fs-xl);
+  line-height: var(--lh-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-snug);
+  color: var(--ink);
+}
+.h3 {
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+.h4 {
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+/* Body */
+.body-lg {
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
+  font-weight: var(--fw-regular);
+  color: var(--ink-2);
+}
+.body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  font-weight: var(--fw-regular);
+  color: var(--ink-2);
+}
+.body-sm {
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--fw-regular);
+  color: var(--ink-2);
+}
+
+/* Muted — for metadata, captions, timestamps */
+.muted {
+  color: var(--ink-3);
+}
+.muted-strong {
+  color: var(--ink-4);
+}
+
+/* Label — for form labels */
+.label {
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--ink-2);
+}
+
+/* Mono — for tabular numbers, IDs, code */
+.mono, .tabular {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Editorial italic — Fraunces italic, used sparingly for quotes / openers */
+.quote {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--fs-md);
+  line-height: var(--lh-lg);
+  color: var(--ink-2);
+  font-variation-settings: "opsz" 60, "SOFT" 80;
+}
+
+/* ============================================================
+   BASE ELEMENT RESET + DEFAULTS
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-size: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  color: var(--ink);
+  background: var(--ivory);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11" 1, "ss01" 1;  /* Jakarta's stylistic tweaks */
+}
+
+h1 { @extend .h1; }
+
+p { color: var(--ink-2); text-wrap: pretty; }
+
+a { color: var(--blush-600); text-decoration: none; transition: var(--transition); }
+a:hover { color: var(--blush-700); }
+
+small { font-size: var(--fs-sm); color: var(--ink-3); }
+
+code, kbd, pre { font-family: var(--font-mono); }
+
+::selection {
+  background: var(--blush-200);
+  color: var(--ink);
+}

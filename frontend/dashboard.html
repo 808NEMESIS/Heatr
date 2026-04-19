@@ -14,72 +14,140 @@
   </script>
 </head>
 <body>
-  <div class="app-layout">
+  <div class="app-shell">
     <aside class="sidebar" id="sidebar"></aside>
 
-    <div class="main-wrapper">
-      <main class="page-content">
-        <header class="page-header">
-          <div>
-            <h1 class="page-title">Dashboard</h1>
-            <div class="page-subtitle">Realtime overzicht van je outbound pipeline</div>
-          </div>
-          <div class="page-actions">
-            <a href="/search.html" class="btn btn-primary">+ Nieuwe zoekopdracht</a>
-          </div>
-        </header>
+    <div class="main">
+      <header class="topbar">
+        <div class="topbar-crumbs">
+          <span>Heatr</span><span class="sep">·</span><span>Dashboard</span>
+        </div>
+        <div class="topbar-spacer"></div>
+        <div class="topbar-search">
+          <span class="icon">🔍</span>
+          <input type="text" placeholder="Zoek bedrijven, leads, sectoren…" />
+          <span class="topbar-kbd">⌘K</span>
+        </div>
+      </header>
 
-        <section class="kpi-grid">
-          <div class="kpi"><div class="kpi-accent"></div>
+      <div class="content">
+        <!-- Page head — greeting -->
+        <div class="page-head">
+          <div>
+            <div class="page-head-eyebrow" id="greeting-date">Vandaag</div>
+            <h1 id="greeting-title">Goedemorgen</h1>
+            <p class="page-head-sub" id="greeting-sub">Realtime overzicht van je outbound pipeline.</p>
+          </div>
+          <div class="page-head-actions">
+            <button class="btn btn-secondary"><span>↓</span> Exporteer</button>
+            <a href="/search.html" class="btn btn-primary"><span>+</span> Nieuwe zoekopdracht</a>
+          </div>
+        </div>
+
+        <!-- KPI row -->
+        <div class="grid-4">
+          <div class="kpi">
             <div class="kpi-label">Totale leads</div>
             <div class="kpi-value" id="kpi-total">—</div>
-            <div class="kpi-delta flat" id="kpi-total-detail"></div>
+            <div class="kpi-meta">
+              <span class="kpi-delta" id="kpi-total-delta"></span>
+              <span id="kpi-total-meta">GDPR-safe</span>
+            </div>
           </div>
-          <div class="kpi"><div class="kpi-accent"></div>
-            <div class="kpi-label">Gem. score</div>
-            <div class="kpi-value" id="kpi-avg-score">—</div>
-            <div class="kpi-delta flat" id="kpi-avg-detail"></div>
+          <div class="kpi">
+            <div class="kpi-label">Hot leads</div>
+            <div class="kpi-value" id="kpi-hot">—</div>
+            <div class="kpi-meta">
+              <span id="kpi-hot-meta">score ≥ 70</span>
+            </div>
           </div>
-          <div class="kpi"><div class="kpi-accent"></div>
+          <div class="kpi">
             <div class="kpi-label">Push-klaar</div>
             <div class="kpi-value" id="kpi-pushable">—</div>
-            <div class="kpi-delta flat">score ≥ 65 + email</div>
+            <div class="kpi-meta">
+              <span id="kpi-pushable-meta">≥ 65 + verified email</span>
+            </div>
           </div>
-          <div class="kpi"><div class="kpi-accent"></div>
+          <div class="kpi">
             <div class="kpi-label">Met openers</div>
             <div class="kpi-value" id="kpi-openers">—</div>
-            <div class="kpi-delta flat" id="kpi-openers-detail"></div>
+            <div class="kpi-meta">
+              <span id="kpi-openers-meta">AI-gegenereerd</span>
+            </div>
           </div>
-        </section>
-
-        <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 20px;">
-          <section class="card card-elevated">
-            <div class="card-header">
-              <div>
-                <div class="card-title">Top opportunities — beste openers</div>
-                <div class="card-subtitle">Leads met sterkste pijnpunten en concurrent-data</div>
-              </div>
-              <a href="/website-kansen.html" class="btn btn-ghost btn-sm">Alle kansen →</a>
-            </div>
-            <div id="top-opportunities">
-              <div class="skeleton" style="height: 80px; margin-bottom: 12px;"></div>
-              <div class="skeleton" style="height: 80px; margin-bottom: 12px;"></div>
-              <div class="skeleton" style="height: 80px;"></div>
-            </div>
-          </section>
-
-          <section class="card card-elevated">
-            <div class="card-header">
-              <div class="card-title">Per sector</div>
-            </div>
-            <div id="sector-breakdown">
-              <div class="skeleton" style="height: 48px; margin-bottom: 12px;"></div>
-              <div class="skeleton" style="height: 48px; margin-bottom: 12px;"></div>
-              <div class="skeleton" style="height: 48px;"></div>
-            </div>
-          </section>
         </div>
-      </main>
+
+        <!-- Two-column: hot leads + weekly rhythm / pipeline -->
+        <div style="display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--space-6);">
+          <!-- Hot leads card -->
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-title">🔥 Hot leads — beste openers</div>
+                <div class="card-sub">Gesorteerd op Heatr-score, hoogste match eerst</div>
+              </div>
+              <a href="/leads.html" class="btn btn-ghost btn-sm">Alle leads →</a>
+            </div>
+            <table class="data" id="hot-leads-table">
+              <thead>
+                <tr>
+                  <th>Bedrijf</th>
+                  <th>Sector</th>
+                  <th>Score</th>
+                  <th>Website</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="hot-leads-body">
+                <tr><td colspan="5"><div class="skeleton" style="height: 40px;"></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="col" style="gap: var(--space-6);">
+            <!-- Weekly rhythm callout -->
+            <div class="card" style="position:relative; overflow:hidden;">
+              <div class="card-body">
+                <div class="eyebrow" style="margin-bottom: var(--space-5);">Weekritme</div>
+                <div class="display-md" style="margin-bottom: var(--space-5);">Pipeline draait soepel</div>
+                <p class="body" style="margin-bottom: var(--space-6);" id="rhythm-body">
+                  Warmr heeft deze week warmup emails verstuurd. Verrijking loopt op alle nieuwe leads.
+                </p>
+                <div class="row" style="gap: var(--space-4);">
+                  <a href="/website-kansen.html" class="btn btn-primary btn-sm">Open kansen</a>
+                  <a href="/analytics.html" class="btn btn-ghost btn-sm">Bekijk rapport</a>
+                </div>
+              </div>
+            </div>
+
+            <!-- Pipeline verdeling -->
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">Per sector</div>
+              </div>
+              <div class="card-body">
+                <div class="col" id="sector-breakdown" style="gap: var(--space-5);">
+                  <div class="skeleton" style="height: 24px;"></div>
+                  <div class="skeleton" style="height: 24px;"></div>
+                  <div class="skeleton" style="height: 24px;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Website kansen callout strip -->
+        <div class="callout" id="kansen-callout" style="display:none;">
+          <div class="callout-icon">◎</div>
+          <div>
+            <div class="callout-title" id="callout-title"></div>
+            <div class="callout-body" id="callout-body"></div>
+          </div>
+          <div style="margin-left:auto;">
+            <a href="/website-kansen.html" class="btn btn-secondary btn-sm">Bekijk →</a>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -90,23 +158,48 @@
       return String(str || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
+    function initials(name) {
+      return (name || '?').split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+    }
+
+    function scoreBar(value) {
+      const v = Math.max(0, Math.min(100, value || 0));
+      let color = 'var(--score-poor)';
+      if (v >= 70) color = 'var(--score-good)';
+      else if (v >= 45) color = 'var(--score-mid)';
+      else if (v >= 30) color = 'var(--score-weak)';
+      return `
+        <div class="score-bar">
+          <div class="score-bar-value">${v}</div>
+          <div class="score-bar-track"><div class="score-bar-fill" style="width:${v}%; background:${color};"></div></div>
+        </div>
+      `;
+    }
+
     (async function init() {
       await requireAuth();
       renderSidebar('dashboard');
 
+      // Greeting
+      const now = new Date();
+      const hour = now.getHours();
+      const greet = hour < 12 ? 'Goedemorgen' : (hour < 18 ? 'Goedemiddag' : 'Goedenavond');
+      const days = ['zondag','maandag','dinsdag','woensdag','donderdag','vrijdag','zaterdag'];
+      const months = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
+      document.getElementById('greeting-date').textContent =
+        `Vandaag · ${days[now.getDay()]} ${now.getDate()} ${months[now.getMonth()]}`;
+      document.getElementById('greeting-title').textContent = `${greet}, Sami`;
+
       try {
-        const leadsRes = await apiCall('/leads?limit=100');
-        const leads = leadsRes.leads || [];
+        const res = await apiCall('/leads?limit=200');
+        const leads = res.leads || [];
 
+        // KPIs
         document.getElementById('kpi-total').textContent = leads.length;
-        document.getElementById('kpi-total-detail').textContent = `${leads.filter(l => l.gdpr_safe).length} GDPR-safe`;
+        document.getElementById('kpi-total-delta').textContent = `${leads.filter(l => l.gdpr_safe).length} GDPR-safe`;
 
-        const scores = leads.map(l => l.score || 0).filter(s => s > 0);
-        const avgScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0) / scores.length) : 0;
-        document.getElementById('kpi-avg-score').textContent = avgScore;
-        if (scores.length) {
-          document.getElementById('kpi-avg-detail').textContent = `range ${Math.min(...scores)}–${Math.max(...scores)}`;
-        }
+        const hot = leads.filter(l => (l.score||0) >= 70).length;
+        document.getElementById('kpi-hot').textContent = hot;
 
         const pushable = leads.filter(l => (l.score||0) >= 65 && l.email).length;
         document.getElementById('kpi-pushable').textContent = pushable;
@@ -114,31 +207,37 @@
         const withOpeners = leads.filter(l => l.personalized_opener).length;
         document.getElementById('kpi-openers').textContent = withOpeners;
         if (leads.length) {
-          document.getElementById('kpi-openers-detail').textContent = `${Math.round(withOpeners/leads.length*100)}% verrijkt`;
+          document.getElementById('kpi-openers-meta').textContent = `${Math.round(withOpeners/leads.length*100)}% verrijkt`;
         }
 
-        const opps = leads
+        document.getElementById('greeting-sub').textContent =
+          `${leads.length} leads in je pipeline — ${withOpeners} met AI-gegenereerde openers klaar voor outreach.`;
+
+        // Hot leads table
+        const top = leads
           .filter(l => l.personalized_opener)
           .sort((a, b) => (b.score || 0) - (a.score || 0))
           .slice(0, 5);
 
-        const oppsHtml = opps.map(l => `
-          <a href="/lead-detail.html?id=${l.id}" style="display:block; padding: 14px 0; border-bottom: 1px solid var(--border); text-decoration:none; color: inherit;">
-            <div style="display:flex; align-items:center; justify-content: space-between; margin-bottom: 6px; gap: 12px;">
-              <div style="display:flex; align-items:center; gap: 10px; min-width: 0; flex: 1;">
-                <span class="lead-row-company" style="font-size: .9375rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(l.company_name)}</span>
-                <span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span>
+        document.getElementById('hot-leads-body').innerHTML = top.length ? top.map(l => `
+          <tr onclick="window.location.href='/lead-detail.html?id=${l.id}'">
+            <td>
+              <div class="cell-lead">
+                <div class="cell-lead-avatar">${initials(l.company_name)}</div>
+                <div>
+                  <div class="cell-lead-name">${escapeHtml(l.company_name || '—').slice(0, 40)}</div>
+                  <div class="cell-lead-sub">${escapeHtml(l.city || '—')} · ${escapeHtml(l.domain || '')}</div>
+                </div>
               </div>
-              ${formatScore(l.score || 0)}
-            </div>
-            <div style="font-size: .875rem; color: var(--text-2); line-height: 1.5; font-style: italic;">
-              "${escapeHtml((l.personalized_opener || '').slice(0, 200))}${(l.personalized_opener || '').length > 200 ? '…' : ''}"
-            </div>
-          </a>
-        `).join('');
+            </td>
+            <td><span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span></td>
+            <td>${formatScore(l.score || 0)}</td>
+            <td style="min-width: 100px;">${scoreBar(l.website_score || 0)}</td>
+            <td style="text-align:right;"><button class="btn btn-ghost btn-sm btn-icon" onclick="event.stopPropagation();window.location.href='/lead-detail.html?id=${l.id}'">→</button></td>
+          </tr>
+        `).join('') : '<tr><td colspan="5"><div class="empty-state">Nog geen verrijkte leads met openers</div></td></tr>';
 
-        document.getElementById('top-opportunities').innerHTML = oppsHtml || '<div class="empty-state">Nog geen leads met openers — draai de enrichment pipeline</div>';
-
+        // Sector breakdown
         const bySector = {};
         leads.forEach(l => {
           const s = l.sector || 'onbekend';
@@ -153,23 +252,31 @@
             const avg = data.count ? Math.round(data.totalScore / data.count) : 0;
             const pct = leads.length ? Math.round(data.count / leads.length * 100) : 0;
             return `
-              <div style="margin-bottom: 14px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+              <div>
+                <div class="row" style="justify-content: space-between; margin-bottom: var(--space-3);">
                   <span class="sector-chip sector-${sector}">${SECTOR_LABELS[sector] || sector}</span>
-                  <span style="font-size: .8125rem; color: var(--text-muted); font-weight: 500;">${data.count} · ⌀${avg}</span>
+                  <span class="mono" style="font-size: var(--fs-sm); color: var(--ink-3);">${data.count} · ⌀${avg}</span>
                 </div>
-                <div style="height: 6px; background: var(--surface-3); border-radius: 3px; overflow: hidden;">
-                  <div style="height: 100%; width: ${pct}%; background: var(--accent-gradient); border-radius: 3px;"></div>
+                <div class="score-bar-track" style="height: 6px;">
+                  <div class="score-bar-fill" style="width:${pct}%; background: linear-gradient(90deg, var(--blush-300), var(--sakura-300));"></div>
                 </div>
               </div>
             `;
           }).join('');
-
         document.getElementById('sector-breakdown').innerHTML = sectorHtml || '<div class="empty-state">Geen data</div>';
+
+        // Kansen callout
+        const opps = leads.filter(l => l.website_score && l.website_score < 45);
+        if (opps.length) {
+          document.getElementById('kansen-callout').style.display = '';
+          document.getElementById('callout-title').textContent = `${opps.length} website-kansen gevonden`;
+          document.getElementById('callout-body').textContent =
+            `Leads met website score onder 45 — duidelijke verbeterpunten die Aerys kan oppakken.`;
+        }
 
       } catch (e) {
         console.error(e);
-        document.getElementById('top-opportunities').innerHTML = `<div class="empty-state">Fout bij laden: ${escapeHtml(e.message)}</div>`;
+        document.getElementById('hot-leads-body').innerHTML = `<tr><td colspan="5"><div class="empty-state">Fout bij laden: ${escapeHtml(e.message)}</div></td></tr>`;
       }
     })();
   </script>

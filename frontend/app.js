@@ -113,12 +113,13 @@ async function apiCall(endpoint, options = {}) {
  */
 function formatScore(score) {
   if (score === null || score === undefined) {
-    return '<span class="badge badge-neutral">—</span>';
+    return '<span class="score-badge score-badge-gray">—</span>';
   }
   const n = Number(score);
-  let cls = 'score-badge-red';
-  if (n >= 70) cls = 'score-badge-green';
-  else if (n >= 45) cls = 'score-badge-orange';
+  let cls = 'score-badge-red';      // 0-29 poor
+  if (n >= 70) cls = 'score-badge-green';   // 70-100 good
+  else if (n >= 45) cls = 'score-badge-yellow'; // 45-69 mid
+  else if (n >= 30) cls = 'score-badge-orange'; // 30-44 weak
   return `<span class="score-badge ${cls}">${n}</span>`;
 }
 
@@ -242,23 +243,30 @@ function renderSidebar(activePage) {
 
   const items = _NAV_ITEMS.map(item => {
     const active = item.key === activePage ? ' active' : '';
-    return `<a href="${item.href}" class="${active.trim()}">
-      <span style="font-size:18px;width:22px;display:inline-block;text-align:center;">${item.icon}</span>
+    return `<a href="${item.href}" class="sidebar-item${active}">
+      <span class="icon" style="display:inline-flex;align-items:center;justify-content:center;font-size:14px;width:16px;">${item.icon}</span>
       <span>${item.label}</span>
     </a>`;
   }).join('');
 
   el.innerHTML = `
-    <div class="sidebar-logo">
-      <div class="logo-wordmark">Heatr</div>
-      <div class="logo-sub">B2B intelligence</div>
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-mark">H</div>
+      <div class="sidebar-brand-name">Heatr</div>
     </div>
-    <nav class="sidebar-nav">${items}</nav>
-    <div class="sidebar-bottom">
-      <a href="#" onclick="signOut(); return false;">
-        <span style="font-size:18px;width:22px;display:inline-block;text-align:center;">⎋</span>
-        <span>Uitloggen</span>
-      </a>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Navigatie</div>
+      ${items}
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-avatar">AE</div>
+      <div style="flex:1; min-width:0;">
+        <div class="sidebar-user-name">Aerys</div>
+        <div class="sidebar-user-org">info@aeryssolution.nl</div>
+      </div>
+      <a href="#" onclick="signOut(); return false;" class="btn btn-ghost btn-sm btn-icon" title="Uitloggen" style="width:28px;height:28px;padding:0;">⎋</a>
     </div>
   `;
 }

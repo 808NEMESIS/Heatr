@@ -14,45 +14,57 @@
   </script>
 </head>
 <body>
-  <div class="app-layout">
+  <div class="app-shell">
     <aside class="sidebar" id="sidebar"></aside>
 
-    <div class="main-wrapper">
-      <main class="page-content">
-        <header class="page-header">
+    <div class="main">
+      <header class="topbar">
+        <div class="topbar-crumbs">
+          <span>Heatr</span><span class="sep">·</span><span>Website Kansen</span>
+        </div>
+        <div class="topbar-spacer"></div>
+      </header>
+
+      <div class="content">
+        <div class="page-head">
           <div>
-            <h1 class="page-title">Website Kansen</h1>
-            <div class="page-subtitle">Leads met de grootste website-pijnpunten — eerste prioriteit voor outreach</div>
+            <div class="page-head-eyebrow">Website intelligence</div>
+            <h1>Website Kansen</h1>
+            <p class="page-head-sub">Leads met de grootste website-pijnpunten — eerste prioriteit voor outreach.</p>
           </div>
-        </header>
-
-        <div class="filter-bar">
-          <select id="filter-sector">
-            <option value="">Alle sectoren</option>
-            <option value="makelaars">Makelaars</option>
-            <option value="alternatieve_geneeskunde">Alternatieve Geneeskunde</option>
-            <option value="cosmetische_behandelaars">Cosmetische Behandelaars</option>
-            <option value="bouwbedrijven">Bouwbedrijven</option>
-          </select>
-          <select id="filter-priority">
-            <option value="">Alle prioriteiten</option>
-            <option value="urgent">Urgent (score &lt;30)</option>
-            <option value="high">Hoog (score 30-50)</option>
-            <option value="medium">Medium (score 50-70)</option>
-          </select>
-          <select id="sort-by">
-            <option value="opportunity">Grootste kans (lage website score)</option>
-            <option value="market">Meest onder marktgemiddelde</option>
-            <option value="score">Hoogste lead score</option>
-          </select>
         </div>
 
-        <div id="kansen-list">
-          <div class="card" style="margin-bottom: 12px;"><div class="skeleton" style="height: 120px;"></div></div>
-          <div class="card" style="margin-bottom: 12px;"><div class="skeleton" style="height: 120px;"></div></div>
-          <div class="card"><div class="skeleton" style="height: 120px;"></div></div>
+        <div class="table-wrap">
+          <div class="table-toolbar">
+            <div class="table-filters">
+              <button class="filter-chip active" data-filter="sector" data-value="">Alle sectoren</button>
+              <button class="filter-chip" data-filter="sector" data-value="makelaars">Makelaars</button>
+              <button class="filter-chip" data-filter="sector" data-value="alternatieve_geneeskunde">Alt. geneeskunde</button>
+              <button class="filter-chip" data-filter="sector" data-value="cosmetische_behandelaars">Cosmetisch</button>
+              <button class="filter-chip" data-filter="sector" data-value="bouwbedrijven">Bouw</button>
+            </div>
+            <div style="margin-left:auto; display:flex; gap: var(--space-3);">
+              <select id="filter-priority" class="select" style="width: 160px;">
+                <option value="">Alle prioriteiten</option>
+                <option value="urgent">Urgent (&lt;30)</option>
+                <option value="high">Hoog (30-44)</option>
+                <option value="medium">Medium (45-69)</option>
+              </select>
+              <select id="sort-by" class="select" style="width: 200px;">
+                <option value="opportunity">Grootste kans (lage score)</option>
+                <option value="market">Onder marktgemiddelde</option>
+                <option value="score">Hoogste lead score</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="kansen-list" style="padding: var(--space-6); display:flex; flex-direction:column; gap: var(--space-5);">
+            <div class="skeleton" style="height: 120px;"></div>
+            <div class="skeleton" style="height: 120px;"></div>
+            <div class="skeleton" style="height: 120px;"></div>
+          </div>
         </div>
-      </main>
+      </div>
     </div>
   </div>
 
@@ -64,30 +76,27 @@
     }
 
     let _allLeads = [];
+    let _filters = { sector: '', priority: '', sort: 'opportunity' };
 
     function priorityFromScore(score) {
-      if (score < 30) return { label: 'urgent', color: 'red' };
-      if (score < 50) return { label: 'hoog', color: 'orange' };
-      if (score < 70) return { label: 'medium', color: 'yellow' };
-      return { label: 'laag', color: 'green' };
+      if (score < 30) return { label: 'urgent', badge: 'badge-danger' };
+      if (score < 45) return { label: 'hoog', badge: 'badge-warning' };
+      if (score < 70) return { label: 'medium', badge: 'badge-info' };
+      return { label: 'laag', badge: 'badge-success' };
     }
 
     function applyFilters() {
-      const sector = document.getElementById('filter-sector').value;
-      const priority = document.getElementById('filter-priority').value;
-      const sortBy = document.getElementById('sort-by').value;
-
       let filtered = _allLeads.filter(l => {
-        if (sector && l.sector !== sector) return false;
+        if (_filters.sector && l.sector !== _filters.sector) return false;
         const ws = l.website_score || 0;
-        if (priority === 'urgent' && ws >= 30) return false;
-        if (priority === 'high' && (ws < 30 || ws >= 50)) return false;
-        if (priority === 'medium' && (ws < 50 || ws >= 70)) return false;
+        if (_filters.priority === 'urgent' && ws >= 30) return false;
+        if (_filters.priority === 'high' && (ws < 30 || ws >= 45)) return false;
+        if (_filters.priority === 'medium' && (ws < 45 || ws >= 70)) return false;
         return ws > 0;
       });
 
       filtered.sort((a, b) => {
-        switch (sortBy) {
+        switch (_filters.sort) {
           case 'market': return (a.score_vs_market || 0) - (b.score_vs_market || 0);
           case 'score': return (b.score || 0) - (a.score || 0);
           default: return (a.website_score || 0) - (b.website_score || 0);
@@ -98,48 +107,47 @@
     }
 
     function render(leads) {
+      const container = document.getElementById('kansen-list');
       if (!leads.length) {
-        document.getElementById('kansen-list').innerHTML = '<div class="card empty-state"><div class="empty-state-icon">⊘</div>Geen kansen gevonden</div>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⊘</div>Geen kansen gevonden met deze filters</div>';
         return;
       }
 
-      document.getElementById('kansen-list').innerHTML = leads.map(l => {
+      container.innerHTML = leads.map(l => {
         const ws = l.website_score || 0;
         const prio = priorityFromScore(ws);
         const vsMkt = l.score_vs_market;
         const opener = l.personalized_opener || '';
 
         return `
-          <a href="/lead-detail.html?id=${l.id}" class="card" style="display:block; margin-bottom: 12px; text-decoration:none; color:inherit; transition: var(--transition);" onmouseover="this.style.boxShadow='var(--shadow)'; this.style.borderColor='var(--border-2)'" onmouseout="this.style.boxShadow=''; this.style.borderColor='var(--border)'">
-            <div style="display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: start;">
-              <div>
-                <div style="display:flex; align-items:center; gap: 10px; margin-bottom: 4px;">
-                  <span class="lead-row-company" style="font-size: 1.0625rem;">${escapeHtml(l.company_name)}</span>
-                  <span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span>
-                  <span class="score-badge score-badge-${prio.color}">${prio.label}</span>
+          <a href="/lead-detail.html?id=${l.id}" class="card" style="display:block; text-decoration:none; color:inherit; transition: var(--transition);" onmouseover="this.style.boxShadow='var(--shadow-sm)'; this.style.borderColor='var(--stone-200)'" onmouseout="this.style.boxShadow=''; this.style.borderColor='var(--stone-100)'">
+            <div class="card-body">
+              <div style="display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-6); align-items: start;">
+                <div>
+                  <div class="row" style="gap: var(--space-4); margin-bottom: var(--space-3);">
+                    <span class="h2">${escapeHtml(l.company_name)}</span>
+                    <span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span>
+                    <span class="badge ${prio.badge}">${prio.label}</span>
+                  </div>
+                  <div class="body-sm muted">
+                    <a href="https://${l.domain}" target="_blank" onclick="event.stopPropagation()">${escapeHtml(l.domain || '—')} ↗</a>
+                    · ${escapeHtml(l.city || '')}
+                    ${l.google_rating ? ` · ${l.google_rating}★ (${l.google_review_count || 0})` : ''}
+                  </div>
                 </div>
-                <div style="font-size: .8125rem; color: var(--text-muted);">
-                  <a href="https://${l.domain}" target="_blank" style="color: var(--accent);" onclick="event.stopPropagation()">${escapeHtml(l.domain || '—')} ↗</a>
-                  · ${escapeHtml(l.city || '')}
-                  · ${l.google_rating ? `${l.google_rating}★` : ''}${l.google_review_count ? ` (${l.google_review_count})` : ''}
+                <div style="text-align: center;">
+                  <div class="eyebrow" style="margin-bottom: var(--space-2);">Website</div>
+                  <div class="display-lg" style="font-variant-numeric: tabular-nums;">${ws}</div>
+                  <div class="body-sm muted">/100</div>
+                </div>
+                <div style="text-align: center;">
+                  <div class="eyebrow" style="margin-bottom: var(--space-2);">vs markt</div>
+                  <div class="display-lg" style="font-variant-numeric: tabular-nums; color: ${vsMkt > 0 ? 'var(--success)' : (vsMkt < 0 ? 'var(--danger)' : 'var(--ink)')};">${vsMkt !== null && vsMkt !== undefined ? (vsMkt > 0 ? '+' : '') + vsMkt : '—'}</div>
+                  <div class="body-sm muted">delta</div>
                 </div>
               </div>
-              <div style="text-align: center;">
-                <div style="font-size: .6875rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;">Website</div>
-                <div style="font-family: var(--font-display); font-size: 1.875rem; font-weight: 600; line-height: 1;">${ws}</div>
-                <div style="font-size: .75rem; color: var(--text-muted);">/100</div>
-              </div>
-              <div style="text-align: center;">
-                <div style="font-size: .6875rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;">vs markt</div>
-                <div style="font-family: var(--font-display); font-size: 1.875rem; font-weight: 600; line-height: 1; color: ${vsMkt > 0 ? 'var(--green)' : (vsMkt < 0 ? 'var(--red)' : 'var(--text)')};">${vsMkt !== null && vsMkt !== undefined ? (vsMkt > 0 ? '+' : '') + vsMkt : '—'}</div>
-                <div style="font-size: .75rem; color: var(--text-muted);">delta</div>
-              </div>
+              ${opener ? `<div class="review-quote" style="margin-top: var(--space-5); border-left-color: var(--blush-400); background: var(--blush-50);">"${escapeHtml(opener)}"</div>` : ''}
             </div>
-            ${opener ? `
-              <div style="margin-top: 14px; padding: 12px 14px; background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-input) var(--radius-input) 0; font-size: .875rem; color: var(--text-2); line-height: 1.55; font-style: italic;">
-                "${escapeHtml(opener)}"
-              </div>
-            ` : ''}
           </a>
         `;
       }).join('');
@@ -152,16 +160,24 @@
       try {
         const res = await apiCall('/leads?limit=200');
         _allLeads = (res.leads || []).filter(l => l.website_score);
-
-        // Need to fetch website_intelligence for each lead to get score_vs_market
-        // For now just render with what we have
         applyFilters();
 
-        ['filter-sector', 'filter-priority', 'sort-by'].forEach(id => {
-          document.getElementById(id).addEventListener('change', applyFilters);
+        document.getElementById('filter-priority').addEventListener('change', (e) => {
+          _filters.priority = e.target.value; applyFilters();
+        });
+        document.getElementById('sort-by').addEventListener('change', (e) => {
+          _filters.sort = e.target.value; applyFilters();
+        });
+        document.querySelectorAll('.filter-chip[data-filter="sector"]').forEach(chip => {
+          chip.addEventListener('click', () => {
+            document.querySelectorAll('.filter-chip[data-filter="sector"]').forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+            _filters.sector = chip.dataset.value;
+            applyFilters();
+          });
         });
       } catch (e) {
-        document.getElementById('kansen-list').innerHTML = `<div class="card empty-state">Fout: ${escapeHtml(e.message)}</div>`;
+        document.getElementById('kansen-list').innerHTML = `<div class="empty-state">Fout: ${escapeHtml(e.message)}</div>`;
       }
     })();
   </script>
