@@ -4,14 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Heatr — Website Kansen</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <script>
     window.HEATR_CONFIG = {
-      SUPABASE_URL: 'YOUR_SUPABASE_URL',
-      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      SUPABASE_URL: 'https://zomdrygdcaenjnrrpcpw.supabase.co',
+      SUPABASE_ANON_KEY: 'dev-mode',
       API_BASE: 'http://localhost:8000',
     };
   </script>
@@ -20,250 +17,153 @@
   <div class="app-layout">
     <aside class="sidebar" id="sidebar"></aside>
 
-    <div class="main-wrap">
-      <header class="page-header">
-        <div class="page-header-left">
-          <h1 class="page-title">Website Kansen</h1>
-          <span class="page-subtitle" id="opp-count">Laden…</span>
-        </div>
-        <div class="page-header-right">
-          <select class="form-select" id="filter-priority" onchange="loadOpportunities()">
-            <option value="">Alle prioriteiten</option>
-            <option value="urgent">Urgent</option>
-            <option value="high">Hoog</option>
-            <option value="medium">Gemiddeld</option>
-            <option value="low">Laag</option>
-          </select>
-          <select class="form-select" id="filter-type" onchange="loadOpportunities()">
-            <option value="">Alle types</option>
-            <option value="website_rebuild">Website rebuild</option>
-            <option value="conversion_optimisation">Conversie</option>
-            <option value="chatbot">Chatbot</option>
-            <option value="ai_audit">AI Audit</option>
-          </select>
-          <select class="form-select" id="filter-sector-opp" onchange="loadOpportunities()">
-            <option value="">Alle sectoren</option>
-            <option value="alternatieve_zorg">Alternatieve Zorg</option>
-            <option value="cosmetische_klinieken">Cosmetische Klinieken</option>
-          </select>
-        </div>
-      </header>
-
+    <div class="main-wrapper">
       <main class="page-content">
-        <div class="opportunity-grid" id="opp-grid">
-          <!-- skeleton cards -->
-          <div class="card opp-card skeleton-card" style="height:280px"></div>
-          <div class="card opp-card skeleton-card" style="height:280px"></div>
-          <div class="card opp-card skeleton-card" style="height:280px"></div>
-          <div class="card opp-card skeleton-card" style="height:280px"></div>
-          <div class="card opp-card skeleton-card" style="height:280px"></div>
-          <div class="card opp-card skeleton-card" style="height:280px"></div>
+        <header class="page-header">
+          <div>
+            <h1 class="page-title">Website Kansen</h1>
+            <div class="page-subtitle">Leads met de grootste website-pijnpunten — eerste prioriteit voor outreach</div>
+          </div>
+        </header>
+
+        <div class="filter-bar">
+          <select id="filter-sector">
+            <option value="">Alle sectoren</option>
+            <option value="makelaars">Makelaars</option>
+            <option value="alternatieve_geneeskunde">Alternatieve Geneeskunde</option>
+            <option value="cosmetische_behandelaars">Cosmetische Behandelaars</option>
+            <option value="bouwbedrijven">Bouwbedrijven</option>
+          </select>
+          <select id="filter-priority">
+            <option value="">Alle prioriteiten</option>
+            <option value="urgent">Urgent (score &lt;30)</option>
+            <option value="high">Hoog (score 30-50)</option>
+            <option value="medium">Medium (score 50-70)</option>
+          </select>
+          <select id="sort-by">
+            <option value="opportunity">Grootste kans (lage website score)</option>
+            <option value="market">Meest onder marktgemiddelde</option>
+            <option value="score">Hoogste lead score</option>
+          </select>
         </div>
 
-        <!-- Pagination -->
-        <div class="pagination" id="pagination"></div>
+        <div id="kansen-list">
+          <div class="card" style="margin-bottom: 12px;"><div class="skeleton" style="height: 120px;"></div></div>
+          <div class="card" style="margin-bottom: 12px;"><div class="skeleton" style="height: 120px;"></div></div>
+          <div class="card"><div class="skeleton" style="height: 120px;"></div></div>
+        </div>
       </main>
-    </div>
-  </div>
-
-  <!-- Review email slide-in panel -->
-  <div class="panel-overlay" id="panel-overlay" onclick="closePanel()" style="display:none"></div>
-  <div class="slide-panel" id="slide-panel" style="display:none">
-    <div class="panel-header">
-      <h2 class="panel-title">Review Email Preview</h2>
-      <button class="panel-close" onclick="closePanel()">✕</button>
-    </div>
-    <div class="panel-body">
-      <div id="panel-content">
-        <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
-        <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
-        <div class="skeleton skeleton-text" style="width:70%"></div>
-      </div>
-    </div>
-    <div class="panel-footer">
-      <button class="btn btn-ghost" onclick="closePanel()">Annuleren</button>
-      <button class="btn btn-primary" id="btn-send-review" onclick="confirmSendReview()">Verstuur via Warmr</button>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="app.js"></script>
   <script>
-    let _page = 1;
-    const PAGE_SIZE = 18;
-    let _reviewLeadId = null;
-
-    (async () => {
-      await requireAuth();
-      renderSidebar('website-kansen');
-      await loadOpportunities();
-    })();
-
-    function getFilters() {
-      return {
-        priority: document.getElementById('filter-priority').value || undefined,
-        opportunity_type: document.getElementById('filter-type').value || undefined,
-        sector: document.getElementById('filter-sector-opp').value || undefined,
-        limit: PAGE_SIZE,
-        offset: (_page - 1) * PAGE_SIZE,
-      };
+    function escapeHtml(str) {
+      return String(str || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
-    async function loadOpportunities() {
-      const grid = document.getElementById('opp-grid');
-      grid.innerHTML = Array(6).fill(`<div class="card opp-card" style="height:280px;background:var(--surface-2)"></div>`).join('');
+    let _allLeads = [];
 
-      try {
-        const qs = buildQuery(getFilters());
-        const data = await apiCall(`/website-opportunities${qs}`);
-        const items = data.opportunities || data || [];
-        const total = data.total ?? items.length;
+    function priorityFromScore(score) {
+      if (score < 30) return { label: 'urgent', color: 'red' };
+      if (score < 50) return { label: 'hoog', color: 'orange' };
+      if (score < 70) return { label: 'medium', color: 'yellow' };
+      return { label: 'laag', color: 'green' };
+    }
 
-        document.getElementById('opp-count').textContent = `${total} kansen`;
+    function applyFilters() {
+      const sector = document.getElementById('filter-sector').value;
+      const priority = document.getElementById('filter-priority').value;
+      const sortBy = document.getElementById('sort-by').value;
 
-        if (!items.length) {
-          grid.innerHTML = `
-            <div class="empty-state" style="grid-column:1/-1">
-              <div class="empty-icon">◎</div>
-              <div class="empty-title">Geen website kansen gevonden</div>
-              <div class="empty-sub">Start een zoekopdracht om leads te ontdekken en analyseren.</div>
-              <a href="/search.html" class="btn btn-primary">Zoeken starten</a>
-            </div>`;
-          document.getElementById('pagination').innerHTML = '';
-          return;
+      let filtered = _allLeads.filter(l => {
+        if (sector && l.sector !== sector) return false;
+        const ws = l.website_score || 0;
+        if (priority === 'urgent' && ws >= 30) return false;
+        if (priority === 'high' && (ws < 30 || ws >= 50)) return false;
+        if (priority === 'medium' && (ws < 50 || ws >= 70)) return false;
+        return ws > 0;
+      });
+
+      filtered.sort((a, b) => {
+        switch (sortBy) {
+          case 'market': return (a.score_vs_market || 0) - (b.score_vs_market || 0);
+          case 'score': return (b.score || 0) - (a.score || 0);
+          default: return (a.website_score || 0) - (b.website_score || 0);
         }
+      });
 
-        grid.innerHTML = items.map(o => renderOppCard(o)).join('');
-        renderPagination(total);
-      } catch (e) {
-        grid.innerHTML = `<div class="error-banner" style="grid-column:1/-1">Kon kansen niet laden: ${e.message}</div>`;
-      }
+      render(filtered);
     }
 
-    function renderOppCard(o) {
-      const priorityClass = { urgent: 'priority-urgent', high: 'priority-high', medium: 'priority-medium', low: 'priority-low' }[o.priority] || '';
-      return `
-        <div class="card opp-card">
-          <div class="opp-card-header">
-            <div class="opp-card-title-row">
-              <span class="opp-company">${o.company_name || '—'}</span>
-              <span class="priority-badge ${priorityClass}">${o.priority || '—'}</span>
-            </div>
-            <div class="opp-meta">${o.city || ''} · ${sectorLabel(o.sector)}</div>
-          </div>
+    function render(leads) {
+      if (!leads.length) {
+        document.getElementById('kansen-list').innerHTML = '<div class="card empty-state"><div class="empty-state-icon">⊘</div>Geen kansen gevonden</div>';
+        return;
+      }
 
-          ${o.screenshot_url ? `
-            <div class="opp-screenshot">
-              <img src="${o.screenshot_url}" alt="Screenshot" loading="lazy" />
-            </div>
-          ` : `<div class="opp-screenshot opp-screenshot-empty"><span>Geen screenshot</span></div>`}
+      document.getElementById('kansen-list').innerHTML = leads.map(l => {
+        const ws = l.website_score || 0;
+        const prio = priorityFromScore(ws);
+        const vsMkt = l.score_vs_market;
+        const opener = l.personalized_opener || '';
 
-          <div class="opp-scores">
-            <div class="opp-score-item">
-              <span class="text-muted" style="font-size:11px">Website score</span>
-              ${formatScore(o.website_score)}
+        return `
+          <a href="/lead-detail.html?id=${l.id}" class="card" style="display:block; margin-bottom: 12px; text-decoration:none; color:inherit; transition: var(--transition);" onmouseover="this.style.boxShadow='var(--shadow)'; this.style.borderColor='var(--border-2)'" onmouseout="this.style.boxShadow=''; this.style.borderColor='var(--border)'">
+            <div style="display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: start;">
+              <div>
+                <div style="display:flex; align-items:center; gap: 10px; margin-bottom: 4px;">
+                  <span class="lead-row-company" style="font-size: 1.0625rem;">${escapeHtml(l.company_name)}</span>
+                  <span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span>
+                  <span class="score-badge score-badge-${prio.color}">${prio.label}</span>
+                </div>
+                <div style="font-size: .8125rem; color: var(--text-muted);">
+                  <a href="https://${l.domain}" target="_blank" style="color: var(--accent);" onclick="event.stopPropagation()">${escapeHtml(l.domain || '—')} ↗</a>
+                  · ${escapeHtml(l.city || '')}
+                  · ${l.google_rating ? `${l.google_rating}★` : ''}${l.google_review_count ? ` (${l.google_review_count})` : ''}
+                </div>
+              </div>
+              <div style="text-align: center;">
+                <div style="font-size: .6875rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;">Website</div>
+                <div style="font-family: var(--font-display); font-size: 1.875rem; font-weight: 600; line-height: 1;">${ws}</div>
+                <div style="font-size: .75rem; color: var(--text-muted);">/100</div>
+              </div>
+              <div style="text-align: center;">
+                <div style="font-size: .6875rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;">vs markt</div>
+                <div style="font-family: var(--font-display); font-size: 1.875rem; font-weight: 600; line-height: 1; color: ${vsMkt > 0 ? 'var(--green)' : (vsMkt < 0 ? 'var(--red)' : 'var(--text)')};">${vsMkt !== null && vsMkt !== undefined ? (vsMkt > 0 ? '+' : '') + vsMkt : '—'}</div>
+                <div style="font-size: .75rem; color: var(--text-muted);">delta</div>
+              </div>
             </div>
-            ${o.score_vs_market != null ? `
-              <div class="opp-score-item">
-                <span class="text-muted" style="font-size:11px">vs markt</span>
-                <span class="market-diff-sm ${o.score_vs_market < 0 ? 'text-red' : 'text-green'}">${o.score_vs_market > 0 ? '+' : ''}${o.score_vs_market}</span>
+            ${opener ? `
+              <div style="margin-top: 14px; padding: 12px 14px; background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-input) var(--radius-input) 0; font-size: .875rem; color: var(--text-2); line-height: 1.55; font-style: italic;">
+                "${escapeHtml(opener)}"
               </div>
             ` : ''}
-          </div>
-
-          <div class="opp-types">${opportunityBadges(o.opportunity_types)}</div>
-
-          ${o.top_issues && o.top_issues.length ? `
-            <div class="opp-issues">
-              ${o.top_issues.slice(0, 2).map(i => `<div class="opp-issue">→ ${i}</div>`).join('')}
-            </div>
-          ` : ''}
-
-          <div class="opp-actions">
-            <a href="/lead-detail.html?id=${o.lead_id}" class="btn btn-ghost btn-sm">Bekijken</a>
-            <button class="btn btn-ghost btn-sm" onclick="openReviewPanel('${o.lead_id}', '${(o.company_name || '').replace(/'/g, "\\'")}')">Review email</button>
-            <button class="btn btn-primary btn-sm" onclick="markUrgent('${o.lead_id}')">Urgent</button>
-          </div>
-        </div>
-      `;
-    }
-
-    function renderPagination(total) {
-      const el = document.getElementById('pagination');
-      const pages = Math.ceil(total / PAGE_SIZE);
-      if (pages <= 1) { el.innerHTML = ''; return; }
-      let html = '';
-      if (_page > 1) html += `<button class="btn btn-ghost btn-sm" onclick="goPage(${_page - 1})">← Vorige</button>`;
-      html += `<span class="pagination-info">Pagina ${_page} van ${pages}</span>`;
-      if (_page < pages) html += `<button class="btn btn-ghost btn-sm" onclick="goPage(${_page + 1})">Volgende →</button>`;
-      el.innerHTML = html;
-    }
-
-    function goPage(p) { _page = p; loadOpportunities(); }
-
-    async function openReviewPanel(leadId, companyName) {
-      _reviewLeadId = leadId;
-      document.getElementById('panel-overlay').style.display = '';
-      document.getElementById('slide-panel').style.display = '';
-      document.getElementById('slide-panel').classList.add('panel-open');
-      document.querySelector('.panel-title').textContent = `Review email — ${companyName}`;
-
-      const content = document.getElementById('panel-content');
-      content.innerHTML = `
-        <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
-        <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
-        <div class="skeleton skeleton-text" style="width:60%"></div>
-      `;
-
-      try {
-        // Preview: generate without sending
-        const data = await apiCall(`/leads/${leadId}/send-review-email`, {
-          method: 'POST',
-          body: JSON.stringify({ preview_only: true }),
-        });
-        content.innerHTML = `
-          <div class="email-preview">
-            <div class="email-preview-field"><strong>Aan:</strong> ${data.to || '—'}</div>
-            <div class="email-preview-field"><strong>Onderwerp:</strong> ${data.subject || '—'}</div>
-            <div class="email-preview-body">${(data.body || '').replace(/\n/g, '<br/>')}</div>
-          </div>
+          </a>
         `;
-      } catch (e) {
-        content.innerHTML = `<div class="error-banner">Kon preview niet genereren: ${e.message}</div>`;
-      }
+      }).join('');
     }
 
-    function closePanel() {
-      _reviewLeadId = null;
-      document.getElementById('panel-overlay').style.display = 'none';
-      document.getElementById('slide-panel').style.display = 'none';
-      document.getElementById('slide-panel').classList.remove('panel-open');
-    }
+    (async function init() {
+      await requireAuth();
+      renderSidebar('website-kansen');
 
-    async function confirmSendReview() {
-      if (!_reviewLeadId) return;
-      const btn = document.getElementById('btn-send-review');
-      btn.disabled = true;
-      btn.textContent = 'Verzenden…';
       try {
-        await apiCall(`/leads/${_reviewLeadId}/send-review-email`, { method: 'POST' });
-        showToast('Review email verstuurd via Warmr!', 'success');
-        closePanel();
-      } catch (e) {
-        showToast(`Fout: ${e.message}`, 'error');
-        btn.disabled = false;
-        btn.textContent = 'Verstuur via Warmr';
-      }
-    }
+        const res = await apiCall('/leads?limit=200');
+        _allLeads = (res.leads || []).filter(l => l.website_score);
 
-    async function markUrgent(leadId) {
-      try {
-        await apiCall(`/leads/${leadId}/website-review`, {
-          method: 'PATCH', body: JSON.stringify({ status: 'urgent' })
+        // Need to fetch website_intelligence for each lead to get score_vs_market
+        // For now just render with what we have
+        applyFilters();
+
+        ['filter-sector', 'filter-priority', 'sort-by'].forEach(id => {
+          document.getElementById(id).addEventListener('change', applyFilters);
         });
-        showToast('Gemarkeerd als urgent.', 'success');
-      } catch (e) { showToast(e.message, 'error'); }
-    }
+      } catch (e) {
+        document.getElementById('kansen-list').innerHTML = `<div class="card empty-state">Fout: ${escapeHtml(e.message)}</div>`;
+      }
+    })();
   </script>
 </body>
 </html>

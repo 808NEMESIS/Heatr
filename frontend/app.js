@@ -32,12 +32,16 @@ const supabase = window.supabase.createClient(
  * @returns {Promise<object>} Supabase session object
  */
 async function requireAuth() {
+  // Dev bypass — no Supabase Auth required for local development
+  if (_cfg.SUPABASE_ANON_KEY === 'dev-mode') {
+    sessionStorage.setItem('heatr_token', 'dev-token');
+    return { user: { email: 'dev@aerys.nl' }, access_token: 'dev-token' };
+  }
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) {
     window.location.href = '/index.html';
     return null;
   }
-  // Store token for apiCall
   sessionStorage.setItem('heatr_token', session.access_token);
   return session;
 }
@@ -238,23 +242,23 @@ function renderSidebar(activePage) {
 
   const items = _NAV_ITEMS.map(item => {
     const active = item.key === activePage ? ' active' : '';
-    return `<a href="${item.href}" class="nav-item${active}">
-      <span class="nav-icon">${item.icon}</span>
-      <span class="nav-label">${item.label}</span>
+    return `<a href="${item.href}" class="${active.trim()}">
+      <span style="font-size:18px;width:22px;display:inline-block;text-align:center;">${item.icon}</span>
+      <span>${item.label}</span>
     </a>`;
   }).join('');
 
   el.innerHTML = `
-    <div class="sidebar-brand">
-      <span class="brand-logo">H</span>
-      <span class="brand-name">Heatr</span>
+    <div class="sidebar-logo">
+      <div class="logo-wordmark">Heatr</div>
+      <div class="logo-sub">B2B intelligence</div>
     </div>
     <nav class="sidebar-nav">${items}</nav>
-    <div class="sidebar-footer">
-      <button class="nav-item" onclick="signOut()" style="width:100%;border:none;background:none;cursor:pointer;">
-        <span class="nav-icon">⎋</span>
-        <span class="nav-label">Uitloggen</span>
-      </button>
+    <div class="sidebar-bottom">
+      <a href="#" onclick="signOut(); return false;">
+        <span style="font-size:18px;width:22px;display:inline-block;text-align:center;">⎋</span>
+        <span>Uitloggen</span>
+      </a>
     </div>
   `;
 }

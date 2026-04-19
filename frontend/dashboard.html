@@ -4,14 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Heatr — Dashboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <script>
     window.HEATR_CONFIG = {
-      SUPABASE_URL: 'YOUR_SUPABASE_URL',
-      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      SUPABASE_URL: 'https://zomdrygdcaenjnrrpcpw.supabase.co',
+      SUPABASE_ANON_KEY: 'dev-mode',
       API_BASE: 'http://localhost:8000',
     };
   </script>
@@ -20,100 +17,67 @@
   <div class="app-layout">
     <aside class="sidebar" id="sidebar"></aside>
 
-    <div class="main-wrap">
-      <header class="page-header">
-        <div class="page-header-left">
-          <h1 class="page-title">Dashboard</h1>
-          <span class="page-subtitle">Overzicht van je pipeline</span>
-        </div>
-        <div class="page-header-right">
-          <a href="/search.html" class="btn btn-primary">+ Nieuwe zoekopdracht</a>
-        </div>
-      </header>
-
+    <div class="main-wrapper">
       <main class="page-content">
-        <!-- Pipeline stats -->
-        <section class="section-grid" id="stats-grid">
-          <div class="stat-card skeleton-card">
-            <div class="skeleton skeleton-text" style="width:50%"></div>
-            <div class="skeleton skeleton-text" style="width:30%;height:32px;margin-top:8px"></div>
+        <header class="page-header">
+          <div>
+            <h1 class="page-title">Dashboard</h1>
+            <div class="page-subtitle">Realtime overzicht van je outbound pipeline</div>
           </div>
-          <div class="stat-card skeleton-card">
-            <div class="skeleton skeleton-text" style="width:50%"></div>
-            <div class="skeleton skeleton-text" style="width:30%;height:32px;margin-top:8px"></div>
+          <div class="page-actions">
+            <a href="/search.html" class="btn btn-primary">+ Nieuwe zoekopdracht</a>
           </div>
-          <div class="stat-card skeleton-card">
-            <div class="skeleton skeleton-text" style="width:50%"></div>
-            <div class="skeleton skeleton-text" style="width:30%;height:32px;margin-top:8px"></div>
+        </header>
+
+        <section class="kpi-grid">
+          <div class="kpi"><div class="kpi-accent"></div>
+            <div class="kpi-label">Totale leads</div>
+            <div class="kpi-value" id="kpi-total">—</div>
+            <div class="kpi-delta flat" id="kpi-total-detail"></div>
           </div>
-          <div class="stat-card skeleton-card">
-            <div class="skeleton skeleton-text" style="width:50%"></div>
-            <div class="skeleton skeleton-text" style="width:30%;height:32px;margin-top:8px"></div>
+          <div class="kpi"><div class="kpi-accent"></div>
+            <div class="kpi-label">Gem. score</div>
+            <div class="kpi-value" id="kpi-avg-score">—</div>
+            <div class="kpi-delta flat" id="kpi-avg-detail"></div>
+          </div>
+          <div class="kpi"><div class="kpi-accent"></div>
+            <div class="kpi-label">Push-klaar</div>
+            <div class="kpi-value" id="kpi-pushable">—</div>
+            <div class="kpi-delta flat">score ≥ 65 + email</div>
+          </div>
+          <div class="kpi"><div class="kpi-accent"></div>
+            <div class="kpi-label">Met openers</div>
+            <div class="kpi-value" id="kpi-openers">—</div>
+            <div class="kpi-delta flat" id="kpi-openers-detail"></div>
           </div>
         </section>
 
-        <!-- CRM stats bar -->
-        <section class="crm-stats-bar" id="crm-stats-bar">
-          <div class="crm-stat-card">
-            <div class="crm-stat-label">Open taken vandaag</div>
-            <div class="crm-stat-value" id="cs-tasks">—</div>
-          </div>
-          <div class="crm-stat-card">
-            <div class="crm-stat-label">Leads in pipeline</div>
-            <div class="crm-stat-value" id="cs-pipeline">—</div>
-          </div>
-          <div class="crm-stat-card">
-            <div class="crm-stat-label">Gewonnen deze maand</div>
-            <div class="crm-stat-value" id="cs-won">—</div>
-          </div>
-          <div class="crm-stat-card">
-            <div class="crm-stat-label">Gem. time to close</div>
-            <div class="crm-stat-value" id="cs-ttc">—</div>
-          </div>
-        </section>
-
-        <div class="dashboard-two-col">
-          <!-- Website kansen widget -->
-          <section>
-            <div class="card">
-              <div class="card-header">
-                <h2 class="card-title">Website Kansen</h2>
-                <a href="/website-kansen.html" class="btn btn-ghost btn-sm">Alle kansen →</a>
+        <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 20px;">
+          <section class="card card-elevated">
+            <div class="card-header">
+              <div>
+                <div class="card-title">Top opportunities — beste openers</div>
+                <div class="card-subtitle">Leads met sterkste pijnpunten en concurrent-data</div>
               </div>
-              <div id="opportunities-list">
-                <div class="skeleton skeleton-text" style="margin-bottom:12px"></div>
-                <div class="skeleton skeleton-text" style="margin-bottom:12px"></div>
-                <div class="skeleton skeleton-text"></div>
-              </div>
+              <a href="/website-kansen.html" class="btn btn-ghost btn-sm">Alle kansen →</a>
+            </div>
+            <div id="top-opportunities">
+              <div class="skeleton" style="height: 80px; margin-bottom: 12px;"></div>
+              <div class="skeleton" style="height: 80px; margin-bottom: 12px;"></div>
+              <div class="skeleton" style="height: 80px;"></div>
             </div>
           </section>
 
-          <!-- Right column -->
-          <div>
-            <!-- Inbox status -->
-            <div class="card" style="margin-bottom:20px">
-              <div class="card-header">
-                <h2 class="card-title">Warmr Inboxes</h2>
-                <a href="/campaigns.html" class="btn btn-ghost btn-sm">Campagnes →</a>
-              </div>
-              <div id="inbox-status">
-                <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
-                <div class="skeleton skeleton-text"></div>
-              </div>
+          <section class="card card-elevated">
+            <div class="card-header">
+              <div class="card-title">Per sector</div>
             </div>
-
-            <!-- Recent activity -->
-            <div class="card">
-              <div class="card-header">
-                <h2 class="card-title">Recente activiteit</h2>
-              </div>
-              <div id="activity-feed">
-                <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
-                <div class="skeleton skeleton-text" style="margin-bottom:8px"></div>
-                <div class="skeleton skeleton-text"></div>
-              </div>
+            <div id="sector-breakdown">
+              <div class="skeleton" style="height: 48px; margin-bottom: 12px;"></div>
+              <div class="skeleton" style="height: 48px; margin-bottom: 12px;"></div>
+              <div class="skeleton" style="height: 48px;"></div>
             </div>
-          </div>
+          </section>
         </div>
       </main>
     </div>
@@ -122,122 +86,92 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="app.js"></script>
   <script>
-    (async () => {
-      await requireAuth();
-      renderSidebar('dashboard');
-      await Promise.all([loadStats(), loadOpportunities(), loadInboxStatus(), loadActivity(), loadDashCrmStats()]);
-    })();
-
-    async function loadStats() {
-      const grid = document.getElementById('stats-grid');
-      try {
-        const data = await apiCall('/analytics/pipeline');
-        grid.innerHTML = [
-          { label: 'Leads ontdekt', value: data.total_leads ?? '—', icon: '◉', color: 'var(--accent)' },
-          { label: 'Geverifieerde emails', value: data.verified_emails ?? '—', icon: '✓', color: 'var(--green)' },
-          { label: 'Website kansen', value: data.website_opportunities ?? '—', icon: '◎', color: 'var(--orange)' },
-          { label: 'Verstuurd naar Warmr', value: data.sent_to_warmr ?? '—', icon: '▷', color: 'var(--accent-light)' },
-        ].map(s => `
-          <div class="stat-card">
-            <div class="stat-label">${s.label}</div>
-            <div class="stat-value" style="color:${s.color}">${s.value}</div>
-          </div>
-        `).join('');
-      } catch (e) {
-        grid.innerHTML = `<div class="error-banner" style="grid-column:1/-1">Statistieken konden niet worden geladen: ${e.message}</div>`;
-      }
+    function escapeHtml(str) {
+      return String(str || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
-    async function loadOpportunities() {
-      const el = document.getElementById('opportunities-list');
+    (async function init() {
+      await requireAuth();
+      renderSidebar('dashboard');
+
       try {
-        const data = await apiCall('/website-opportunities?limit=5&priority=urgent,high');
-        const items = data.opportunities || data || [];
-        if (!items.length) {
-          el.innerHTML = '<div class="empty-state-sm">Geen urgente kansen gevonden.</div>';
-          return;
+        const leadsRes = await apiCall('/leads?limit=100');
+        const leads = leadsRes.leads || [];
+
+        document.getElementById('kpi-total').textContent = leads.length;
+        document.getElementById('kpi-total-detail').textContent = `${leads.filter(l => l.gdpr_safe).length} GDPR-safe`;
+
+        const scores = leads.map(l => l.score || 0).filter(s => s > 0);
+        const avgScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0) / scores.length) : 0;
+        document.getElementById('kpi-avg-score').textContent = avgScore;
+        if (scores.length) {
+          document.getElementById('kpi-avg-detail').textContent = `range ${Math.min(...scores)}–${Math.max(...scores)}`;
         }
-        el.innerHTML = items.map(o => `
-          <a href="/lead-detail.html?id=${o.lead_id}" class="opportunity-row">
-            <div class="opportunity-row-left">
-              <div class="opportunity-name">${o.company_name || '—'}</div>
-              <div class="opportunity-meta">${o.city || ''} · ${sectorLabel(o.sector)}</div>
+
+        const pushable = leads.filter(l => (l.score||0) >= 65 && l.email).length;
+        document.getElementById('kpi-pushable').textContent = pushable;
+
+        const withOpeners = leads.filter(l => l.personalized_opener).length;
+        document.getElementById('kpi-openers').textContent = withOpeners;
+        if (leads.length) {
+          document.getElementById('kpi-openers-detail').textContent = `${Math.round(withOpeners/leads.length*100)}% verrijkt`;
+        }
+
+        const opps = leads
+          .filter(l => l.personalized_opener)
+          .sort((a, b) => (b.score || 0) - (a.score || 0))
+          .slice(0, 5);
+
+        const oppsHtml = opps.map(l => `
+          <a href="/lead-detail.html?id=${l.id}" style="display:block; padding: 14px 0; border-bottom: 1px solid var(--border); text-decoration:none; color: inherit;">
+            <div style="display:flex; align-items:center; justify-content: space-between; margin-bottom: 6px; gap: 12px;">
+              <div style="display:flex; align-items:center; gap: 10px; min-width: 0; flex: 1;">
+                <span class="lead-row-company" style="font-size: .9375rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(l.company_name)}</span>
+                <span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span>
+              </div>
+              ${formatScore(l.score || 0)}
             </div>
-            <div class="opportunity-row-right">
-              ${formatScore(o.website_score)}
-              <span class="priority-dot priority-${o.priority || 'medium'}"></span>
+            <div style="font-size: .875rem; color: var(--text-2); line-height: 1.5; font-style: italic;">
+              "${escapeHtml((l.personalized_opener || '').slice(0, 200))}${(l.personalized_opener || '').length > 200 ? '…' : ''}"
             </div>
           </a>
         `).join('');
-      } catch (e) {
-        el.innerHTML = `<div class="error-banner">Kansen konden niet worden geladen.</div>`;
-      }
-    }
 
-    async function loadInboxStatus() {
-      const el = document.getElementById('inbox-status');
-      try {
-        const data = await apiCall('/warmr/inboxes');
-        const inboxes = data.inboxes || data || [];
-        if (!inboxes.length) {
-          el.innerHTML = '<div class="empty-state-sm">Geen inboxes gevonden.</div>';
-          return;
-        }
-        const ready = inboxes.filter(i => i.status === 'ready' || i.daily_remaining > 0);
-        el.innerHTML = `
-          <div class="inbox-summary">
-            <span class="stat-value-sm">${ready.length}</span>
-            <span class="text-muted"> van ${inboxes.length} inboxes beschikbaar</span>
-          </div>
-          ${ready.slice(0, 3).map(i => `
-            <div class="inbox-row">
-              <span class="inbox-email">${i.email || i.id}</span>
-              <span class="badge badge-green">${i.daily_remaining ?? '?'} resterend</span>
-            </div>
-          `).join('')}
-        `;
-      } catch (e) {
-        el.innerHTML = `<div class="text-muted" style="font-size:13px">Warmr inboxes niet beschikbaar.</div>`;
-      }
-    }
+        document.getElementById('top-opportunities').innerHTML = oppsHtml || '<div class="empty-state">Nog geen leads met openers — draai de enrichment pipeline</div>';
 
-    async function loadDashCrmStats() {
-      try {
-        const data = await apiCall('/crm/stats');
-        const tasks = data.open_tasks_today ?? 0;
-        document.getElementById('cs-tasks').textContent = tasks;
-        if (tasks > 0) document.getElementById('cs-tasks').classList.add('alert');
-        document.getElementById('cs-pipeline').textContent = data.pipeline_count ?? '—';
-        document.getElementById('cs-won').textContent = data.won_this_month != null
-          ? `€ ${Math.round(data.won_this_month).toLocaleString('nl-NL')}` : '—';
-        document.getElementById('cs-ttc').textContent = data.avg_days_to_close != null
-          ? `${data.avg_days_to_close} dagen` : '—';
-      } catch (_) {}
-    }
+        const bySector = {};
+        leads.forEach(l => {
+          const s = l.sector || 'onbekend';
+          if (!bySector[s]) bySector[s] = { count: 0, totalScore: 0 };
+          bySector[s].count++;
+          bySector[s].totalScore += (l.score || 0);
+        });
 
-    async function loadActivity() {
-      const el = document.getElementById('activity-feed');
-      try {
-        // Use leads endpoint sorted by created_at desc as activity proxy
-        const data = await apiCall('/leads?limit=5&sort=created_at_desc');
-        const leads = data.leads || data || [];
-        if (!leads.length) {
-          el.innerHTML = '<div class="empty-state-sm">Nog geen activiteit.</div>';
-          return;
-        }
-        el.innerHTML = leads.map(l => `
-          <div class="activity-item">
-            <div class="activity-dot"></div>
-            <div class="activity-content">
-              <span class="activity-name">${l.company_name || l.domain || '—'}</span>
-              <span class="activity-time">${formatRelativeTime(l.created_at)}</span>
-            </div>
-          </div>
-        `).join('');
+        const sectorHtml = Object.entries(bySector)
+          .sort((a, b) => b[1].count - a[1].count)
+          .map(([sector, data]) => {
+            const avg = data.count ? Math.round(data.totalScore / data.count) : 0;
+            const pct = leads.length ? Math.round(data.count / leads.length * 100) : 0;
+            return `
+              <div style="margin-bottom: 14px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                  <span class="sector-chip sector-${sector}">${SECTOR_LABELS[sector] || sector}</span>
+                  <span style="font-size: .8125rem; color: var(--text-muted); font-weight: 500;">${data.count} · ⌀${avg}</span>
+                </div>
+                <div style="height: 6px; background: var(--surface-3); border-radius: 3px; overflow: hidden;">
+                  <div style="height: 100%; width: ${pct}%; background: var(--accent-gradient); border-radius: 3px;"></div>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+        document.getElementById('sector-breakdown').innerHTML = sectorHtml || '<div class="empty-state">Geen data</div>';
+
       } catch (e) {
-        el.innerHTML = `<div class="text-muted" style="font-size:13px">Activiteit niet beschikbaar.</div>`;
+        console.error(e);
+        document.getElementById('top-opportunities').innerHTML = `<div class="empty-state">Fout bij laden: ${escapeHtml(e.message)}</div>`;
       }
-    }
+    })();
   </script>
 </body>
 </html>

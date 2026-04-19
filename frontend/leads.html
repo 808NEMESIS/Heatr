@@ -4,14 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Heatr — Leads</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <script>
     window.HEATR_CONFIG = {
-      SUPABASE_URL: 'YOUR_SUPABASE_URL',
-      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+      SUPABASE_URL: 'https://zomdrygdcaenjnrrpcpw.supabase.co',
+      SUPABASE_ANON_KEY: 'dev-mode',
       API_BASE: 'http://localhost:8000',
     };
   </script>
@@ -20,90 +17,49 @@
   <div class="app-layout">
     <aside class="sidebar" id="sidebar"></aside>
 
-    <div class="main-wrap">
-      <header class="page-header">
-        <div class="page-header-left">
-          <h1 class="page-title">Leads</h1>
-          <span class="page-subtitle" id="leads-count">Laden…</span>
-        </div>
-        <div class="page-header-right">
-          <button class="btn btn-ghost btn-sm" onclick="exportSelected()" id="btn-export" style="display:none">Exporteren</button>
-          <button class="btn btn-primary btn-sm" onclick="enrichSelected()" id="btn-enrich" style="display:none">Enrichen</button>
-          <a href="/search.html" class="btn btn-primary">+ Zoeken</a>
-        </div>
-      </header>
-
+    <div class="main-wrapper">
       <main class="page-content">
-        <!-- Filters -->
+        <header class="page-header">
+          <div>
+            <h1 class="page-title">Leads</h1>
+            <div class="page-subtitle" id="lead-count">Bezig met laden…</div>
+          </div>
+          <div class="page-actions">
+            <a href="/search.html" class="btn btn-primary">+ Nieuwe zoekopdracht</a>
+          </div>
+        </header>
+
         <div class="filter-bar">
-          <input class="form-input filter-search" id="filter-q" type="search" placeholder="Zoek op bedrijf, stad, domein…" oninput="debouncedLoad()" />
-
-          <select class="form-select" id="filter-sector" onchange="loadLeads()">
+          <input type="text" id="search-input" placeholder="Zoek op bedrijf, domein, stad…" />
+          <select id="filter-sector">
             <option value="">Alle sectoren</option>
-            <option value="alternatieve_zorg">Alternatieve Zorg</option>
-            <option value="cosmetische_klinieken">Cosmetische Klinieken</option>
+            <option value="makelaars">Makelaars</option>
+            <option value="alternatieve_geneeskunde">Alternatieve Geneeskunde</option>
+            <option value="cosmetische_behandelaars">Cosmetische Behandelaars</option>
+            <option value="bouwbedrijven">Bouwbedrijven</option>
           </select>
-
-          <select class="form-select" id="filter-email" onchange="loadLeads()">
-            <option value="">Alle emails</option>
-            <option value="verified">Geverifieerd</option>
-            <option value="catch_all">Catch-all</option>
-            <option value="not_found">Niet gevonden</option>
-            <option value="pending">Wachtend</option>
-          </select>
-
-          <select class="form-select" id="filter-score" onchange="loadLeads()">
+          <select id="filter-score">
             <option value="">Alle scores</option>
-            <option value="70">Score ≥ 70</option>
-            <option value="50">Score ≥ 50</option>
-            <option value="30">Score ≥ 30</option>
+            <option value="80">80+ (push-klaar)</option>
+            <option value="60">60+ (sterk)</option>
+            <option value="40">40+ (medium)</option>
+            <option value="0">Onder 40</option>
           </select>
-
-          <select class="form-select" id="filter-sort" onchange="loadLeads()">
-            <option value="score_desc">Score ↓</option>
-            <option value="created_at_desc">Nieuwste eerst</option>
-            <option value="company_name_asc">Naam A–Z</option>
+          <select id="sort-by">
+            <option value="score">Score (hoog → laag)</option>
+            <option value="name">Naam (A → Z)</option>
+            <option value="reviews">Meeste reviews</option>
+            <option value="rating">Hoogste rating</option>
           </select>
         </div>
 
-        <!-- Bulk action bar (appears when rows selected) -->
-        <div class="bulk-bar" id="bulk-bar" style="display:none">
-          <span id="bulk-count">0 geselecteerd</span>
-          <button class="btn btn-primary btn-sm" onclick="enrichSelected()">Enrichen</button>
-          <button class="btn btn-ghost btn-sm" onclick="pushToWarmr()">Naar Warmr</button>
-          <button class="btn btn-danger btn-sm" onclick="disqualifySelected()">Diskwalificeren</button>
-          <button class="btn btn-ghost btn-sm" onclick="clearSelection()">Deselecteer</button>
-        </div>
-
-        <!-- Table -->
-        <div class="card table-card">
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th style="width:36px"><input type="checkbox" id="select-all" onchange="toggleAll(this)" /></th>
-                  <th>Bedrijf</th>
-                  <th>Stad</th>
-                  <th>Sector</th>
-                  <th>Email</th>
-                  <th>Score</th>
-                  <th>Website</th>
-                  <th>Gevonden</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="leads-tbody">
-                <!-- skeleton -->
-                <tr><td colspan="9"><div class="skeleton skeleton-text" style="width:100%"></div></td></tr>
-                <tr><td colspan="9"><div class="skeleton skeleton-text" style="width:80%"></div></td></tr>
-                <tr><td colspan="9"><div class="skeleton skeleton-text" style="width:90%"></div></td></tr>
-              </tbody>
-            </table>
+        <div id="leads-list">
+          <div class="card" style="padding: 0;">
+            <div class="lead-row" style="border-bottom: 1px solid var(--border);"><div class="skeleton" style="height: 60px;"></div></div>
+            <div class="lead-row" style="border-bottom: 1px solid var(--border);"><div class="skeleton" style="height: 60px;"></div></div>
+            <div class="lead-row"><div class="skeleton" style="height: 60px;"></div></div>
           </div>
         </div>
-
-        <!-- Pagination -->
-        <div class="pagination" id="pagination"></div>
       </main>
     </div>
   </div>
@@ -111,168 +67,111 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="app.js"></script>
   <script>
-    let _page = 1;
-    const PAGE_SIZE = 25;
-    let _selected = new Set();
-    let _totalCount = 0;
+    function escapeHtml(str) {
+      return String(str || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
 
-    const debouncedLoad = debounce(() => { _page = 1; loadLeads(); }, 350);
+    let _allLeads = [];
 
-    (async () => {
+    function applyFilters() {
+      const search = document.getElementById('search-input').value.toLowerCase();
+      const sector = document.getElementById('filter-sector').value;
+      const minScore = parseInt(document.getElementById('filter-score').value, 10);
+      const sortBy = document.getElementById('sort-by').value;
+
+      let filtered = _allLeads.filter(l => {
+        if (search && !(l.company_name || '').toLowerCase().includes(search) &&
+            !(l.domain || '').toLowerCase().includes(search) &&
+            !(l.city || '').toLowerCase().includes(search)) return false;
+        if (sector && l.sector !== sector) return false;
+        if (!isNaN(minScore)) {
+          const s = l.score || 0;
+          if (minScore === 0) { if (s >= 40) return false; }
+          else if (s < minScore) return false;
+        }
+        return true;
+      });
+
+      filtered.sort((a, b) => {
+        switch (sortBy) {
+          case 'name': return (a.company_name || '').localeCompare(b.company_name || '');
+          case 'reviews': return (b.google_review_count || 0) - (a.google_review_count || 0);
+          case 'rating': return (b.google_rating || 0) - (a.google_rating || 0);
+          default: return (b.score || 0) - (a.score || 0);
+        }
+      });
+
+      renderLeads(filtered);
+      document.getElementById('lead-count').textContent = `${filtered.length} van ${_allLeads.length} leads`;
+    }
+
+    function renderLeads(leads) {
+      if (!leads.length) {
+        document.getElementById('leads-list').innerHTML = '<div class="card empty-state"><div class="empty-state-icon">⊘</div>Geen leads gevonden</div>';
+        return;
+      }
+
+      const html = '<div class="card" style="padding: 0;">' + leads.map(l => `
+        <a href="/lead-detail.html?id=${l.id}" class="lead-row" style="display:block; border-bottom: 1px solid var(--border); text-decoration:none; color:inherit; transition: background var(--transition);" onmouseover="this.style.background='var(--surface-2)'" onmouseout="this.style.background='transparent'">
+          <div class="lead-row-main">
+            <div class="lead-row-name">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span class="lead-row-company">${escapeHtml(l.company_name)}</span>
+                <span class="sector-chip sector-${l.sector || ''}">${SECTOR_LABELS[l.sector] || l.sector || '—'}</span>
+              </div>
+              <div class="lead-row-meta">
+                <span class="lead-row-domain">${escapeHtml(l.domain || 'geen domein')}</span>
+                <span style="color: var(--text-muted);">·</span>
+                <span style="color: var(--text-muted); font-size: .8125rem;">${escapeHtml(l.city || '—')}</span>
+                ${l.email ? `<span style="color: var(--text-muted);">·</span><span style="color: var(--green); font-size: .8125rem;">✓ email</span>` : ''}
+              </div>
+            </div>
+
+            <div class="lead-row-stats">
+              <div style="text-align: right;">
+                <div style="font-weight: 600; color: var(--text);">${(l.google_rating || '—')}${l.google_rating ? '★' : ''}</div>
+                <div style="font-size: .75rem;">${l.google_review_count || 0} reviews</div>
+              </div>
+            </div>
+
+            <div style="text-align: right;">
+              <div style="font-size: .6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; margin-bottom: 2px;">Website</div>
+              ${formatScore(l.website_score || 0)}
+            </div>
+
+            <div style="text-align: right;">
+              <div style="font-size: .6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; margin-bottom: 2px;">Lead</div>
+              ${formatScore(l.score || 0)}
+            </div>
+          </div>
+          ${l.personalized_opener ? `
+            <div style="margin-top: 12px; padding: 10px 12px; background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-input) var(--radius-input) 0; font-size: .8125rem; color: var(--text-2); line-height: 1.5; font-style: italic;">
+              "${escapeHtml(l.personalized_opener.slice(0, 220))}${l.personalized_opener.length > 220 ? '…' : ''}"
+            </div>
+          ` : ''}
+        </a>
+      `).join('') + '</div>';
+
+      document.getElementById('leads-list').innerHTML = html;
+    }
+
+    (async function init() {
       await requireAuth();
       renderSidebar('leads');
-      await loadLeads();
-    })();
-
-    function getFilters() {
-      return {
-        q: document.getElementById('filter-q').value.trim() || undefined,
-        sector: document.getElementById('filter-sector').value || undefined,
-        email_status: document.getElementById('filter-email').value || undefined,
-        min_score: document.getElementById('filter-score').value || undefined,
-        sort: document.getElementById('filter-sort').value || undefined,
-        limit: PAGE_SIZE,
-        offset: (_page - 1) * PAGE_SIZE,
-      };
-    }
-
-    async function loadLeads() {
-      const tbody = document.getElementById('leads-tbody');
-      tbody.innerHTML = createSkeletonLoader(6, 9);
 
       try {
-        const filters = getFilters();
-        const qs = buildQuery(filters);
-        const data = await apiCall(`/leads${qs}`);
-        const leads = data.leads || data || [];
-        _totalCount = data.total ?? leads.length;
+        const res = await apiCall('/leads?limit=200');
+        _allLeads = res.leads || [];
+        applyFilters();
 
-        document.getElementById('leads-count').textContent = `${_totalCount} leads`;
-
-        if (!leads.length) {
-          tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-muted)">Geen leads gevonden voor deze filters.</td></tr>`;
-          renderPagination(0);
-          return;
-        }
-
-        tbody.innerHTML = leads.map(l => `
-          <tr class="lead-row ${_selected.has(l.id) ? 'row-selected' : ''}" data-id="${l.id}">
-            <td><input type="checkbox" class="row-check" ${_selected.has(l.id) ? 'checked' : ''} onchange="toggleRow(this, '${l.id}')" /></td>
-            <td>
-              <div class="lead-name">${l.company_name || '—'}</div>
-              <div class="lead-domain text-muted">${l.domain || ''}</div>
-            </td>
-            <td>${l.city || '—'}</td>
-            <td><span class="badge badge-neutral">${sectorLabel(l.sector)}</span></td>
-            <td>${emailStatusBadge(l.email_status)}</td>
-            <td>${formatScore(l.score)}</td>
-            <td>${formatScore(l.website_score)}</td>
-            <td class="text-muted" style="font-size:12px">${formatRelativeTime(l.created_at)}</td>
-            <td>
-              <a href="/lead-detail.html?id=${l.id}" class="btn btn-ghost btn-sm">Bekijken</a>
-            </td>
-          </tr>
-        `).join('');
-
-        renderPagination(_totalCount);
-      } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="9"><div class="error-banner">Kon leads niet laden: ${e.message}</div></td></tr>`;
-      }
-    }
-
-    function renderPagination(total) {
-      const el = document.getElementById('pagination');
-      const pages = Math.ceil(total / PAGE_SIZE);
-      if (pages <= 1) { el.innerHTML = ''; return; }
-      let html = '';
-      if (_page > 1) html += `<button class="btn btn-ghost btn-sm" onclick="goPage(${_page - 1})">← Vorige</button>`;
-      html += `<span class="pagination-info">Pagina ${_page} van ${pages}</span>`;
-      if (_page < pages) html += `<button class="btn btn-ghost btn-sm" onclick="goPage(${_page + 1})">Volgende →</button>`;
-      el.innerHTML = html;
-    }
-
-    function goPage(p) { _page = p; loadLeads(); }
-
-    function toggleRow(cb, id) {
-      if (cb.checked) _selected.add(id);
-      else _selected.delete(id);
-      updateBulkBar();
-      const row = cb.closest('tr');
-      row.classList.toggle('row-selected', cb.checked);
-    }
-
-    function toggleAll(masterCb) {
-      document.querySelectorAll('.row-check').forEach(cb => {
-        cb.checked = masterCb.checked;
-        const id = cb.closest('tr').dataset.id;
-        if (masterCb.checked) _selected.add(id);
-        else _selected.delete(id);
-        cb.closest('tr').classList.toggle('row-selected', masterCb.checked);
-      });
-      updateBulkBar();
-    }
-
-    function clearSelection() {
-      _selected.clear();
-      document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
-      document.querySelectorAll('.lead-row').forEach(r => r.classList.remove('row-selected'));
-      document.getElementById('select-all').checked = false;
-      updateBulkBar();
-    }
-
-    function updateBulkBar() {
-      const bar = document.getElementById('bulk-bar');
-      bar.style.display = _selected.size > 0 ? '' : 'none';
-      document.getElementById('bulk-count').textContent = `${_selected.size} geselecteerd`;
-    }
-
-    async function enrichSelected() {
-      if (!_selected.size) return;
-      try {
-        await apiCall('/leads/enrich', { method: 'POST', body: JSON.stringify({ lead_ids: [..._selected] }) });
-        showToast(`${_selected.size} leads in wachtrij voor enrichment.`, 'success');
-        clearSelection();
-      } catch (e) {
-        showToast(`Fout: ${e.message}`, 'error');
-      }
-    }
-
-    async function pushToWarmr() {
-      if (!_selected.size) return;
-      try {
-        const res = await apiCall('/leads/send-to-warmr', {
-          method: 'POST',
-          body: JSON.stringify({ lead_ids: [..._selected], dry_run: false }),
+        ['search-input', 'filter-sector', 'filter-score', 'sort-by'].forEach(id => {
+          document.getElementById(id).addEventListener('input', debounce(applyFilters, 200));
+          document.getElementById(id).addEventListener('change', applyFilters);
         });
-        showToast(`${res.pushed ?? 0} leads verstuurd naar Warmr.`, 'success');
-        clearSelection();
       } catch (e) {
-        showToast(`Warmr push mislukt: ${e.message}`, 'error');
+        document.getElementById('leads-list').innerHTML = `<div class="card empty-state">Fout bij laden: ${escapeHtml(e.message)}</div>`;
       }
-    }
-
-    async function disqualifySelected() {
-      if (!_selected.size) return;
-      const reason = prompt('Reden voor diskwalificatie?');
-      if (!reason) return;
-      try {
-        for (const id of _selected) {
-          await apiCall(`/leads/disqualify`, {
-            method: 'POST',
-            body: JSON.stringify({ lead_id: id, reason }),
-          });
-        }
-        showToast(`${_selected.size} leads gediskwalificeerd.`, 'success');
-        clearSelection();
-        loadLeads();
-      } catch (e) {
-        showToast(`Fout: ${e.message}`, 'error');
-      }
-    }
-
-    function exportSelected() {
-      showToast('Export nog niet beschikbaar.', 'info');
-    }
+    })();
   </script>
 </body>
 </html>
