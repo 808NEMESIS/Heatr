@@ -32,6 +32,7 @@ _HEATR_TABLES = {
     "lead_campaign_history", "lead_timeline", "crm_tasks", "crm_deals",
     "reply_inbox", "blocked_sends", "system_alerts", "gdpr_log", "daily_metrics",
     "startup_log", "claude_cache", "api_cost_log", "competitor_cache",
+    "lead_discovery_schedules", "lead_outreach_snapshots",
 }
 
 

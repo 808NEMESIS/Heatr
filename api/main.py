@@ -1533,6 +1533,205 @@ async def website_intelligence_process_next(
 
 
 # =============================================================================
+# DISCOVERY SCHEDULES (automatic recurring scrapes)
+# =============================================================================
+
+class ScheduleCreate(BaseModel):
+    sector: str
+    city: str
+    frequency_days: int = 14
+    country: str = "NL"
+    target_new_leads: int = 20
+    max_results: int = 40
+
+
+@app.get("/discovery-schedules")
+async def list_discovery_schedules(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """List all configured recurring scrape schedules."""
+    from scrapers.discovery_scheduler import list_schedules
+    schedules = await list_schedules(workspace_id, db)
+    return {"schedules": schedules}
+
+
+@app.post("/discovery-schedules")
+async def create_discovery_schedule(
+    body: ScheduleCreate,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Create a new recurring scrape schedule."""
+    from scrapers.discovery_scheduler import create_schedule
+    sid = await create_schedule(
+        workspace_id=workspace_id,
+        sector=body.sector,
+        city=body.city,
+        frequency_days=body.frequency_days,
+        country=body.country,
+        target_new_leads=body.target_new_leads,
+        max_results=body.max_results,
+        supabase_client=db,
+    )
+    if not sid:
+        raise HTTPException(status_code=500, detail="create_schedule_failed")
+    return {"schedule_id": sid}
+
+
+@app.post("/discovery-schedules/{schedule_id}/pause")
+async def pause_discovery_schedule(
+    schedule_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    from scrapers.discovery_scheduler import pause_schedule
+    ok = await pause_schedule(schedule_id, db)
+    return {"ok": ok}
+
+
+@app.delete("/discovery-schedules/{schedule_id}")
+async def delete_discovery_schedule(
+    schedule_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    from scrapers.discovery_scheduler import delete_schedule
+    ok = await delete_schedule(schedule_id, db)
+    return {"ok": ok}
+
+
+@app.post("/discovery-schedules/run-due")
+async def run_due_discovery_schedules(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Run all schedules that are due. Called by daily cron."""
+    from scrapers.discovery_scheduler import run_due_schedules
+    result = await run_due_schedules(workspace_id, db)
+    return result
+
+
+# =============================================================================
+# RECONTACT SIGNALS (trigger-based recontact)
+# =============================================================================
+
+@app.get("/leads/{lead_id}/recontact-signals")
+async def get_lead_recontact_signals(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Check if there are new change signals justifying recontact."""
+    from scoring.recontact_signals import detect_recontact_signals
+    return await detect_recontact_signals(lead_id, workspace_id, db)
+
+
+@app.get("/leads/recontact-ready-signals")
+async def recontact_ready_with_signals(
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Trigger-based recontact list — only leads with fresh change signals."""
+    from scoring.recontact_signals import get_recontact_ready
+    params = dict(request.query_params)
+    limit = int(params.get("limit", 25))
+    leads = await get_recontact_ready(workspace_id, db, limit=limit)
+    return {"leads": leads, "count": len(leads)}
+
+
+@app.post("/leads/{lead_id}/outreach-snapshot")
+async def save_lead_outreach_snapshot(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Save baseline for future change-signal detection. Call after campaign completes."""
+    from scoring.recontact_signals import save_outreach_snapshot
+    await save_outreach_snapshot(lead_id, db)
+    return {"ok": True}
+
+
+# =============================================================================
+# REPLY CLASSIFIER
+# =============================================================================
+
+class ReplyClassifyRequest(BaseModel):
+    reply_id: str
+    reply_text: str
+    reply_from: str
+    lead_id: str
+
+
+@app.post("/replies/classify")
+async def classify_single_reply(
+    body: ReplyClassifyRequest,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """
+    Classify an incoming reply and apply automatic actions.
+    Called by Warmr webhook or n8n when a reply comes in.
+    """
+    from integrations.reply_classifier import process_reply
+    import anthropic
+    import os as _os
+    ac = anthropic.Anthropic(api_key=_os.environ["ANTHROPIC_API_KEY"])
+    result = await process_reply(
+        reply_id=body.reply_id,
+        reply_text=body.reply_text,
+        reply_from=body.reply_from,
+        lead_id=body.lead_id,
+        workspace_id=workspace_id,
+        supabase_client=db,
+        anthropic_client=ac,
+    )
+    return result
+
+
+@app.post("/replies/process-unclassified")
+async def process_unclassified_replies(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """
+    Process all reply_inbox rows that don't have a classification yet.
+    Called by n8n every 15 min.
+    """
+    from integrations.reply_classifier import process_reply
+    import anthropic
+    import os as _os
+
+    unclassified = db.table("reply_inbox").select("*").eq(
+        "workspace_id", workspace_id,
+    ).is_("classification", "null").limit(25).execute()
+
+    rows = unclassified.data or []
+    if not rows:
+        return {"processed": 0}
+
+    ac = anthropic.Anthropic(api_key=_os.environ["ANTHROPIC_API_KEY"])
+    processed = 0
+    for row in rows:
+        try:
+            await process_reply(
+                reply_id=row["id"],
+                reply_text=row.get("body", ""),
+                reply_from=row.get("from_email", ""),
+                lead_id=row.get("lead_id", ""),
+                workspace_id=workspace_id,
+                supabase_client=db,
+                anthropic_client=ac,
+            )
+            processed += 1
+        except Exception as e:
+            logger.warning("classify reply %s failed: %s", row.get("id"), e)
+
+    return {"processed": processed, "total": len(rows)}
+
+
+# =============================================================================
 # DAILY BRIEFING
 # =============================================================================
 
