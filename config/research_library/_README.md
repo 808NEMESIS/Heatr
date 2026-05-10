@@ -110,4 +110,4 @@ Verlopen entries (>12 maanden zonder herverificatie) krijgen een waarschuwing in
 
 ## Status van library
 
-**Status van library:** Prompt 2 van 5 uitgevoerd. Categorieën gevuld: Reactietijd (3), Reviews + Social Proof (5). Komende: AI-adoptie, Slechte website-kosten, Automatisering. Totaal LIVE: 8 claims.
+**Status van library:** Prompt 3 van 5 uitgevoerd. Categorieën gevuld: Reactietijd (3), Reviews + Social Proof (5), AI-adoptie MKB (4). Komende: Slechte website-kosten, Automatisering. Totaal LIVE: 12 claims.

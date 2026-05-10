@@ -246,3 +246,125 @@ relevantie_zorg_cosmetisch_cliniek: |
   Voor de helft van potentiële patiënten begint hun keuze niet bij jullie website, maar bij wat anderen er over zeggen.
 ---
 ```
+
+---
+
+## Categorie: AI-adoptie MKB
+
+```yaml
+---
+id: sba-census-ai-gap-closing-2025
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b]
+patroon: [mail_2_value_add, ai_adoptie, mkb_grote_bedrijven_kloof]
+geo_specifiek: us
+stat_kort: |
+  De AI-kloof tussen kleine en grote bedrijven halveerde tussen begin 2024 en eind 2025: van 1,8x
+  naar 1,2x. Kleine bedrijven gingen van 6,3% naar 8,8% AI-adoptie; grote bedrijven van 11,1% naar 10,5%.
+  De kloof sluit niet doordat MKB versnelt, maar doordat groot stilstaat.
+attributie_kort: "US SBA Office of Advocacy / Census BTOS (2025)."
+apa7_volledig: |
+  US Small Business Administration, Office of Advocacy. (2025). Business Trends and Outlook Survey: AI Adoption Tracking 2024-2025. SBA.
+sample: "200.000 Amerikaanse bedrijven biweekly via Census BTOS"
+methodologie: "Verplichte Census-enquête onder representatief panel van 200K bedrijven, biweekly cadence."
+bron_url: https://advocacy.sba.gov/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Stat gebaseerd op smalle BTOS-definitie van AI (in productie). Brede definitie nov 2025+ (alle vormen
+  van AI-gebruik incl. ChatGPT) niet meegenomen. Voor mail-context is smalle definitie eigenlijk relevanter —
+  het meet daadwerkelijke implementatie, niet 'experimenteren'.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor MKB-prospects: de kloof tussen klein en groot sluit, en wel doordat MKB nu sneller groeit dan grote
+  bedrijven in AI-adoptie. Dat betekent: NU instappen is op het inflectiepunt zitten, niet achter de feiten aanlopen.
+---
+```
+
+```yaml
+---
+id: sba-census-ai-applicability-barrier-2024
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b]
+patroon: [mail_2_value_add, ai_adoptie, perceived_irrelevance, mkb_drempel]
+geo_specifiek: us
+stat_kort: |
+  82% van bedrijven met minder dan 5 medewerkers gelooft dat AI niet van toepassing is op hun werk.
+  Dat percentage daalt scherp bij grotere bedrijven — een kennisbarrière, niet een werkelijkheidsbarrière.
+attributie_kort: "US Census BTOS Supplement (2024)."
+apa7_volledig: |
+  US Census Bureau. (2024). Business Trends and Outlook Survey Supplement: AI Use and Perceptions Among Small Businesses. Census Bureau.
+sample: "Amerikaanse bedrijven via Census BTOS Supplement"
+methodologie: "Census-enquête, supplement vragen over AI-perceptie en -gebruik per bedrijfsgrootte."
+bron_url: https://www.census.gov/data/experimental-data-products/business-trends-and-outlook-survey.html
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Sample US-only. Brede stat zonder sector-breakdown — sommige typen werk lenen zich inderdaad minder voor AI.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor MKB-eigenaren die zeggen "AI is niets voor onze branche": je bent in goed gezelschap, maar het is
+  een perceptie-probleem. De prospects die nu instappen — niet die wachten — komen uit dezelfde 82%.
+---
+```
+
+```yaml
+---
+id: thryv-ai-roi-2025
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b]
+patroon: [mail_2_value_add, ai_adoptie, roi, time_savings]
+geo_specifiek: us
+stat_kort: |
+  66% van MKB-AI-gebruikers bespaart $500-$2.000 per maand. 58% wint 20+ uur per maand terug.
+  ROI is geen toekomstbelofte meer; het is gemeten realiteit voor MKB-die-instapt.
+attributie_kort: "Thryv State of SMB AI Report (mei 2025)."
+apa7_volledig: |
+  Thryv. (2025). State of SMB AI 2025: Survey of 540 Small and Medium Business Decision-Makers. Thryv.
+sample: "540 SMB-decision-makers, mei 2025"
+methodologie: "Thryv survey onder eigen klantbasis + extern panel. Sample en methodologie publiek beschreven."
+bron_url: https://www.thryv.com/blog/state-of-smb-ai-2025/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Thryv is commercieel SaaS voor SMB (conflict-of-interest evident).
+  Sample 540 is degelijk maar self-reported survey — gemeten besparingen zijn perceptie, niet audited.
+  USD behouden in stat (geen euro-omrekening) voor traceerbaarheid naar bron.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor cliniek-eigenaren: $500-$2.000/mnd besparingen klinkt abstract, maar voor een typische cliniek
+  betekent het concreet: één extra patiënt per week meer dan dekt de implementatie.
+---
+```
+
+```yaml
+---
+id: cbs-ai-adoptie-nl-eu-2024
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b]
+patroon: [mail_2_value_add, ai_adoptie, nl_lokaal, eu_vergelijking]
+geo_specifiek: nl
+stat_kort: |
+  In 2024 gebruikte 23% van Nederlandse bedrijven (10+ werknemers) AI-technologie — bijna verdubbeld
+  vanaf 13% in 2021. Het EU-gemiddelde ligt op 13,5%, dus Nederland behoort tot de Europese kopgroep.
+attributie_kort: "CBS AI-monitor (2024); Eurostat (2024)."
+apa7_volledig: |
+  Centraal Bureau voor de Statistiek. (2024). AI-monitor 2024: Gebruik van AI-technologie door Nederlandse bedrijven. CBS. & Eurostat. (2024). ICT usage in enterprises.
+sample: "Alle Nederlandse bedrijven met 10+ werknemers via verplichte ICT-enquête"
+methodologie: "CBS-jaarlijkse ICT-enquête bedrijven, gekoppeld aan bedrijvenregister. Eurostat-vergelijking via gestandaardiseerde EU-methodologie."
+bron_url: https://www.cbs.nl/nl-nl/nieuws/2025/09/gebruik-kunstmatige-intelligentie--ai---door-bedrijven-neemt-toe
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Sample alleen bedrijven met 10+ werknemers — kleinste MKB (<10 werknemers) niet meegenomen in deze stat.
+  Voor zzp/eenmanszaken aparte CBS-data beschikbaar.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor Nederlandse MKB-prospects: dit is de sterkste mogelijke NL-stat (overheidsbron). De norm verschuift
+  sneller in NL dan ondernemers vaak denken — niet meedoen wordt elk jaar duurder.
+---
+```
