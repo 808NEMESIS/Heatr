@@ -110,10 +110,4 @@ Verlopen entries (>12 maanden zonder herverificatie) krijgen een waarschuwing in
 
 ## Status van library
 
-**Prompt 1 van 5 uitgevoerd.** Categorieën gevuld: **Reactietijd** (3 LIVE claims voor cosmetisch_cliniek).
-
-Komende prompts:
-- Prompt 2 — Reviews
-- Prompt 3 — AI-adoptie
-- Prompt 4 — Slechte website-kosten
-- Prompt 5 — Automatisering + `_verify.py` script
+**Status van library:** Prompt 2 van 5 uitgevoerd. Categorieën gevuld: Reactietijd (3), Reviews + Social Proof (5). Komende: AI-adoptie, Slechte website-kosten, Automatisering. Totaal LIVE: 8 claims.

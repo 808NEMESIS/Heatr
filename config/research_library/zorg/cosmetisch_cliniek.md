@@ -97,3 +97,152 @@ relevantie_zorg_cosmetisch_cliniek: |
   "wij reageren ook daadwerkelijk binnen 5 minuten" is meestal infrastructuur — niet intentie.
 ---
 ```
+
+---
+
+## Categorie: Reviews + Social Proof
+
+```yaml
+---
+id: brightlocal-review-response-2024
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2c, lokale_dienstverlening]
+patroon: [mail_2_value_add, reviews, social_proof, review_response]
+geo_specifiek: us
+stat_kort: |
+  88% van consumenten kiest een bedrijf dat reageert op reviews (positief én negatief), tegen 47%
+  bij bedrijven die niet reageren. Reageren — niet de score zelf — is wat differentieert.
+attributie_kort: "BrightLocal Local Consumer Review Survey (2024)."
+apa7_volledig: |
+  BrightLocal. (2024). Local Consumer Review Survey 2024: How Online Reviews Influence Local Business Decisions. BrightLocal.
+sample: "1.117 Amerikaanse consumenten via SurveyMonkey, 2024"
+methodologie: "BrightLocal voerde survey uit via externe SurveyMonkey-panel. Sample-grootte en methodologie publiek beschreven."
+bron_url: https://www.brightlocal.com/research/local-consumer-review-survey/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  BrightLocal is commercieel review-management bedrijf (conflict-of-interest aanwezig maar transparant).
+  Sample US-only — voor NL-markt complementeer met Lightspeed/OnePoll-claim.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor clinieken waar mond-tot-mond ooit alles was: het zwaartepunt van vertrouwen is verschoven naar
+  online reviews, en wel zo dat *reageren* ervan een actieve onderscheidende factor is geworden.
+---
+```
+
+```yaml
+---
+id: brightlocal-rating-threshold-2026
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2c, lokale_dienstverlening]
+patroon: [mail_2_value_add, reviews, social_proof, rating_threshold]
+geo_specifiek: us
+stat_kort: |
+  31% van consumenten overweegt alleen nog bedrijven met 4,5+ sterren — bijna verdubbeld vanaf 17%
+  een jaar eerder. De drempel verschuift snel naar boven.
+attributie_kort: "BrightLocal Local Consumer Review Survey (2026)."
+apa7_volledig: |
+  BrightLocal. (2026). Local Consumer Review Survey 2026. BrightLocal.
+sample: "Amerikaanse consumenten via SurveyMonkey, 2026"
+methodologie: "BrightLocal jaarlijkse survey, externe panel."
+bron_url: https://www.brightlocal.com/research/local-consumer-review-survey/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  BrightLocal is commercieel review-management bedrijf. Sample US-only.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor cosmetische clinieken: een 4,2-ster rating is geen "goed", het is een filter waardoor
+  bijna een derde van potentiële patiënten je niet eens overweegt.
+---
+```
+
+```yaml
+---
+id: brightlocal-review-volume-2026
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2c, lokale_dienstverlening]
+patroon: [mail_2_value_add, reviews, social_proof, review_volume]
+geo_specifiek: us
+stat_kort: |
+  47% van consumenten overweegt geen bedrijf met minder dan 20 reviews. Volume is een
+  vertrouwens-signaal naast rating — beide tellen.
+attributie_kort: "BrightLocal Local Consumer Review Survey (2026)."
+apa7_volledig: |
+  BrightLocal. (2026). Local Consumer Review Survey 2026. BrightLocal.
+sample: "Amerikaanse consumenten via SurveyMonkey, 2026"
+methodologie: "BrightLocal jaarlijkse survey, externe panel."
+bron_url: https://www.brightlocal.com/research/local-consumer-review-survey/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  BrightLocal is commercieel review-management bedrijf. Sample US-only.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor jonge clinieken of clinieken zonder actief review-management: onder 20 reviews betekent
+  voor bijna de helft van potentiële patiënten dat je 'onder hun radar' valt.
+---
+```
+
+```yaml
+---
+id: reputation-prodege-trust-source-2024
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2c, lokale_dienstverlening]
+patroon: [mail_2_value_add, reviews, social_proof, trust_paradigm, opener]
+geo_specifiek: us
+stat_kort: |
+  54% van consumenten vertrouwt online reviews als eerste informatiebron — méér dan adviezen van
+  vrienden of familie (24%), bedrijfs-claims (18%) of social-media-influencers (2%).
+attributie_kort: "Reputation/Prodege Survey (2024)."
+apa7_volledig: |
+  Reputation Inc. (2024). The Definitive Report on Modern Online Consumer Behavior (Survey conducted by Prodege). Reputation Inc.
+sample: "2.000 Amerikaanse consumenten via Prodege (onafhankelijk research-firma), najaar 2024"
+methodologie: "Onderzoek uitgevoerd door externe research-firma Prodege in opdracht van Reputation. Persbericht via BusinessWire."
+bron_url: https://www.businesswire.com/news/home/20241009362692/en/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Reputation is commercieel reputation-management bedrijf (conflict-of-interest aanwezig).
+  Onderzoek wel uitgevoerd door externe Prodege, niet door Reputation zelf — methodologische scheiding.
+  Rol in matching-laag: opener / paradigma-shift voor prospects die nog vasthouden aan "ouderwets goed werk levert klanten op".
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor cosmetische clinieken: dit is dé paradigma-shift om aan te halen wanneer een prospect zegt
+  "wij hebben goede mond-tot-mond, dat is genoeg". Het zwaartepunt van vertrouwen is verschoven van
+  de keukentafel naar Google.
+---
+```
+
+```yaml
+---
+id: lightspeed-onepoll-nl-reviews-2024
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2c, lokale_dienstverlening]
+patroon: [mail_2_value_add, reviews, social_proof, nl_lokaal]
+geo_specifiek: nl
+stat_kort: |
+  49% van Nederlandse consumenten checkt online reviews voordat ze een product kopen. Voor 20%
+  zijn reviews zelfs doorslaggevend in de aankoopbeslissing.
+attributie_kort: "Lightspeed/OnePoll (2024); n=1.000 Nederlandse consumenten."
+apa7_volledig: |
+  Lightspeed Commerce Inc. (2024). Nederlandse consument en online reviews: onderzoek door OnePoll. Lightspeed.
+sample: "1.000 Nederlandse consumenten via OnePoll, december 2024"
+methodologie: "Onderzoek uitgevoerd door OnePoll (onafhankelijk markt- en surveybureau) in opdracht van Lightspeed."
+bron_url: https://www.lightspeedhq.nl/nieuws/online-reviews/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Lightspeed is commercieel kassasysteem-platform (conflict-of-interest matig — geen direct review-product).
+  Onderzoek wel uitgevoerd door externe OnePoll, niet door Lightspeed zelf.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor Nederlandse cliniek-prospects: dit is de NL-spiegel van de Reputation/Prodege-claim.
+  Voor de helft van potentiële patiënten begint hun keuze niet bij jullie website, maar bij wat anderen er over zeggen.
+---
+```
