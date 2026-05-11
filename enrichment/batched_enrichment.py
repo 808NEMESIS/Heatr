@@ -215,26 +215,23 @@ async def _call_claude_with_cache(
 
     text = response.content[0].text if response.content else ""
 
-    # Calculate actual cost including cache discounts
+    # Calculate actual cost including cache discounts via centrale pricing-config.
+    # Anthropic prompt-cache: fresh input (volle prijs), cache_read (90% off),
+    # cache_creation (25% premium). Zie config/pricing.py voor canonical waardes.
+    from config.pricing import get_price_eur
     usage = response.usage
     input_tokens = usage.input_tokens
     output_tokens = usage.output_tokens
     cached_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
     cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    fresh_input = max(0, input_tokens - cached_tokens - cache_creation)
 
-    # Haiku pricing per million tokens: input €0.74, cached read €0.074 (90% off), output €3.68
-    # Cache creation: €0.92/M (25% premium on first write)
-    INPUT_COST = 0.74 / 1_000_000
-    CACHED_COST = 0.074 / 1_000_000
-    CACHE_WRITE_COST = 0.92 / 1_000_000
-    OUTPUT_COST = 3.68 / 1_000_000
-
-    fresh_input = input_tokens - cached_tokens - cache_creation
-    cost = (
-        fresh_input * INPUT_COST
-        + cached_tokens * CACHED_COST
-        + cache_creation * CACHE_WRITE_COST
-        + output_tokens * OUTPUT_COST
+    cost = get_price_eur(
+        "claude-haiku-4-5-20251001",
+        input_tokens=fresh_input,
+        output_tokens=output_tokens,
+        cache_read_tokens=cached_tokens,
+        cache_write_tokens=cache_creation,
     )
 
     # Log actual cost
@@ -250,9 +247,17 @@ async def _call_claude_with_cache(
         }).execute()
 
         if cached_tokens > 0:
+            # Savings = wat het had gekost zonder cache, minus wat het nu kostte
+            saved = get_price_eur(
+                "claude-haiku-4-5-20251001",
+                input_tokens=cached_tokens,
+            ) - get_price_eur(
+                "claude-haiku-4-5-20251001",
+                cache_read_tokens=cached_tokens,
+            )
             logger.info(
                 "batched_enrich: CACHE HIT — %d cached tokens saved ~€%.6f",
-                cached_tokens, cached_tokens * (INPUT_COST - CACHED_COST),
+                cached_tokens, saved,
             )
     except Exception as e:
         logger.debug("Cost log failed: %s", e)

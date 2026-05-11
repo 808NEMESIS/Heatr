@@ -23,14 +23,14 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from config.pricing import get_price_eur
+
 logger = logging.getLogger(__name__)
 
-# Cost per 1M tokens in EUR (approximate, update if pricing changes)
-COST_PER_1M_TOKENS: dict[str, float] = {
-    "claude-haiku-4-5-20251001": 0.25 / 1_000_000,   # input
-    "claude-sonnet-4-6":         3.00 / 1_000_000,
-    "claude-opus-4-6":           15.0 / 1_000_000,
-}
+# Pricing-tabel is verwijderd uit deze module — single source of truth nu in
+# config/pricing.py. Voor de cost-berekening hieronder wordt `get_price_eur`
+# direct aangeroepen met input/output/cache tokens uit het Anthropic
+# response-object.
 
 # Per-context TTL voor heatr_claude_cache. Aangehaakt aan caller-context-string
 # (parameter `context` van cached_claude_call). Onbekende context → DEFAULT_TTL_DAYS.
@@ -175,9 +175,17 @@ async def cached_claude_call(
 
     response = await client.messages.create(**kwargs)
     text = response.content[0].text if response.content else ""
-    input_tokens = response.usage.input_tokens or 0
-    output_tokens = response.usage.output_tokens or 0
-    tokens_used = input_tokens + output_tokens
+    usage = response.usage
+    input_tokens = usage.input_tokens or 0
+    output_tokens = usage.output_tokens or 0
+    # Anthropic prompt-cache-tokens (analoog aan batched_enrichment.py):
+    # cache_read = uit Anthropic-side cache (90% korting), cache_write = nieuw
+    # naar Anthropic-side cache geschreven (25% premium). `input_tokens` van
+    # de usage-object includes ALL tokens; we splitsen fresh-input apart zodat
+    # get_price_eur de juiste prijs per categorie rekent.
+    cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+    cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    fresh_input_tokens = max(0, input_tokens - cache_read_tokens - cache_write_tokens)
 
     # --- Store in cache ---
     if supabase_client and text and not skip_cache:
@@ -200,8 +208,17 @@ async def cached_claude_call(
             logger.debug("Claude cache store failed: %s", e)
 
     # --- Log cost ---
+    # get_price_eur centraliseert pricing (config/pricing.py). Input wordt
+    # gesplit in fresh + cache_read + cache_write zodat Anthropic prompt-cache
+    # discounts correct verrekend worden in cost_eur.
     if supabase_client:
-        cost = tokens_used * COST_PER_1M_TOKENS.get(model, 0)
+        cost = get_price_eur(
+            model,
+            input_tokens=fresh_input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
         await _log_api_cost(
             model=model,
             input_tokens=input_tokens,

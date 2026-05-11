@@ -399,5 +399,7 @@ def _normalize_date(date_str: str) -> str | None:
 
 
 def _estimate_cost(input_tokens: int, output_tokens: int) -> float:
-    """Haiku pricing per million tokens (EUR)."""
-    return (input_tokens * 0.74 + output_tokens * 3.68) / 1_000_000
+    """Haiku pricing per million tokens (EUR). Pricing centraal in config/pricing.py."""
+    from config.pricing import get_legacy_per_m_eur
+    p = get_legacy_per_m_eur("claude-haiku-4-5-20251001")
+    return (input_tokens * p["input_per_m_eur"] + output_tokens * p["output_per_m_eur"]) / 1_000_000
