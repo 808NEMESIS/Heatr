@@ -56,6 +56,8 @@ async def check_sector_specific(
     sector_key: str,
     anthropic_client: Any | None = None,
     supabase_client: Any | None = None,
+    *,
+    lead_id: str,
 ) -> dict[str, Any]:
     """Classify a lead's website against sector-specific website_signals.
 
@@ -189,6 +191,7 @@ async def check_sector_specific(
                 "response_tokens": output_tokens,
                 "cost_eur": cost_eur,
                 "context": "sector_checker",
+                "lead_id": lead_id,
             }).execute()
         except Exception as e:
             logger.debug("sector_checker: cost log failed: %s", e)

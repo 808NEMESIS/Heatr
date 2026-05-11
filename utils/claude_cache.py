@@ -87,6 +87,8 @@ async def cached_claude_call(
     ttl_hours: int | None = None,
     supabase_client=None,
     context: str = "",
+    *,
+    lead_id: str,
 ) -> str:
     """
     Check Supabase cache first. Return cached response on hit.
@@ -108,6 +110,11 @@ async def cached_claude_call(
                  - api_cost_log.context veld
                  Backward-compat: als context leeg is maar cache_key_suffix
                  wel ingevuld, gebruik cache_key_suffix als context-proxy.
+        lead_id: Verplicht (keyword-only). Lead-UUID voor cost-attribution.
+                 Verplicht gemaakt 2026-05-12 om attribution-gap te dichten
+                 (zie docs/attribution_gap_audit_2026-05-11.md). Alle 4
+                 productie-callers (personalization_extractor, contact_extractor,
+                 review_analyzer, opener_generator) hebben lead_id in scope.
 
     Returns:
         Response text string.
@@ -159,6 +166,7 @@ async def cached_claude_call(
                         cost_eur=0.0,
                         context=(effective_context or "")[:50],
                         cache_hit=True,
+                        lead_id=lead_id,
                         supabase_client=supabase_client,
                     )
                 return hit.data["response"]
@@ -226,6 +234,7 @@ async def cached_claude_call(
             cost_eur=cost,
             context=(effective_context or "")[:50],
             cache_hit=cache_hit_flag,
+            lead_id=lead_id,
             supabase_client=supabase_client,
         )
 
@@ -260,7 +269,20 @@ async def _log_api_cost(
     cache_hit=True wordt gezet voor cache-hit-rows zodat verify-scripts
     en cost-audits cache-effectiviteit kunnen meten. Cache-hits hebben
     typically input/output_tokens=0 en cost_eur=0.0 (niets betaald).
+
+    Soft-warning bij lead_id=None: maakt attribution-drift zichtbaar zonder
+    non-B-callers te breken. BLOCKED/system-contexts zijn legitiem
+    lead_id-loos en triggeren de warning niet. Zie attribution-gap audit
+    docs/attribution_gap_audit_2026-05-11.md.
     """
+    if lead_id is None and not (
+        context.startswith("BLOCKED:") or context.startswith("system:")
+    ):
+        logger.warning(
+            "_log_api_cost called without lead_id (context=%s, model=%s). "
+            "Attribution-drift risk — add lead_id to caller.",
+            context, model,
+        )
     if not supabase_client:
         return
     row: dict = {

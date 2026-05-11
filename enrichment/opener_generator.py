@@ -27,13 +27,13 @@ GAP_TO_PAIN: dict[str, dict] = {
         "observation": "Geen online boekingssysteem gevonden",
         "template": "Ik zag dat klanten bij {company} nog niet online een afspraak kunnen maken",
         "priority": 1,
-        "sectors": ["alternatieve_geneeskunde", "cosmetische_behandelaars", "makelaars"],
+        "sectors": ["alternatieve_geneeskunde", "cosmetische_behandelaars"],
     },
     "no_whatsapp": {
         "observation": "Geen WhatsApp integratie",
         "template": "Veel {sector_label} in {city} bieden hun klanten WhatsApp aan voor snelle vragen — bij {company} zag ik dit nog niet",
         "priority": 2,
-        "sectors": ["alternatieve_geneeskunde", "cosmetische_behandelaars", "bouwbedrijven"],
+        "sectors": ["alternatieve_geneeskunde", "cosmetische_behandelaars"],
     },
     "no_chatbot": {
         "observation": "Geen live chat of chatbot",
@@ -69,7 +69,7 @@ GAP_TO_PAIN: dict[str, dict] = {
         "observation": "Geen zichtbare teampagina",
         "template": "Op {domain} miste ik een teampagina — bezoekers willen weten wie er achter {company} zit",
         "priority": 6,
-        "sectors": ["makelaars", "alternatieve_geneeskunde"],
+        "sectors": ["alternatieve_geneeskunde", "cosmetische_behandelaars"],
     },
     "no_reviews_visible": {
         "observation": "Geen klantreviews op de website",
@@ -86,10 +86,8 @@ GAP_TO_PAIN: dict[str, dict] = {
 }
 
 SECTOR_LABELS = {
-    "makelaars": "makelaars",
     "alternatieve_geneeskunde": "therapeuten",
     "cosmetische_behandelaars": "klinieken",
-    "bouwbedrijven": "aannemers",
 }
 
 
@@ -295,15 +293,36 @@ async def generate_openers(
         "Sorteer op sterkste eerst."
     )
 
+    # Inject evidence-based opener-rubric uit config/opener_principles.md
+    # Cache-loaded; minimaal 8% reply-rate impact volgens Lavender/Gong data
+    # zodra de regels (≤75 woorden, geen "Ik", interest-based CTA, etc.) gehandhaafd worden.
+    from config.principles_loader import get_principles
+    principles_text = get_principles()
+    base_system = (
+        "Je schrijft outreach openers voor een webbureau. Kort, concreet, "
+        "gebaseerd op echte website-observaties. Alleen valid JSON."
+    )
+    if principles_text:
+        system_prompt = (
+            f"{base_system}\n\n"
+            f"=== EVIDENCE-BASED RUBRIC (HOUD JE HIERAAN) ===\n"
+            f"{principles_text}\n"
+            f"=== EINDE RUBRIC ===\n\n"
+            f"Genereer nu de openers. Iedere output MOET conformeren aan de rubric hierboven."
+        )
+    else:
+        system_prompt = base_system
+
     openers: list[dict] = []
     try:
         response = await cached_claude_call(
             prompt=prompt,
             cache_key_suffix=f"opener:{lead_id}",
             model="claude-haiku-4-5-20251001",
-            max_tokens=400,
-            system="Je schrijft outreach openers voor een webbureau. Kort, concreet, gebaseerd op echte website-observaties. Alleen valid JSON.",
+            max_tokens=700,  # was 400 — live truncatie ontdekt op midden-zin grens
+            system=system_prompt,
             supabase_client=supabase_client,
+            lead_id=lead_id,
         )
 
         import json

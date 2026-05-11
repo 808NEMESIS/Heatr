@@ -95,11 +95,17 @@ async def analyze_website(
     result["technical_score"] = technical["technical_score"]
 
     # --- Layer 2: Visual (max 25 pts) — optional, expensive ---
+    # PR2.5: passes technical_score so visual_analyzer can skip Vision on
+    # already-healthy sites (no Aerys-websitebouw pitch opportunity).
     visual_score = None
     if enable_vision and page_html:
         try:
             from website_intelligence.visual_analyzer import analyze_visual
-            visual = await analyze_visual(domain, workspace_id, supabase_client, anthropic_client)
+            visual = await analyze_visual(
+                domain, workspace_id, supabase_client, anthropic_client,
+                sector=sector,
+                technical_score=result["technical_score"],
+            )
             result["visual"] = visual
             visual_score = visual.get("overall_score")
             result["visual_score"] = visual_score
@@ -114,9 +120,12 @@ async def analyze_website(
     result["conversion"] = conversion
     result["conversion_score"] = conversion["conversion_score"]
 
-    # --- Layer 4: Sector-specific (max 15 + bonus) ---
+    # --- Layer 4: Sector-specific (max 15, Claude Haiku tier-classifier) ---
     sector_result = await check_sector_specific(
-        domain, page_html, sector, conversion, technical,
+        domain, page_html, sector,
+        anthropic_client=anthropic_client,
+        supabase_client=supabase_client,
+        lead_id=lead_id,
     )
     result["sector_specific"] = sector_result
     result["sector_score"] = sector_result["sector_score"]
@@ -133,11 +142,12 @@ async def analyze_website(
     # --- Layer 5: Personalization extraction ---
     personalization = await extract_personalization(
         domain, page_html, sector, anthropic_client, supabase_client,
+        lead_id=lead_id,
     )
     result["personalization"] = personalization
 
     # --- Contact extraction from team pages ---
-    contacts = await extract_contacts_from_website(domain, supabase_client, anthropic_client)
+    contacts = await extract_contacts_from_website(domain, supabase_client, anthropic_client, lead_id=lead_id)
     result["team_contacts"] = contacts
 
     # --- Opportunity classification ---
@@ -185,6 +195,10 @@ async def analyze_website(
             lead_update["personalization_hooks"] = personalization["hooks"]
         if personalization.get("observations"):
             lead_update["personalization_observations"] = personalization["observations"]
+
+        # Warmr Sequence v1.0 datapoint — booking_system enum
+        if conversion.get("booking_system"):
+            lead_update["booking_system"] = conversion["booking_system"]
 
         supabase_client.table("leads").update(lead_update).eq("id", lead_id).execute()
     except Exception as e:

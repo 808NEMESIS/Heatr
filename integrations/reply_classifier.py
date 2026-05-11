@@ -61,6 +61,8 @@ async def classify_reply(
     lead_company: str,
     supabase_client: Any,
     anthropic_client: Any,
+    *,
+    lead_id: str,
 ) -> dict[str, Any]:
     """
     Classify a single reply with Claude Haiku.
@@ -115,6 +117,7 @@ async def classify_reply(
                 "response_tokens": usage.output_tokens,
                 "cost_eur": round(cost, 6),
                 "context": "reply_classify",
+                "lead_id": lead_id,
             }).execute()
         except Exception:
             pass
@@ -182,6 +185,7 @@ async def process_reply(
         lead_company=company_name,
         supabase_client=supabase_client,
         anthropic_client=anthropic_client,
+        lead_id=lead_id,
     )
 
     category = classification.get("category")

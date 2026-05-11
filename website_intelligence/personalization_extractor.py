@@ -22,6 +22,8 @@ async def extract_personalization(
     sector: str,
     anthropic_client: Any,
     supabase_client: Any = None,
+    *,
+    lead_id: str,
 ) -> dict[str, Any]:
     """
     Extract personalization context from a website for outreach.
@@ -69,6 +71,7 @@ async def extract_personalization(
             max_tokens=400,
             system="Je bent een outbound sales expert. Analyseer websites en vind hooks voor gepersonaliseerde outreach. Antwoord alleen in valid JSON.",
             supabase_client=supabase_client,
+            lead_id=lead_id,
         )
 
         import json

@@ -25,6 +25,8 @@ async def extract_contacts_from_website(
     domain: str,
     supabase_client: Any,
     anthropic_client: Any,
+    *,
+    lead_id: str,
 ) -> list[dict]:
     """
     Extract team members / contact persons from website team/about pages.
@@ -69,6 +71,7 @@ async def extract_contacts_from_website(
     try:
         contacts = await _extract_with_claude(
             team_page_text, source_url, domain, anthropic_client, supabase_client,
+            lead_id=lead_id,
         )
     except Exception as e:
         logger.error("Claude contact extraction failed for %s: %s", domain, e)
@@ -82,6 +85,8 @@ async def _extract_with_claude(
     domain: str,
     anthropic_client: Any,
     supabase_client: Any,
+    *,
+    lead_id: str,
 ) -> list[dict]:
     """Use Claude Haiku to extract person data from team page text."""
     from utils.claude_cache import cached_claude_call
@@ -104,6 +109,7 @@ async def _extract_with_claude(
         max_tokens=500,
         system="You extract person data from webpage text. Return only valid JSON.",
         supabase_client=supabase_client,
+        lead_id=lead_id,
     )
 
     # Parse JSON response

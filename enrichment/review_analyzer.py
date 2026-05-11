@@ -15,9 +15,65 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# Dutch + English relative date parsing for Google Reviews "X weken geleden" strings.
+# Maps unit → approx days.
+_REL_UNIT_DAYS: dict[str, int] = {
+    "dag": 1, "day": 1, "days": 1, "dagen": 1,
+    "week": 7, "weken": 7, "weeks": 7,
+    "maand": 30, "maanden": 30, "month": 30, "months": 30,
+    "jaar": 365, "year": 365, "years": 365, "jaren": 365,
+}
+
+
+def _parse_relative_date(s: str, now: datetime | None = None) -> datetime | None:
+    """Parse a Google Reviews relative date string into absolute UTC datetime.
+
+    Accepts Dutch ("2 weken geleden", "een maand geleden") and English
+    ("2 weeks ago", "a month ago"). Returns None on parse failure.
+    """
+    if not s:
+        return None
+    now = now or datetime.now(timezone.utc)
+    s_lower = s.strip().lower()
+
+    # Normalise "een"/"a" → 1
+    s_lower = re.sub(r"\b(een|a|an)\b", "1", s_lower)
+
+    m = re.search(r"(\d+)\s*([a-zà-ÿ]+)", s_lower)
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+
+    unit_raw = m.group(2)
+    # Match to unit (tolerate plural + punctuation)
+    days = None
+    for unit_key, day_value in _REL_UNIT_DAYS.items():
+        if unit_raw.startswith(unit_key):
+            days = day_value
+            break
+    if days is None:
+        return None
+
+    return now - timedelta(days=n * days)
+
+
+def latest_review_date_from_reviews(reviews: list[dict]) -> datetime | None:
+    """Return the most recent review date as UTC datetime, or None."""
+    parsed: list[datetime] = []
+    for r in reviews or []:
+        dt = _parse_relative_date(r.get("date") or "")
+        if dt is not None:
+            parsed.append(dt)
+    return max(parsed) if parsed else None
 
 
 async def scrape_google_reviews(
@@ -184,6 +240,8 @@ async def analyze_reviews(
     company_name: str,
     supabase_client: Any,
     anthropic_client: Any,
+    *,
+    lead_id: str,
 ) -> dict[str, Any]:
     """
     Analyze reviews with Claude Haiku to find outreach-relevant pain points.
@@ -244,6 +302,7 @@ async def analyze_reviews(
             max_tokens=400,
             system="Je analyseert Google reviews en zoekt pijnpunten relevant voor een webbureau. Antwoord alleen in valid JSON.",
             supabase_client=supabase_client,
+            lead_id=lead_id,
         )
 
         import json
@@ -305,15 +364,21 @@ async def enrich_lead_with_reviews(
         return {"reviews_found": 0}
 
     # Analyze
-    analysis = await analyze_reviews(reviews, sector, company_name, supabase_client, anthropic_client)
+    analysis = await analyze_reviews(reviews, sector, company_name, supabase_client, anthropic_client, lead_id=lead_id)
+
+    # Derive latest review date (Warmr Sequence v1.0 datapoint)
+    latest_dt = latest_review_date_from_reviews(reviews)
 
     # Store on lead
     try:
-        supabase_client.table("leads").update({
+        update_payload: dict = {
             "review_analysis": analysis,
             "review_best_quote": analysis.get("best_quote") or "",
             "review_pain_points": analysis.get("aerys_relevant_pains") or [],
-        }).eq("id", lead_id).execute()
+        }
+        if latest_dt is not None:
+            update_payload["latest_review_date"] = latest_dt.isoformat()
+        supabase_client.table("leads").update(update_payload).eq("id", lead_id).execute()
     except Exception as e:
         logger.debug("review_analyzer: failed to store results: %s", e)
 
