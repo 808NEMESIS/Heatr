@@ -368,3 +368,99 @@ relevantie_zorg_cosmetisch_cliniek: |
   sneller in NL dan ondernemers vaak denken — niet meedoen wordt elk jaar duurder.
 ---
 ```
+
+---
+
+## Categorie: Slechte website-kosten (service-business)
+
+```yaml
+---
+id: zuko-form-completion-rates-2025
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b, b2c]
+patroon: [mail_2_value_add, conversie_optimalisatie, formulier_friction, slechte_website_kosten]
+geo_specifiek: null
+stat_kort: |
+  Slechts 45% van bezoekers die een online formulier ziet, voltooit het ook. Op mobiel is dat 42%,
+  tegen 47% op desktop. Voor een typische lead-gen formulier op een service-website: meer dan de
+  helft van de mensen klikt weg voor ze versturen.
+attributie_kort: "Zuko Analytics (2025-2026)."
+apa7_volledig: |
+  Zuko Analytics. (2025-2026). Form Conversion Benchmarks: Aggregated Data from Lead-Gen Forms, Government, and Services. Zuko.
+sample: "Aggregaat anonieme data van duizenden online formulieren in diverse branches (lead-gen, government, services — NIET checkout)"
+methodologie: "Zuko's form-analytics software meet passief werkelijk formulier-gedrag van bezoekers. Geen survey, geen self-report."
+bron_url: https://www.zuko.io/blog/25-conversion-rate-statistics-you-need
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Zuko is commercieel form-analytics platform (conflict-of-interest aanwezig).
+  Data niet via survey maar via passieve meting van werkelijk gedrag — dat is methodologisch sterker dan self-report.
+  Niet beperkt tot e-commerce; omvat lead-gen forms, government forms, service-aanvragen.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor cosmetische clinieken met een consult-aanvraag-formulier: meer dan de helft van bezoekers die het formulier
+  ziet, klikt weg voor ze versturen. Op mobiel is dat nog scherper. Elke extra veld of friction is een verlies.
+---
+```
+
+```yaml
+---
+id: patient-prism-call-conversion-2026
+sectoren_specifiek: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen]
+sectoren_breed: [zorg]
+patroon: [mail_2_value_add, conversie_optimalisatie, telefoon_conversie, slechte_website_kosten]
+geo_specifiek: us
+stat_kort: |
+  Gemiddelde clinieken converteren 63-68% van inkomende calls naar afspraken. Top-performers halen 85%.
+  Het verschil van 17-22 procentpunten zit niet in de behandeling, maar in hoe de eerste call wordt afgehandeld.
+attributie_kort: "Patient Prism Healthcare Call Center Revenue Activation Study (maart 2026)."
+apa7_volledig: |
+  Patient Prism Research Team. (2026). Healthcare Call Center Revenue Activation Study. Patient Prism.
+sample: "300 miljoen patient interactions, waaronder 1.113.300 connected calls over 535.109 opportunities"
+methodologie: "Massive-scale aggregatie van clinieken die Patient Prism's call-tracking software gebruiken. Werkelijke calls, geen survey."
+bron_url: https://www.patientprism.com/patient-acquisition-cost-benchmarks-conversion-optimization-2026/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Patient Prism is commercieel call-conversie analyse-bedrijf voor zorg (conflict-of-interest evident).
+  Sample en methodologie publiek beschreven. Healthcare-specifiek — alleen bruikbaar voor zorg-cohort.
+  US-data; NL-clinieken kunnen patroon herkennen maar percentages kunnen verschillen.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor cosmetische clinieken: dit is de meest sector-specifieke stat in de library. Het verschil tussen
+  gemiddelde en top-performer-conversie is een directe omzet-hefboom — en het zit in call-handling,
+  niet in de behandeling zelf.
+---
+```
+
+```yaml
+---
+id: first-page-sage-medical-conversion-2025
+sectoren_specifiek: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen]
+sectoren_breed: [zorg]
+patroon: [mail_2_value_add, conversie_optimalisatie, slechte_website_kosten, landing_page]
+geo_specifiek: us
+stat_kort: |
+  De gemiddelde medische website converteert slechts 2-3% van bezoekers naar een eerste contact.
+  Top-performers met focused landing pages halen 7,4% — meer dan dubbel. Voor een cliniek met 1.000
+  maandelijkse bezoekers betekent dat het verschil tussen 25 of 74 nieuwe consultaanvragen.
+attributie_kort: "First Page Sage Patient Conversion Report (2025)."
+apa7_volledig: |
+  First Page Sage. (2025). Patient Conversion Rate by Practice Type: 2025 Report. First Page Sage.
+sample: "Geaggregeerde anonieme client data van medical practices, 2017-2024"
+methodologie: "Cliëntdatabase van marketing-agency gespecialiseerd in healthcare; eigen tracking-data, geen self-report."
+bron_url: https://firstpagesage.com/reports/patient-conversion-rate-by-practice-type/
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  First Page Sage is medical-marketing-agency (commercieel belang in betoog dat conversie verbeterbaar is).
+  Healthcare-specifiek; alleen bruikbaar voor zorg-cohort. US-data.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor cliniek-eigenaren: 2-3% conversie voelt niet slecht totdat je weet dat top-performers 7,4% halen.
+  Het verschil zit niet in het verkeer maar in de pagina waar dat verkeer landt.
+---
+```
