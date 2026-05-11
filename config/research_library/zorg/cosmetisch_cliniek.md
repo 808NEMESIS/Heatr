@@ -464,3 +464,127 @@ relevantie_zorg_cosmetisch_cliniek: |
   Het verschil zit niet in het verkeer maar in de pagina waar dat verkeer landt.
 ---
 ```
+
+---
+
+## Categorie: Automatisering taken
+
+```yaml
+---
+id: duke-fed-automation-adoption-2024
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b]
+patroon: [mail_2_value_add, automatisering, adoptie, mkb_grote_bedrijven]
+geo_specifiek: us
+stat_kort: |
+  60% van bedrijven heeft inmiddels minstens één taak geautomatiseerd die voorheen door medewerkers werd gedaan.
+  Bij grote bedrijven is dat 84%. Automatisering is verschoven van "competitief voordeel" naar "basisniveau".
+attributie_kort: "Duke University Fuqua School of Business / Federal Reserve Banks of Richmond and Atlanta CFO Survey (juni 2024)."
+apa7_volledig: |
+  Duke Fuqua School of Business & Federal Reserve Banks of Richmond and Atlanta. (2024). The CFO Survey: Automation and AI in U.S. Companies, Q2 2024. Duke University.
+sample: "Ongeveer 450 financial executives, juni 2024"
+methodologie: "Quarterly CFO Survey door Duke Fuqua i.s.m. Federal Reserve. Externe panel van senior financial executives."
+bron_url: https://www.fuqua.duke.edu/duke-fuqua-insights/us-companies-ramp-automation-and-ai-inflation-persists
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Sterkste mogelijke bron-type: academisch instituut + overheidsbron (Federal Reserve).
+  Sample US-only. CFO-respondenten skewen naar mid-large companies; pure micro-MKB ondervertegenwoordigd.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor MKB-prospects die "automatisering nog wel even willen aanzien": de norm is verschoven.
+  60% heeft het al gedaan, en het MKB dat nog niet automatiseert concurreert tegen 60% dat dat al wel doet.
+---
+```
+
+```yaml
+---
+id: duke-fed-large-firm-ai-2024
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b]
+patroon: [mail_2_value_add, automatisering, ai_role_replacement, urgentie]
+geo_specifiek: us
+stat_kort: |
+  80% van grote Amerikaanse bedrijven verwacht in de komende 12 maanden rollen te automatiseren met AI.
+  Bij kleinere bedrijven is dat 60%. De vraag is niet meer "of", maar "wanneer".
+attributie_kort: "Duke Fuqua / Federal Reserve CFO Survey (juni 2024)."
+apa7_volledig: |
+  Duke Fuqua School of Business & Federal Reserve Banks of Richmond and Atlanta. (2024). The CFO Survey: Future Automation Plans, Q2 2024. Duke University.
+sample: "Ongeveer 450 financial executives, juni 2024"
+methodologie: "Zelfde quarterly CFO Survey, andere stat-snede uit hetzelfde rapport."
+bron_url: https://www.fuqua.duke.edu/duke-fuqua-insights/us-companies-ramp-automation-and-ai-inflation-persists
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Zelfde sterke bron als duke-fed-automation-adoption-2024 (academisch + overheid). Sample US-only.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor MKB-eigenaren die zich afvragen of dit "voor over een paar jaar" is: 60% van kleinere bedrijven
+  verwacht nu rollen te automatiseren. De urgentie is niet hypothetisch.
+---
+```
+
+```yaml
+---
+id: openai-enterprise-time-saved-2025
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b]
+patroon: [mail_2_value_add, automatisering, time_savings, ai_integratie]
+geo_specifiek: null
+stat_kort: |
+  Werknemers die AI integreren in hun dagelijks werk besparen gemiddeld 40-60 minuten per dag.
+  Bij dieper gebruik (meerdere modellen, bredere taak-spread) loopt die tijdwinst op tot 10+ uur per week.
+attributie_kort: "OpenAI State of Enterprise AI Report (2025)."
+apa7_volledig: |
+  OpenAI. (2025). The State of Enterprise AI 2025: Usage Data from 7M+ ChatGPT Workplace Seats. OpenAI.
+sample: "7M+ ChatGPT workplace seats + survey van bijna 100 enterprises"
+methodologie: "Aggregatie van usage-data uit ChatGPT Enterprise + aanvullende survey onder enterprise-klanten."
+bron_url: https://cdn.openai.com/pdf/7ef17d82-96bf-4dd1-9df2-228f7f377a29/the-state-of-enterprise-ai_2025-report.pdf
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  OpenAI heeft maximale conflict-of-interest: bedrijf verkoopt ChatGPT en heeft direct belang bij
+  positieve adoptie-data. Sample en methodologie wel transparant beschreven. Gebruik bij voorkeur
+  in combinatie met sterker bron-type (Duke/Fed) wanneer beide passen.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor cliniek-eigenaren: 40-60 min/dag per medewerker is concreet. Voor een cliniek met 5 medewerkers
+  betekent dat 3-5 uur per dag aan herwonnen capaciteit — dat is een halve FTE.
+---
+```
+
+```yaml
+---
+id: cbs-digitalisering-productiviteit-2026
+sectoren_specifiek: []
+sectoren_breed: [zorg.cosmetisch_cliniek, zorg.tandarts, zorg.algemeen, zakelijke_dienstverlening, techniek_ambacht, b2b]
+patroon: [mail_2_value_add, automatisering, productiviteit, nl_lokaal]
+geo_specifiek: nl
+stat_kort: |
+  Volgens CBS-onderzoek over 2015-2022 ligt de arbeidsproductiviteit in Nederlandse bedrijfstakken met meer
+  hoog-gedigitaliseerde bedrijven structureel hoger — en dat verschil groeit. Tussen 2015 en 2019 verdubbelde
+  de productiviteits-bonus van digitalisering binnen sectoren.
+attributie_kort: "CBS Digitalisering en Arbeidsproductiviteit 2015-2022 (2026)."
+apa7_volledig: |
+  Centraal Bureau voor de Statistiek. (2026). Digitalisering en arbeidsproductiviteit: ontwikkelingen en samenhang in de periode 2015-2022. CBS.
+sample: "90%+ van Nederlandse bedrijven met 10+ werknemers via Productiestatistieken + belastingregisters"
+methodologie: |
+  CBS-eigen analyse over zeven jaar. Bedrijfstakken vergeleken op digitaliseringsgraad versus arbeidsproductiviteit.
+  Concreet: 1 procentpunt extra hoog-gedigitaliseerde bedrijven binnen een sector leverde in 2019 €1.330 extra
+  productiviteit per voltijds equivalent op — meer dan dubbel zoveel als in 2015 (€565).
+bron_url: https://www.cbs.nl/nl-nl/longread/rapportages/2026/digitalisering-en-arbeidsproductiviteit-ontwikkelingen-en-samenhang-in-de-periode-2015-2022/2-digitalisering-en-productiviteitsniveau-bedrijfstakken
+last_verified: 2026-05-09
+ai_round_1: PASS
+ai_round_2: PASS
+caveat: |
+  Geen MKB-specifieke breakdown in deze stat — gemeten op bedrijfstak-niveau, niet individueel bedrijf.
+  €1330/vte is technisch cijfer; voor mail-context werkt patroon-narrative ("verschil verdubbelt") beter dan rauw cijfer.
+status: LIVE
+relevantie_zorg_cosmetisch_cliniek: |
+  Voor Nederlandse MKB-prospects: dit is harde overheidsdata dat digitalisering aantoonbaar productiviteit
+  oplevert — én dat het voordeel groeit, niet krimpt. Niet meedoen wordt elk jaar duurder, niet goedkoper.
+---
+```

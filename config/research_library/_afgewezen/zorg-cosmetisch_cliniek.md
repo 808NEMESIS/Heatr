@@ -71,3 +71,28 @@ afgewezen_op: 2026-05-09
 afgewezen_in_categorie: slechte_website_kosten
 ---
 ```
+
+```yaml
+---
+id: lead-connect-78-percent-first-responder
+status: AFGEWEZEN
+afgewezen_reden: |
+  FAIL Round 2: geen traceable primary source. "Lead Connect" is een SaaS-product, geen onderzoeksinstituut.
+  De 78%-stat wordt circulair geciteerd in tientallen blogs zonder verifieerbare originele studie.
+  Voldoet niet aan library-criterium "primary-source verifieerbaar".
+afgewezen_op: 2026-05-09
+afgewezen_in_categorie: reactietijd
+---
+```
+
+```yaml
+---
+id: velocify-93-percent-six-calls-2016
+status: AFGEWEZEN
+afgewezen_reden: |
+  Te oud voor library-criterium ≥2022. Velocify-onderzoek uit 2016. Sales-cadence-praktijk is sinds 2016
+  fundamenteel veranderd door AI/automatisering — claim niet representatief voor huidige B2B-realiteit.
+afgewezen_op: 2026-05-09
+afgewezen_in_categorie: reactietijd
+---
+```

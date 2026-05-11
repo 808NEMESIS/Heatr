@@ -110,4 +110,22 @@ Verlopen entries (>12 maanden zonder herverificatie) krijgen een waarschuwing in
 
 ## Status van library
 
-**Status van library:** Prompt 4 van 5 uitgevoerd. Categorieën gevuld: Reactietijd (3), Reviews + Social Proof (5), AI-adoptie MKB (4), Slechte website-kosten (3). Komende: Automatisering. Totaal LIVE: 15 claims. Totaal afgewezen: 5 claims.
+**Status van library:** Library compleet. 5 van 5 prompts uitgevoerd. Categorieën gevuld: Reactietijd (3), Reviews + Social Proof (5), AI-adoptie MKB (4), Slechte website-kosten (3), Automatisering taken (4). Totaal LIVE: 19 claims. Totaal afgewezen: 7 claims.
+
+## Onderhoud — _verify.py
+
+Het script `_verify.py` valideert de library. Run halfjaarlijks (of na grote wijzigingen):
+
+```bash
+python3 config/research_library/_verify.py            # snelle check (schema + stale)
+python3 config/research_library/_verify.py --check-urls   # volledige check incl. URL-validatie
+```
+
+Het script rapporteert:
+- Stale claims (last_verified > 6 maanden)
+- Verbroken bron-URLs (alleen met --check-urls)
+- Schema-fouten
+- LIVE claims met ai_round_1/2 niet PASS (mag niet)
+- Telling per status per file
+
+Exit code 0 = gezond, 1 = issues gevonden.
