@@ -29,6 +29,98 @@ SPAM_WORDS = {
 }
 RECONTACT_COOLDOWN_DAYS = int(os.getenv("RECONTACT_COOLDOWN_DAYS", "90"))
 
+# Banned opener-patterns — Claude-generated openers met deze frasen vallen door
+# naar de statische block-fallback. Houd Claude weg van clichés.
+_OPENER_BAN_PATTERNS = [
+    "als ondernemer",
+    "ik begrijp dat",
+    "in deze drukke tijd",
+    "snelle vraag",
+    "korte vraag",
+    "ik zal het kort houden",
+    "verspil je tijd niet",
+    "ik weet dat je het druk hebt",
+]
+
+
+def clean_claude_opener(opener: str | None) -> str:
+    """Strip Claude-output artifacts vóór quality-check.
+
+    Bewezen problemen uit live data:
+      - Markdown-header prefix ('# Voorstel openingszin:' of '## Opener:')
+      - Markdown-header in midden (zelden, maar geheel weghalen)
+      - Triple-fence code blocks die soms wrapped worden
+      - Leading/trailing whitespace
+    """
+    if not opener:
+        return ""
+    text = opener.strip()
+    # Strip markdown code-fences ```...```
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text)
+    # Strip leading markdown-headers (#, ##, ### lines vóór echte body)
+    while text.startswith("#"):
+        first_break = text.find("\n")
+        if first_break < 0:
+            break
+        text = text[first_break + 1:].lstrip()
+    # Strip "Opener:" / "Openingszin:" / "Voorstel:" prefix-labels
+    text = re.sub(
+        r"^(opener|openingszin|voorstel(\s+openingszin)?|optie\s*\d+)\s*[:\-—]\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    return text
+
+
+def is_quality_opener(opener: str | None) -> tuple[bool, str]:
+    """Return (is_quality, reason) — beslist of een Claude-gegenereerde opener
+    bruikbaar is voor Mail 1.
+
+    Criteria:
+      - Minstens 25 woorden (anders: te dun voor Mail 1)
+      - Maximaal 90 woorden (cap per v1.0 spec)
+      - Geen banned cliché-frasen (case-insensitive)
+      - Geen leeg / None
+      - Geen onafgemaakte placeholder ({{...}})
+      - Eindigt op terminal punctuation (`.`, `!`, `?`, `…`) — anders mid-zin
+        afgekapt door max_tokens (live bug live ontdekt: opener stopte op
+        "...over de kwaliteit van uw werk en de waar" — afgekapt-tekst
+        triggert direct unsubscribe).
+      - Geen markdown headers (# / ##) of code-fences (```)
+    """
+    if not opener or not opener.strip():
+        return False, "empty"
+    # Clean eerst — als clean dingen verwijdert, valideren we de schoongemaakte versie
+    cleaned = clean_claude_opener(opener)
+    if cleaned != opener.strip():
+        # Caller moet `cleaned` gebruiken, niet origineel — signaleer dit
+        # door een speciale reason zodat caller weet er was opschoning nodig
+        pass
+    text = cleaned
+    if not text:
+        return False, "empty_after_cleanup"
+    if "{{" in text and "}}" in text:
+        return False, "unresolved_placeholder"
+    if "#" == text[:1] or "##" in text:
+        return False, "contains_markdown_header"
+    word_count = len(re.findall(r"\w+", text))
+    if word_count < 25:
+        return False, f"too_short:{word_count}_words"
+    if word_count > 90:
+        return False, f"too_long:{word_count}_words"
+    # Truncation-check: laatste niet-whitespace karakter moet terminal punctuation zijn
+    last_char = text.rstrip()[-1:] if text.rstrip() else ""
+    if last_char not in ".!?…\"'»":
+        return False, f"truncated:no_terminal_punct (last_char={last_char!r})"
+    text_lower = text.lower()
+    for pattern in _OPENER_BAN_PATTERNS:
+        if pattern in text_lower:
+            return False, f"banned_pattern:{pattern}"
+    return True, "ok"
+
 
 # ==============================================================================
 # Validation
@@ -79,12 +171,18 @@ def validate_sequence_config(steps: list[dict]) -> tuple[bool, list[str]]:
         if not body:
             errors.append(f"{label}: berichttekst is verplicht.")
         else:
-            word_count = len(re.findall(r"\w+", body))
-            if word_count < 50:
-                errors.append(
-                    f"{label}: berichttekst heeft minimaal 50 woorden "
-                    f"(nu {word_count} woorden)."
-                )
+            # Steps die {{opener}} bevatten krijgen hun woorden server-side
+            # ingespoten door Warmr (per-lead observation paragraph). Skip de
+            # woordcount voor die steps — anders is een uniforme frame altijd te kort.
+            if "{{opener}}" in body:
+                pass
+            else:
+                word_count = len(re.findall(r"\w+", body))
+                if word_count < 50:
+                    errors.append(
+                        f"{label}: berichttekst heeft minimaal 50 woorden "
+                        f"(nu {word_count} woorden)."
+                    )
 
         # Wait days — first step exempt, follow-ups minimum MIN_WAIT_DAYS
         if i > 0:
@@ -139,18 +237,69 @@ def inject_variables(text: str, lead: dict) -> str:
     """
     Replace {{variable}} placeholders with lead data.
 
-    Available variables:
+    v1.0 tokens (legacy):
       {{first_name}}  {{company}}  {{city}}  {{opener}}  {{sector}}
       {{website}}     {{score}}
+
+    v3.1 tokens (brug-based templates, 2026-05-07):
+      {{bedrijfsnaam}}              — alias voor {{company}}, NL-friendly
+      {{stad}}                       — alias voor {{city}}
+      {{primaire_dienstverlening}}   — treatment_focus / industry / sector fallback
+      {{signaal_blok}}               — korte signaal-zin uit pick_observation_block
+      {{sector_noemer}}              — 'cliniek-ondernemers' / 'praktijken' / etc.
+      {{LOOM_LINK}}, {{VIDEO_LINK}}  — TODO leeg in v1, handmatig pre-send
+
+    `first_name` gaat door utils.lead_naming.display_first_name zodat email-
+    inference-artefacten ('Ceciledebooij' uit gmail-local-part) niet in mail
+    bodies belanden. Fallback: 'daar' (informeel-neutraal).
     """
+    from utils.lead_naming import display_first_name
+    from utils.signal_picker import pick_signaal_blok
+    from utils.sector_impact import pick_sector_impact_frame
+    from config.sequence_templates import (
+        primaire_dienstverlening_for_lead,
+        sector_noemer_for_lead,
+    )
+
+    safe_first = display_first_name(lead, fallback="daar")
+    company = lead.get("company_name") or lead.get("domain") or ""
+
+    # v3.2 {{stad_of_sector}}: city-naam tenzij leeg/generiek, anders "jullie sector".
+    # "Generiek" = niet bruikbaar in opener-zin "ondernemers in [city] met lokale impact".
+    raw_city = (lead.get("city") or "").strip()
+    _GENERIC_CITY_VALUES = {"", "nederland", "nl", "onbekend", "unknown"}
+    stad_of_sector = raw_city if raw_city.lower() not in _GENERIC_CITY_VALUES else "jullie sector"
+
+    # Resolve signaal_blok eerst, want zinbegin-pattern (Brug 3 frame:
+    # ". {{signaal_blok}}.") vereist capitalize-first voor grammaticale
+    # correctheid (Tier 5+6 starten met kleine letter, mid-zin natuurlijk).
+    # Mid-zin {{signaal_blok}} occurrences (Brug 1+2) blijven kleine letter.
+    signaal = pick_signaal_blok(lead)
+    if signaal and ". {{signaal_blok}}" in text:
+        capitalized = signaal[0].upper() + signaal[1:]
+        text = text.replace(". {{signaal_blok}}", f". {capitalized}", 1)
+
     replacements = {
-        "{{first_name}}": lead.get("contact_first_name") or lead.get("company_name", "").split()[0],
-        "{{company}}":    lead.get("company_name") or lead.get("domain") or "",
-        "{{city}}":       lead.get("city") or "",
-        "{{opener}}":     lead.get("personalized_opener") or "",
-        "{{sector}}":     lead.get("sector") or "",
-        "{{website}}":    f"https://{lead.get('domain')}" if lead.get("domain") else "",
-        "{{score}}":      str(lead.get("website_score") or ""),
+        # v1.0 — legacy
+        "{{first_name}}":              safe_first,
+        "{{company}}":                 company,
+        "{{city}}":                    lead.get("city") or "",
+        "{{opener}}":                  lead.get("personalized_opener") or "",
+        "{{sector}}":                  lead.get("sector") or "",
+        "{{website}}":                 f"https://{lead.get('domain')}" if lead.get("domain") else "",
+        "{{score}}":                   str(lead.get("website_score") or ""),
+        # v3.1 — brug-based
+        "{{bedrijfsnaam}}":            company,
+        "{{stad}}":                    lead.get("city") or "",
+        "{{primaire_dienstverlening}}": primaire_dienstverlening_for_lead(lead),
+        "{{signaal_blok}}":            signaal,
+        "{{sector_noemer}}":           sector_noemer_for_lead(lead),
+        # v3.2 — sector-impact frame + stad-of-sector fallback
+        "{{stad_of_sector}}":          stad_of_sector,
+        "{{sector_impact_frame}}":     pick_sector_impact_frame(lead.get("sector")),
+        # TODO LOOM/VIDEO — leeg in v1; handmatig pre-send invullen of via Loom-API later
+        "{{LOOM_LINK}}":               lead.get("loom_link") or "",
+        "{{VIDEO_LINK}}":              lead.get("video_link") or "",
     }
     for placeholder, value in replacements.items():
         text = text.replace(placeholder, value or "")
@@ -160,13 +309,15 @@ def inject_variables(text: str, lead: dict) -> str:
 def render_step(step: dict, lead: dict) -> dict:
     """
     Render a single sequence step for a specific lead.
-    Applies variable injection and spintax resolution.
+    Volgorde: variable-injection EERST (`{{name}}` → value), spintax DAARNA
+    (`{a|b}` → random a of b). Andersom zou de regex `{[^{}]+}` van spintax
+    de inhoud van `{{opener}}` opsnoepen voordat injection erbij kan.
 
     Returns:
         { "subject": str, "body": str, "delay_days": int }
     """
-    subject = inject_variables(resolve_spintax(step.get("subject") or ""), lead)
-    body    = inject_variables(resolve_spintax(step.get("body") or ""), lead)
+    subject = resolve_spintax(inject_variables(step.get("subject") or "", lead))
+    body    = resolve_spintax(inject_variables(step.get("body")    or "", lead))
     return {
         "subject":    subject,
         "body":       body,

@@ -250,7 +250,7 @@ async def infer_industry_claude(
     )
 
     try:
-        response = anthropic_client.messages.create(
+        response = await anthropic_client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=30,
             messages=[{"role": "user", "content": prompt}],
@@ -307,7 +307,7 @@ async def generate_company_summary(
     )
 
     try:
-        response = anthropic_client.messages.create(
+        response = await anthropic_client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=80,
             messages=[{"role": "user", "content": prompt}],
@@ -370,25 +370,70 @@ async def generate_personalized_opener(
         "bouwbedrijven": "direct, vakkundig, no-nonsense — geen harde verkoop",
     }.get(sector_key, "professioneel en persoonlijk")
 
-    salutation = f"aan {contact_name}" if contact_name else f"over {company_name}"
-    prompt = (
-        f"Schrijf een openingszin voor een zakelijke email {salutation}.\n\n"
-        f"Bedrijf: {company_name}, {industry}, {city}\n"
-        f"Signaal om te noemen: {signal_text}\n"
-        f"Toon: {tone_guidance}\n\n"
-        f"Regels:\n"
-        f"- Begin NIET met 'Ik'\n"
-        f"- Maximaal 60 woorden\n"
-        f"- Verwijs naar het signaal op een natuurlijke manier\n"
-        f"- Geen verkooppraatje\n"
-        f"- Eindig niet met een vraag"
+    # System-prompt vervangen 2026-05-07 (v3.1 templates-sessie):
+    # rustig zelfvertrouwen + concrete observatie ipv vleierij/sales-taal.
+    # Behoud max_tokens=1200 + temperature=0.7 zoals afgesproken — niet aanraken.
+    system_prompt = (
+        "Je schrijft de openingszin(nen) van een cold outreach mail vanuit Sami "
+        "Jansema van Aerys Solution naar een Nederlandse SMB-ondernemer.\n\n"
+        "VEREISTEN:\n"
+        "- Direct beginnen met de openingszin, geen markdown-header, geen preamble\n"
+        "- 25-50 woorden, eindigen met punt of vraagteken\n"
+        "- Concrete observatie over DIT bedrijf — gebruik specifieke datapunten uit "
+        "lead-data (cijfers, treatment-namen, plaatsnaam, opvallende details)\n"
+        "- Toon: rustig zelfvertrouwen, energiek, niet sales-y, niet vleierig\n"
+        "- Geen aanhef (\"Hoi X,\") — alleen de body-opener\n\n"
+        "VERBODEN:\n"
+        "- Em-dashes (—) — gebruik komma of punt\n"
+        "- \"Uw\" en \"u\" tenzij specifiek beslisser-titel pattern (Drs., Prof., "
+        "advocaat-context)\n"
+        "- \"Sparren\", \"vrijblijvend\", \"kennismaken\", \"synergie\", "
+        "\"in gesprek gaan\"\n"
+        "- \"Indrukwekkend\", \"uitstekend\", \"perfect\", \"geweldig\"\n"
+        "- \"Spreekt voor zich\", \"getuigt van\", \"reflecteert duidelijk\"\n"
+        "- \"Wij zijn de beste\", \"marktleider\", \"toonaangevend\"\n\n"
+        "GEWENSTE STIJL:\n"
+        "- Concreet en specifiek over dit bedrijf\n"
+        "- Spontaan en menselijk, alsof Sami even zijn nek uitsteekt\n"
+        "- Korte zinnen mogen, fragmentzinnen ook (\"Sterk gebouwd.\" als losse zin)\n"
+        "- Eerlijke observatie boven slimme framing\n\n"
+        "VOORBEELDEN GOED:\n\n"
+        "\"Plastische Chirurgie Groningen heeft 49 reviews met een 5.0 staan. Dat soort "
+        "positie bouw je niet op met een gemiddelde patiëntervaring.\"\n\n"
+        "\"Annebeth Kroeskop draait al jaren een sterke praktijk in Amsterdam, blijkt "
+        "uit de 50 reviews met 4.9 sterren. Maar de website? Die loopt achter.\"\n\n"
+        "\"Aerys Solution zet zich op Instagram neer met een herkenbare lijn. Niet veel "
+        "SMB-bureaus krijgen dat voor elkaar.\"\n\n"
+        "VOORBEELDEN NIET GOED:\n\n"
+        "\"De uitstekende Google-beoordelingen van [bedrijf] — 49 recensies met een "
+        "perfecte 5.0 score — getuigen van de kwaliteit en patiënttevredenheid die uw "
+        "praktijk kenmerkt.\" (Reden: vleierij, em-dash, \"uw\", \"getuigen van\", "
+        "generieke woorden)\n\n"
+        "\"[bedrijf] is een toonaangevende speler in [sector] en jullie reputatie "
+        "spreekt voor zich.\" (Reden: holle claim, \"spreekt voor zich\", marketing-taal)\n\n"
+        "Antwoord nu met alleen de openingszin(nen) voor de meegegeven lead."
+    )
+
+    # User-prompt = compacte lead-context. Tone-guidance zit nu in system-prompt;
+    # hier alleen de feiten over deze specifieke lead.
+    salutation_hint = f"contact: {contact_name}" if contact_name else f"contact: onbekend"
+    user_prompt = (
+        f"Bedrijfsnaam: {company_name}\n"
+        f"Stad: {city}\n"
+        f"Branche: {industry or '(onbekend)'}\n"
+        f"Sector-tone: {tone_guidance}\n"
+        f"Belangrijkste signaal: {signal_text}\n"
+        f"{salutation_hint}\n"
+        f"Bedrijfsbeschrijving: {summary or '(geen)'}"
     )
 
     try:
-        response = anthropic_client.messages.create(
+        response = await anthropic_client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=60,
-            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1200,
+            temperature=0.7,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
         )
         return response.content[0].text.strip()
     except Exception as e:
