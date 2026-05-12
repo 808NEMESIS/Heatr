@@ -62,6 +62,21 @@ RATE_LIMITS: dict[str, dict[str, float]] = {
         "max_tokens": 5,
         "refill_rate": 0.333333,    # tokens/second = 20 req/min
     },
+    "treatment_classifier": {
+        # Claude Haiku classifier per lead — cosmetische behandelingen.
+        "max_tokens": 5,
+        "refill_rate": 0.166667,    # 10 req/min
+    },
+    "rdap": {
+        # SIDN + generic RDAP servers — ~20 req/min hard.
+        "max_tokens": 5,
+        "refill_rate": 0.333333,    # 20 req/min
+    },
+    "meta_ads_playwright": {
+        # Meta Ad Library Playwright fetch — anti-ban conservative.
+        "max_tokens": 2,
+        "refill_rate": 0.083333,    # 5 req/min
+    },
 }
 
 
@@ -136,7 +151,7 @@ async def check_rate_limit(service: str, supabase_client: Any) -> bool:
         return True
 
     row = response.data
-    last_refill_dt = datetime.fromisoformat(row["last_refill"])
+    last_refill_dt = _parse_iso(row["last_refill"])
     new_tokens, _ = _refill_tokens(
         float(row["tokens"]),
         float(row["max_tokens"]),
@@ -145,6 +160,28 @@ async def check_rate_limit(service: str, supabase_client: Any) -> bool:
     )
 
     return new_tokens >= 1.0
+
+
+def _parse_iso(s: str) -> datetime:
+    """Parse Supabase ISO timestamps. Py3.9 fromisoformat rejects 5-digit
+    microseconds + timezone. Normalize before parsing."""
+    import re
+    s = (s or "").replace("Z", "+00:00")
+    # Supabase returns microseconds with variable precision (e.g. '.80128' = 5 digits).
+    # fromisoformat expects 3 or 6 digits. Pad/truncate to 6.
+    m = re.search(r"(\.\d+)", s)
+    if m:
+        frac = m.group(1)  # e.g. '.80128'
+        # Pad to 6 digits: '.801280'
+        padded = frac + "0" * max(0, 7 - len(frac))
+        padded = padded[:7]  # dot + 6 digits
+        s = s.replace(frac, padded, 1)
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        # Fallback: strip microseconds entirely
+        s_no_frac = re.sub(r"\.\d+", "", s)
+        return datetime.fromisoformat(s_no_frac)
 
 
 async def consume_token(service: str, supabase_client: Any) -> bool:
@@ -194,7 +231,7 @@ async def consume_token(service: str, supabase_client: Any) -> bool:
         return True
 
     row = response.data
-    last_refill_dt = datetime.fromisoformat(row["last_refill"])
+    last_refill_dt = _parse_iso(row["last_refill"])
     new_tokens, new_last_refill = _refill_tokens(
         float(row["tokens"]),
         float(row["max_tokens"]),

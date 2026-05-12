@@ -18,7 +18,12 @@ import logging
 import re
 from typing import Any
 
+from utils.cost_guard import LeadCostAccumulator, guarded_call
+
 logger = logging.getLogger(__name__)
+
+# Conservatieve schatting voor cost_guard pre-check (~€0.00015/call uit cost-audit).
+_ESTIMATED_COST_EUR = 0.0003
 
 
 # Compact system prompt — minimizes both input and output tokens
@@ -31,6 +36,8 @@ async def batched_enrich(
     workspace_id: str,
     supabase_client: Any,
     anthropic_client: Any,
+    *,
+    accumulator: LeadCostAccumulator | None = None,
 ) -> dict[str, Any]:
     """
     Single Claude call that produces personalization data + 3 openers.
@@ -78,6 +85,27 @@ async def batched_enrich(
         logger.info("batched_enrich: no pain points for %s — skipping Claude call", company)
         return result
 
+    # Soft-warning bij ontbrekende accumulator — per-lead cap kan niet worden
+    # gehandhaafd zonder. Eenmalig per call.
+    if accumulator is None:
+        logger.warning(
+            "batched_enrich called without accumulator — per-lead cap not enforced. "
+            "Pass LeadCostAccumulator instance from job-orchestrator for cap-handhaving."
+        )
+
+    # Pre-check via cost_guard (skipt API-call als per-lead/daily/monthly cap raakt).
+    allowed, reason = await guarded_call(
+        workspace_id=(accumulator.workspace_id if accumulator else workspace_id),
+        lead_id=lead_id,
+        context="batched_enrichment",
+        estimated_cost_eur=_ESTIMATED_COST_EUR,
+        supabase_client=supabase_client,
+        accumulator=accumulator,
+    )
+    if not allowed:
+        logger.info("batched_enrich: skipped — %s", reason)
+        return result
+
     # Build compact input — only top 3 pains, short format
     pain_lines = "\n".join(f"- {p['observation']}" for p in pains[:3])
 
@@ -107,6 +135,7 @@ async def batched_enrich(
             max_tokens=300,  # Compact output — 1 opener + positioning + hook + gap
             supabase_client=supabase_client,
             lead_id=lead_id,
+            accumulator=accumulator,
         )
 
         # Parse JSON
@@ -173,6 +202,7 @@ async def _call_claude_with_cache(
     max_tokens: int,
     supabase_client: Any,
     lead_id: str | None = None,
+    accumulator: LeadCostAccumulator | None = None,
 ) -> str:
     """
     Call Claude with prompt caching on the system prompt.
@@ -233,6 +263,10 @@ async def _call_claude_with_cache(
         cache_read_tokens=cached_tokens,
         cache_write_tokens=cache_creation,
     )
+
+    # Charge accumulator met daadwerkelijke cost (na cache-discount).
+    if accumulator is not None:
+        accumulator.charge(cost, "batched_enrichment")
 
     # Log actual cost
     try:

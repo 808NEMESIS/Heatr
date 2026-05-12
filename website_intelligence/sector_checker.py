@@ -37,10 +37,14 @@ from typing import Any
 
 from config.pricing import get_legacy_per_m_eur
 from config.sectors import get_sector
+from utils.cost_guard import LeadCostAccumulator, guarded_call
 
 logger = logging.getLogger(__name__)
 
 _HAIKU_MODEL = "claude-haiku-4-5-20251001"
+
+# Conservatieve schatting voor cost_guard pre-check (~€0.00015/call uit cost-audit).
+_ESTIMATED_COST_EUR = 0.0003
 
 # Pricing centraal in config/pricing.py.
 _PRICING = get_legacy_per_m_eur(_HAIKU_MODEL)
@@ -58,6 +62,7 @@ async def check_sector_specific(
     supabase_client: Any | None = None,
     *,
     lead_id: str,
+    accumulator: LeadCostAccumulator | None = None,
 ) -> dict[str, Any]:
     """Classify a lead's website against sector-specific website_signals.
 
@@ -92,6 +97,28 @@ async def check_sector_specific(
 
     text = _html_to_text(page_html)
     if not text.strip():
+        return result
+
+    # Soft-warning bij ontbrekende accumulator — per-lead cap kan niet worden
+    # gehandhaafd zonder. Eenmalig per call.
+    if accumulator is None:
+        logger.warning(
+            "sector_checker called without accumulator — per-lead cap not enforced. "
+            "Pass LeadCostAccumulator instance from job-orchestrator for cap-handhaving."
+        )
+
+    # Pre-check via cost_guard (skipt API-call als per-lead/daily/monthly cap raakt).
+    workspace_id = (accumulator.workspace_id if accumulator else "aerys")
+    allowed, reason = await guarded_call(
+        workspace_id=workspace_id,
+        lead_id=lead_id,
+        context="sector_checker",
+        estimated_cost_eur=_ESTIMATED_COST_EUR,
+        supabase_client=supabase_client,
+        accumulator=accumulator,
+    )
+    if not allowed:
+        logger.info("sector_checker: skipped — %s", reason)
         return result
 
     # Init Anthropic client if not injected
@@ -195,6 +222,10 @@ async def check_sector_specific(
             }).execute()
         except Exception as e:
             logger.debug("sector_checker: cost log failed: %s", e)
+
+    # Charge accumulator met daadwerkelijke cost (response.usage beschikbaar).
+    if accumulator is not None:
+        accumulator.charge(cost_eur, "sector_checker")
 
     result.update({
         "sector_score": _TIER_TO_POINTS[tier],

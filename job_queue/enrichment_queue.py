@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from integrations.warmr_client import WarmrClient, WarmrAPIError
+from utils.cost_guard import LeadCostAccumulator
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +72,21 @@ async def queue_lead_for_enrichment(
         Enrichment job UUID, or None on insert failure.
     """
     if enrichment_types is None:
+        # KvK-step bewust UIT default — het API-abonnement kost €6.40/m + €0.02/call
+        # voor SBI-code en details. Heatr werkt prima zonder via Google + website-scrape.
+        # Wil je 't toch: voeg 'kvk' toe aan custom enrichment_types in queue_lead_for_enrichment.
         enrichment_types = [
             "website",
+            "contact_crawl",       # Playwright v2 crawler
+            "owner_extract",       # Claude Haiku owner extractor
             "email_waterfall",
-            "kvk",
             "company_enrichment",
             "website_intelligence",
+            "domain_age",          # RDAP (gratis)
+            "treatment_focus",     # Hybrid: Google-mapping (€0) + Claude voor cosmetisch
+            "meta_ads",            # Playwright Meta Ads
+            "review_recency",      # Google Maps reviews tab (voor v1 BLOK B)
+            "archetype",           # Claude Haiku archetype classifier (koop-DNA)
             "contact_discovery",
             "data_verification",
             "scoring",
@@ -231,8 +241,10 @@ async def run_enrichment_for_lead(
     workspace_id: str = job.get("workspace_id", "")
     job_id: str = job["id"]
     enrichment_types: list[str] = job.get("enrichment_types") or [
-        "website", "email_waterfall", "kvk",
+        "website", "contact_crawl", "owner_extract", "email_waterfall", "review_recency", "archetype",
         "company_enrichment", "website_intelligence",
+        # Warmr Sequence v1.0 datapoints (PR3):
+        "domain_age", "treatment_focus", "meta_ads",
         "contact_discovery", "data_verification",
         "scoring", "inbox_selection",
     ]
@@ -242,7 +254,30 @@ async def run_enrichment_for_lead(
     # Load lead to determine country (needed for KvK skip logic)
     lead_country = await _get_lead_field(lead_id, "country", supabase_client) or "NL"
 
+    # Per-lead cost-cap handhaver. Tot deze fix was er nooit een accumulator;
+    # de €0.05/lead-cap kon dus alleen na-de-feit gezien worden in api_cost_log.
+    # Vanaf nu: elke Claude-call charges deze accumulator, en bij overschrijding
+    # zet .blocked=True zodat we de rest van de pipeline kunnen skippen.
+    accumulator = LeadCostAccumulator(
+        lead_id=lead_id,
+        workspace_id=workspace_id or "aerys",
+    )
+
     for step_name in enrichment_types:
+        if accumulator.blocked:
+            logger.warning(
+                "Enrichment for lead %s blocked by per-lead cost-cap (%s) — "
+                "skipping remaining steps starting at %s",
+                lead_id, accumulator.blocked_reason, step_name,
+            )
+            try:
+                supabase_client.table("leads").update({
+                    "enrichment_blocked_reason": "cost_cap",
+                }).eq("id", lead_id).execute()
+            except Exception as e:
+                logger.debug("Failed to mark lead enrichment_blocked_reason: %s", e)
+            break
+
         try:
             logger.debug("Running enrichment step: %s for lead %s", step_name, lead_id)
             await _run_step(
@@ -253,6 +288,7 @@ async def run_enrichment_for_lead(
                 supabase_client=supabase_client,
                 anthropic_client=anthropic_client,
                 warmr_client=warmr_client,
+                accumulator=accumulator,
             )
 
             # Priority boost: after waterfall, if valid email → make urgent
@@ -268,6 +304,16 @@ async def run_enrichment_for_lead(
             )
             # Continue to next step — never let one step failure stop the pipeline
 
+    # Bump enrichment_version zodat queue_all_unenriched_leads deze lead niet
+    # opnieuw queue't. status=enriched voor sectorselectors.
+    try:
+        supabase_client.table("leads").update({
+            "enrichment_version": 1,
+            "status": "enriched",
+        }).eq("id", lead_id).eq("status", "discovered").execute()
+    except Exception as e:
+        logger.debug("Failed to bump enrichment_version for %s: %s", lead_id, e)
+
     await complete_enrichment_job(job_id, supabase_client)
     logger.info("Enrichment complete: lead=%s", lead_id)
 
@@ -280,6 +326,7 @@ async def _run_step(
     supabase_client: Any,
     anthropic_client: Any,
     warmr_client: WarmrClient,
+    accumulator: LeadCostAccumulator | None = None,
 ) -> None:
     """Dispatch a single enrichment step to the correct function.
 
@@ -318,6 +365,125 @@ async def _run_step(
                 patch["tracking_tools"] = website_data["tracking_tools"]
             if patch:
                 supabase_client.table("leads").update(patch).eq("id", lead_id).execute()
+
+    elif step_name == "contact_crawl":
+        # Playwright-rendered contact page crawl — pakt emails, phones, socials,
+        # schema.org data die raw-HTML-scraper mist. Stash page_text in
+        # enrichment_data voor owner_extract step.
+        lead_domain = await _get_lead_field(lead_id, "domain", supabase_client)
+        if lead_domain:
+            from enrichment.website_crawler_v2 import crawl_website_contact
+            try:
+                crawl = await crawl_website_contact(lead_domain)
+            except Exception as e:
+                logger.warning("contact_crawl crashed for %s: %s", lead_domain, e)
+                crawl = None
+            if crawl:
+                patch: dict = {}
+                existing_email = await _get_lead_field(lead_id, "email", supabase_client)
+                if not existing_email and crawl.get("emails"):
+                    patch["email"] = crawl["emails"][0]
+                    patch["email_status"] = "risky"
+                existing_phone = await _get_lead_field(lead_id, "phone", supabase_client)
+                if not existing_phone and crawl.get("phones"):
+                    patch["phone"] = crawl["phones"][0]
+                socials = crawl.get("socials") or {}
+                if socials.get("instagram"):
+                    patch["has_instagram"] = True
+                    patch["instagram_url"] = socials["instagram"]
+                if socials.get("facebook"):
+                    patch["facebook_url"] = socials["facebook"]
+                if socials.get("linkedin"):
+                    patch["linkedin_url"] = socials["linkedin"]
+                if patch:
+                    try:
+                        supabase_client.table("leads").update(patch).eq("id", lead_id).execute()
+                    except Exception as e:
+                        logger.debug("contact_crawl update failed: %s", e)
+                # Save crawl result (incl. page_text) voor owner_extract + analysis
+                try:
+                    supabase_client.table("enrichment_data").insert({
+                        "workspace_id": workspace_id,
+                        "lead_id": lead_id,
+                        "step": 10,           # legacy NOT NULL column
+                        "enrichment_step": 10,
+                        "source": "contact_crawl_v2",
+                        "succeeded": bool(crawl.get("emails") or crawl.get("phones")),
+                        "raw_result": {
+                            "emails": crawl.get("emails"),
+                            "phones": crawl.get("phones"),
+                            "socials": crawl.get("socials"),
+                            "schema_org": crawl.get("schema_org"),
+                            "page_text": crawl.get("page_text", "")[:10000],
+                            "pages_visited": crawl.get("pages_visited"),
+                        },
+                    }).execute()
+                except Exception as e:
+                    logger.warning("contact_crawl save to enrichment_data failed: %s", e)
+
+    elif step_name == "owner_extract":
+        # Claude Haiku pakt eigenaar + team uit crawled page_text.
+        domain = await _get_lead_field(lead_id, "domain", supabase_client)
+        if domain:
+            # Haal page_text uit eerder opgeslagen crawl
+            try:
+                row = (
+                    supabase_client.table("enrichment_data")
+                    .select("raw_result")
+                    .eq("lead_id", lead_id)
+                    .eq("source", "contact_crawl_v2")
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                raw = (row.data or [{}])[0].get("raw_result") or {}
+                page_text = raw.get("page_text") or ""
+            except Exception as e:
+                logger.debug("owner_extract: failed to fetch crawl text: %s", e)
+                page_text = ""
+            if page_text:
+                from enrichment.owner_extractor import extract_team_from_page_text
+                company_name = await _get_lead_field(lead_id, "company_name", supabase_client) or ""
+                sector = await _get_lead_field(lead_id, "sector", supabase_client) or ""
+                try:
+                    people = await extract_team_from_page_text(
+                        company_name=company_name, sector=sector, page_text=page_text,
+                        workspace_id=workspace_id, supabase_client=supabase_client,
+                        anthropic_client=anthropic_client, lead_id=lead_id,
+                        accumulator=accumulator,
+                    )
+                except Exception as e:
+                    logger.warning("owner_extract crashed: %s", e)
+                    people = []
+                if people:
+                    # Update lead with primary owner name
+                    owner = next((p for p in people if p.get("is_owner")), people[0])
+                    patch2: dict = {}
+                    if owner.get("first_name"):
+                        patch2["contact_first_name"] = owner["first_name"]
+                    if owner.get("name"):
+                        patch2["contact_name"] = owner["name"]
+                    if patch2:
+                        try:
+                            supabase_client.table("leads").update(patch2).eq("id", lead_id).execute()
+                        except Exception as e:
+                            logger.debug("owner_extract lead update failed: %s", e)
+                    # Store all team members in heatr_contacts
+                    for p in people:
+                        try:
+                            supabase_client.table("contacts").insert({
+                                "workspace_id": workspace_id,
+                                "lead_id": lead_id,
+                                "name": p.get("name"),
+                                "first_name": p.get("first_name"),
+                                "last_name": p.get("last_name"),
+                                "title": p.get("role"),
+                                "is_primary": bool(p.get("is_owner")),
+                                "confidence": p.get("confidence"),
+                                "source": "owner_extractor_v2",
+                            }).execute()
+                        except Exception as e:
+                            logger.debug("owner_extract contact insert failed (schema may differ): %s", e)
 
     elif step_name == "email_waterfall":
         from enrichment.email_waterfall import run_waterfall_for_lead
@@ -358,11 +524,13 @@ async def _run_step(
         )
 
     elif step_name == "website_intelligence":
-        # Gate: only run if lead has a valid domain + email (avoid wasting Claude credits)
+        # Gate (2026-04-22): domain is verplicht, email is niet meer verplicht.
+        # Review-email / opener kunnen naar info@{domain} zelfs zonder verified
+        # email — en de visual analyse + top_issue zijn juist nodig VOORDAT we
+        # weten hoe we de prospect het beste bereiken. Cost-guard + Vision-cache
+        # + conditional-skip (technical_score >= 20) beschermen het budget.
         domain = await _get_lead_field(lead_id, "domain", supabase_client)
-        email_status = await _get_lead_field(lead_id, "email_status", supabase_client)
-        if domain and email_status in ("valid", "risky", "catch_all"):
-            # Pre-screen: is this a real website or a parked/placeholder domain?
+        if domain:
             from enrichment.website_prescreener import is_real_website
             is_real, prescreen_reason = await is_real_website(domain)
             if not is_real:
@@ -377,9 +545,158 @@ async def _run_step(
                     workspace_id=workspace_id,
                     supabase_client=supabase_client,
                     anthropic_client=anthropic_client,
+                    accumulator=accumulator,
                 )
         else:
-            logger.info("Skipping website_intelligence: no domain or email for lead %s", lead_id)
+            logger.info("Skipping website_intelligence: no domain for lead %s", lead_id)
+
+    elif step_name == "domain_age":
+        # Warmr v1.0: website_age_years — RDAP lookup (gratis, gecached 365 dagen)
+        domain = await _get_lead_field(lead_id, "domain", supabase_client)
+        if domain:
+            from enrichment.domain_age_scraper import fetch_domain_age_years
+            age_result = await fetch_domain_age_years(domain, supabase_client)
+            patch: dict = {}
+            if age_result.get("registered_at"):
+                patch["domain_registered_at"] = age_result["registered_at"].isoformat()
+            if age_result.get("years_old") is not None:
+                patch["website_age_years"] = age_result["years_old"]
+            if patch:
+                supabase_client.table("leads").update(patch).eq("id", lead_id).execute()
+
+    elif step_name == "treatment_focus":
+        # Hybrid: Claude Haiku classifier voor cosmetische sector,
+        # plus goedkope Google-category mapping als first-order fill voor ALLE sectoren.
+        from enrichment.treatment_from_google import map_google_category, merge_treatment_focus
+
+        sector = await _get_lead_field(lead_id, "sector", supabase_client) or ""
+        google_category = await _get_lead_field(lead_id, "google_category", supabase_client) or ""
+        existing_focus = await _get_lead_field(lead_id, "treatment_focus", supabase_client) or []
+
+        # Stap 1: goedkope Google-category mapping (€0)
+        inferred_from_category = map_google_category(google_category)
+        merged = merge_treatment_focus(existing_focus, inferred_from_category)
+        if merged != list(existing_focus or []):
+            supabase_client.table("leads").update({
+                "treatment_focus": merged,
+            }).eq("id", lead_id).execute()
+
+        # Stap 2: rich Claude classifier voor cosmetische sector waar we page_text hebben
+        if sector == "cosmetische_behandelaars":
+            domain = await _get_lead_field(lead_id, "domain", supabase_client)
+            page_text = await _get_page_text_for_lead(lead_id, supabase_client) or ""
+            if domain and page_text:
+                from enrichment.treatment_classifier import classify_treatment_focus
+                focus = await classify_treatment_focus(
+                    domain=domain,
+                    page_text=page_text,
+                    workspace_id=workspace_id,
+                    supabase_client=supabase_client,
+                    anthropic_client=anthropic_client,
+                    lead_id=lead_id,
+                    accumulator=accumulator,
+                )
+                if focus:
+                    final = merge_treatment_focus(merged, focus)
+                    supabase_client.table("leads").update({
+                        "treatment_focus": final,
+                    }).eq("id", lead_id).execute()
+
+    elif step_name == "meta_ads":
+        # Warmr v1.0: meta_ads_active + ad_focus — Graph API / Playwright fallback.
+        # Best-effort: faal-silent, markeer meta_ads_checked_at.
+        company_name = await _get_lead_field(lead_id, "company_name", supabase_client) or ""
+        domain = await _get_lead_field(lead_id, "domain", supabase_client) or ""
+        if company_name:
+            from enrichment.meta_ads_scraper import check_meta_ads
+            ads_result = await check_meta_ads(company_name, domain, supabase_client)
+            patch = {
+                "meta_ads_checked_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if ads_result.get("meta_ads_active") is not None:
+                patch["meta_ads_active"] = ads_result["meta_ads_active"]
+            if ads_result.get("ad_focus"):
+                patch["ad_focus"] = ads_result["ad_focus"]
+            supabase_client.table("leads").update(patch).eq("id", lead_id).execute()
+
+    elif step_name == "review_recency":
+        # v1.0 BLOK B: vereist days_since_last_review > 28 + rating 4.0-4.4.
+        # Faalt-silent (Playwright errors / DOM-veranderingen): None blijft skip
+        # en BLOK B wordt niet gekozen — geen valse signalen.
+        google_maps_url = await _get_lead_field(lead_id, "google_maps_url", supabase_client)
+        if google_maps_url:
+            try:
+                from enrichment.google_reviews_scraper import fetch_latest_review_date
+                latest = await fetch_latest_review_date(google_maps_url)
+                if latest:
+                    supabase_client.table("leads").update({
+                        "latest_review_date": latest.isoformat(),
+                        "review_recency_checked_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", lead_id).execute()
+                else:
+                    # Mark as checked om herhaal-scrapes te voorkomen, maar laat
+                    # latest_review_date NULL — pick_observation_block skipt BLOK B dan.
+                    supabase_client.table("leads").update({
+                        "review_recency_checked_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", lead_id).execute()
+            except Exception as e:
+                logger.warning("review_recency crashed for lead %s: %s", lead_id, e)
+
+    elif step_name == "archetype":
+        # Koop-archetype classificatie (cosmetisch × 4 of alternatief × 4).
+        # Bepaalt Mail 1 tone. Faalt-silent: NULL archetype betekent voor de
+        # campagne-launcher dat het algemene fallback-blok wordt gebruikt.
+        try:
+            from enrichment.archetype_classifier import classify_archetype
+            # NB: NIET lokaal `from datetime import datetime` doen — dat shadowt
+            # de module-level binding en triggert UnboundLocalError in eerdere
+            # elif-blokken (review_recency). datetime/timezone zijn al global.
+            # Fetch volledige lead-row voor classifier-context
+            lead_full = (
+                supabase_client.table("leads")
+                .select(
+                    "id, sector, company_name, domain, treatment_focus, "
+                    "google_category, has_instagram, has_online_booking, "
+                    "company_size_estimate"
+                )
+                .eq("id", lead_id)
+                .maybe_single()
+                .execute()
+            )
+            if lead_full and lead_full.data:
+                # Pak page_text uit contact_crawl_v2 enrichment_data
+                page_text = ""
+                try:
+                    pt_res = (
+                        supabase_client.table("enrichment_data")
+                        .select("raw_result")
+                        .eq("lead_id", lead_id)
+                        .eq("source", "contact_crawl_v2")
+                        .order("created_at", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
+                    if pt_res.data:
+                        page_text = (pt_res.data[0].get("raw_result") or {}).get("page_text", "") or ""
+                except Exception:
+                    pass
+
+                result = await classify_archetype(
+                    lead=lead_full.data,
+                    workspace_id=workspace_id,
+                    supabase_client=supabase_client,
+                    anthropic_client=anthropic_client,
+                    page_text=page_text,
+                    accumulator=accumulator,
+                )
+                patch = {"archetype_classified_at": datetime.now(timezone.utc).isoformat()}
+                if result.get("archetype"):
+                    patch["archetype"] = result["archetype"]
+                    patch["archetype_reason"] = result.get("archetype_reason")
+                    patch["archetype_confidence"] = result.get("archetype_confidence")
+                supabase_client.table("leads").update(patch).eq("id", lead_id).execute()
+        except Exception as e:
+            logger.warning("archetype step crashed for lead %s: %s", lead_id, e)
 
     elif step_name == "contact_discovery":
         from enrichment.contact_discovery import discover_contacts
@@ -783,6 +1100,83 @@ async def _get_lead_field(
     return None
 
 
+async def _get_page_text_for_lead(
+    lead_id: str,
+    supabase_client: Any,
+) -> str | None:
+    """Return concatenated page text for a lead's website, or None.
+
+    Order van voorkeur:
+      1. enrichment_data.raw_result.page_text uit source=contact_crawl_v2
+         (meest recent + Playwright-rendered)
+      2. website_intelligence.page_text (legacy)
+      3. companies_raw.description + scraped_text (fallback van Google Maps)
+    """
+    # 1. contact_crawl_v2 page_text
+    try:
+        r = (
+            supabase_client.table("enrichment_data")
+            .select("raw_result")
+            .eq("lead_id", lead_id)
+            .eq("source", "contact_crawl_v2")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if r.data:
+            raw = (r.data[0].get("raw_result") or {})
+            pt = raw.get("page_text") or ""
+            if pt and len(pt) > 100:
+                return pt
+    except Exception:
+        pass
+
+    try:
+        wi = (
+            supabase_client.table("website_intelligence")
+            .select("page_text")
+            .eq("lead_id", lead_id)
+            .maybe_single()
+            .execute()
+        )
+        if wi.data and (wi.data.get("page_text") or ""):
+            return wi.data["page_text"]
+    except Exception:
+        pass
+
+    try:
+        lead_res = (
+            supabase_client.table("leads")
+            .select("domain")
+            .eq("id", lead_id)
+            .maybe_single()
+            .execute()
+        )
+        domain = (lead_res.data or {}).get("domain") or ""
+    except Exception:
+        domain = ""
+
+    if not domain:
+        return None
+
+    try:
+        cr = (
+            supabase_client.table("companies_raw")
+            .select("description, scraped_text")
+            .eq("domain", domain)
+            .limit(1)
+            .execute()
+        )
+        rows = cr.data or []
+        if rows:
+            parts = [rows[0].get("description") or "", rows[0].get("scraped_text") or ""]
+            combined = " ".join(p for p in parts if p).strip()
+            return combined or None
+    except Exception:
+        pass
+    return None
+
+
 async def _boost_job_priority(
     job_id: str,
     priority: int,
@@ -801,3 +1195,107 @@ async def _boost_job_priority(
         }).eq("id", job_id).execute()
     except Exception as e:
         logger.warning("Failed to boost priority for job %s: %s", job_id, e)
+
+
+# =============================================================================
+# n8n worker entry point — process one lead per call
+# =============================================================================
+
+async def process_next_enrichment(
+    workspace_id: str,
+    supabase_client: Any,
+) -> dict | None:
+    """Claim and run one pending enrichment job. Called by n8n worker every minute.
+
+    Wraps claim_next_enrichment_job + run_enrichment_for_lead in a single
+    call that never raises — returns None on empty queue, dict otherwise.
+
+    Args:
+        workspace_id: Workspace slug — only claims jobs for this workspace.
+        supabase_client: Supabase client.
+
+    Returns:
+        {"processed": True, "lead_id": str, "job_id": str}
+        or None if queue is empty
+        or {"processed": False, "error": "..."} on failure
+    """
+    try:
+        job = await claim_next_enrichment_job(supabase_client)
+    except Exception as e:
+        logger.error("process_next_enrichment: claim failed: %s", e)
+        return {"processed": False, "error": f"claim_failed: {str(e)[:100]}"}
+
+    if job is None:
+        return None
+
+    # Safety: verify workspace_id matches (claim_next_enrichment_job does not filter on it)
+    if job.get("workspace_id") and job["workspace_id"] != workspace_id:
+        logger.warning(
+            "process_next_enrichment: claimed job from different workspace "
+            "(got %s, expected %s) — skipping",
+            job.get("workspace_id"), workspace_id,
+        )
+        return {"processed": False, "error": "workspace_mismatch"}
+
+    try:
+        anthropic_client = _get_anthropic_client_for_worker()
+        warmr_client = _get_warmr_client_for_worker()
+
+        await run_enrichment_for_lead(
+            job=job,
+            supabase_client=supabase_client,
+            anthropic_client=anthropic_client,
+            warmr_client=warmr_client,
+        )
+
+        return {
+            "processed": True,
+            "lead_id": job.get("lead_id"),
+            "job_id": job.get("id"),
+        }
+
+    except Exception as e:
+        logger.exception("process_next_enrichment: run failed: %s", e)
+        return {
+            "processed": False,
+            "lead_id": job.get("lead_id"),
+            "job_id": job.get("id"),
+            "error": f"run_failed: {str(e)[:100]}",
+        }
+
+
+def _get_anthropic_client_for_worker() -> Any:
+    """Instantiate AsyncAnthropic client from env. Workers are stateless + async.
+
+    Eerder was dit anthropic.Anthropic (sync). Tijd gebeeld in sector_checker en
+    andere modules die `await anthropic_client.messages.create(...)` doen vs
+    sync client gooide 'object Message can't be used in await'. Nu consistent async.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set")
+    import anthropic
+    return anthropic.AsyncAnthropic(api_key=api_key)
+
+
+def _get_warmr_client_for_worker() -> "WarmrClient":
+    """Instantiate WarmrClient. Falls back to a dummy if WARMR_API_URL not set.
+
+    The dummy raises on method calls but allows import to succeed, so enrichment
+    steps that don't touch Warmr (email waterfall, scoring, etc.) still run.
+    """
+    try:
+        return WarmrClient()
+    except Exception as e:
+        logger.warning("WarmrClient init failed: %s — enrichment will skip warmr steps", e)
+        return _NullWarmrClient()  # type: ignore[return-value]
+
+
+class _NullWarmrClient:
+    """No-op Warmr client for environments without WARMR_API_URL configured."""
+
+    async def get_ready_inboxes(self) -> list[dict]:
+        return []
+
+    async def push_lead(self, *args: Any, **kwargs: Any) -> dict:
+        raise RuntimeError("WarmrClient not configured — cannot push lead")

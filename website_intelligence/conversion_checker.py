@@ -170,4 +170,18 @@ async def check_conversion(
             result["details"].append({"check": "cta_strength", "passed": True, "value": "generic"})
 
     result["conversion_score"] = min(score, 30)
+
+    # --- Booking system classification (for Warmr Sequence v1.0, Mail 2) ---
+    # Enum: "online" | "contact-form-only" | "phone-only" | "unknown"
+    # Priorities matcht de ladder waarop de mail reageert: online boeking wint
+    # altijd; anders contactformulier; anders telefoon; anders onbekend.
+    if result.get("has_online_booking"):
+        result["booking_system"] = "online"
+    elif result.get("has_contact_form"):
+        result["booking_system"] = "contact-form-only"
+    elif result.get("has_phone_clickable"):
+        result["booking_system"] = "phone-only"
+    else:
+        result["booking_system"] = "unknown"
+
     return result

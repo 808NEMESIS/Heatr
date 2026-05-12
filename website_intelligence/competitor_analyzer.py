@@ -25,6 +25,9 @@ CACHE_TTL_DAYS = 7
 MAX_COMPETITORS = 3
 
 
+_RATING_BUFFER = 0.2  # Google-rating buffer for "higher-rated" classification.
+
+
 async def benchmark_lead(
     lead_id: str,
     domain: str,
@@ -33,6 +36,7 @@ async def benchmark_lead(
     lead_total_score: int,
     workspace_id: str,
     supabase_client: Any,
+    lead_google_rating: float = 0.0,
 ) -> dict[str, Any]:
     """
     Find local competitors and compare website quality.
@@ -101,14 +105,40 @@ async def benchmark_lead(
     result["lead_rank"] = lead_rank
     result["total_analyzed"] = len(scored_comps) + 1  # competitors + lead
 
-    # Store on website_intelligence
+    # --- Warmr Sequence v1.0 CB1: rating-based competitor aggregaten ---
+    # Voor iedere competitor met geldige rating: teller ophogen, en als
+    # competitor_rating > lead_rating + _RATING_BUFFER → "higher-rated".
+    # Buffer voorkomt ruis op Google's 0.1-afronding.
+    rated_comps = [c for c in scored_comps if (c.get("google_rating") or 0) > 0]
+    lead_rating = float(lead_google_rating or 0)
+    higher_rated = [
+        c for c in rated_comps
+        if float(c["google_rating"]) >= lead_rating + _RATING_BUFFER
+    ]
+    result["local_competitors_in_db"] = len(rated_comps)
+    result["local_competitors_higher_rating"] = len(higher_rated)
+
+    # Store on website_intelligence (raw snapshot)
     try:
         supabase_client.table("website_intelligence").update({
             "competitor_data": result,
             "score_vs_market": result["score_vs_market"],
+            "local_competitors_in_db": result["local_competitors_in_db"],
+            "local_competitors_higher_rating": result["local_competitors_higher_rating"],
         }).eq("lead_id", lead_id).execute()
     except Exception as e:
         logger.debug("competitor_analyzer: failed to store results: %s", e)
+
+    # Mirror aggregaten op de leads-row zodat campagne-launcher + pick_observation_block
+    # ze direct kunnen lezen zonder extra join. Kolommen al aangelegd in migratie 006.
+    try:
+        supabase_client.table("leads").update({
+            "local_competitors_in_db": result["local_competitors_in_db"],
+            "local_competitors_higher_rating": result["local_competitors_higher_rating"],
+            "score_vs_market": result["score_vs_market"],
+        }).eq("id", lead_id).execute()
+    except Exception as e:
+        logger.debug("competitor_analyzer: failed to mirror to leads: %s", e)
 
     logger.info(
         "competitor_analyzer: %s in %s — lead=%d avg=%d delta=%+d rank=%d/%d",
@@ -197,14 +227,25 @@ async def _find_competitors(
                     data = await page.evaluate("""() => {
                         const nameEl = document.querySelector('h1.DUwDvf') || document.querySelector('h1.fontHeadlineLarge');
                         const websiteEl = document.querySelector('a[data-item-id="authority"]');
+                        // Rating is exposed in role=img aria-label like "4,7 sterren" or "4.7 stars"
+                        const ratingEl = document.querySelector('div.F7nice span[aria-hidden="true"]')
+                            || document.querySelector('span.ceNzKf');
+                        let rating = 0;
+                        if (ratingEl) {
+                            const raw = ratingEl.innerText.trim().replace(',', '.');
+                            const parsed = parseFloat(raw);
+                            if (!isNaN(parsed)) rating = parsed;
+                        }
                         return {
                             name: nameEl ? nameEl.innerText.trim() : '',
                             website: websiteEl ? websiteEl.getAttribute('href') : '',
+                            google_rating: rating,
                         };
                     }""")
 
                     comp_name = data.get("name") or ""
                     website = data.get("website") or ""
+                    comp_rating = float(data.get("google_rating") or 0)
 
                     if website:
                         parsed = urlparse(website)
@@ -219,6 +260,7 @@ async def _find_competitors(
                         competitors.append({
                             "name": comp_name,
                             "domain": comp_domain,
+                            "google_rating": comp_rating,
                         })
 
                     await page.go_back()

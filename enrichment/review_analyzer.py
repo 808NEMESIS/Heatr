@@ -18,7 +18,12 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from utils.cost_guard import LeadCostAccumulator, guarded_call
+
 logger = logging.getLogger(__name__)
+
+# Conservatieve schatting voor cost_guard pre-check (avg €0.00025/call uit cost-audit).
+_ESTIMATED_COST_EUR = 0.0005
 
 
 # Dutch + English relative date parsing for Google Reviews "X weken geleden" strings.
@@ -242,6 +247,7 @@ async def analyze_reviews(
     anthropic_client: Any,
     *,
     lead_id: str,
+    accumulator: LeadCostAccumulator | None = None,
 ) -> dict[str, Any]:
     """
     Analyze reviews with Claude Haiku to find outreach-relevant pain points.
@@ -268,6 +274,28 @@ async def analyze_reviews(
     }
 
     if not reviews:
+        return result
+
+    # Soft-warning bij ontbrekende accumulator — per-lead cap kan niet worden
+    # gehandhaafd zonder. Eenmalig per call.
+    if accumulator is None:
+        logger.warning(
+            "review_analyzer called without accumulator — per-lead cap not enforced. "
+            "Pass LeadCostAccumulator instance from job-orchestrator for cap-handhaving."
+        )
+
+    # Pre-check via cost_guard (skipt API-call als per-lead/daily/monthly cap raakt).
+    workspace_id = (accumulator.workspace_id if accumulator else "aerys")
+    allowed, reason = await guarded_call(
+        workspace_id=workspace_id,
+        lead_id=lead_id,
+        context="review_analysis",
+        estimated_cost_eur=_ESTIMATED_COST_EUR,
+        supabase_client=supabase_client,
+        accumulator=accumulator,
+    )
+    if not allowed:
+        logger.info("review_analysis: skipped — %s", reason)
         return result
 
     # Format reviews for Claude — truncate long reviews to prevent JSON parse errors
@@ -318,6 +346,13 @@ async def analyze_reviews(
         result["aerys_relevant_pains"] = parsed.get("aerys_relevant_pains") or []
         result["best_quote"] = parsed.get("best_quote") or ""
         result["summary"] = parsed.get("summary") or ""
+
+        # Charge accumulator met estimate (cached_claude_call returnt alleen text,
+        # niet cost). Actuele cost wordt al gelogd in api_cost_log door
+        # cached_claude_call zelf. Accumulator tracked per-lead-totaal voor
+        # cap-handhaving; lichte overshatting is veiliger dan onderschatting.
+        if accumulator is not None:
+            accumulator.charge(_ESTIMATED_COST_EUR, "review_analysis")
 
     except Exception as e:
         logger.warning("review_analyzer: Claude analysis failed for %s: %s", company_name, e)

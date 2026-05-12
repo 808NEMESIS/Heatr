@@ -20,7 +20,12 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from utils.cost_guard import LeadCostAccumulator, guarded_call
+
 logger = logging.getLogger(__name__)
+
+# Conservatieve schatting voor cost_guard pre-check (~€0.0002/call uit cost-audit).
+_ESTIMATED_COST_EUR = 0.0004
 
 
 # Reply categories
@@ -63,6 +68,7 @@ async def classify_reply(
     anthropic_client: Any,
     *,
     lead_id: str,
+    accumulator: LeadCostAccumulator | None = None,
 ) -> dict[str, Any]:
     """
     Classify a single reply with Claude Haiku.
@@ -74,6 +80,29 @@ async def classify_reply(
 
     # Trim very long replies (quoted email threads)
     reply_for_llm = reply_text.strip()[:2000]
+
+    # Soft-warning bij ontbrekende accumulator — per-lead cap kan niet worden
+    # gehandhaafd zonder. Reply-classify draait vanuit webhook (post-enrichment),
+    # dus accumulator is meestal None — daily/monthly caps blijven wel actief.
+    if accumulator is None:
+        logger.warning(
+            "classify_reply called without accumulator — per-lead cap not enforced. "
+            "Pass LeadCostAccumulator for cap-handhaving."
+        )
+
+    # Pre-check via cost_guard (skipt API-call als per-lead/daily/monthly cap raakt).
+    workspace_id = (accumulator.workspace_id if accumulator else "aerys")
+    allowed, reason = await guarded_call(
+        workspace_id=workspace_id,
+        lead_id=lead_id,
+        context="reply_classify",
+        estimated_cost_eur=_ESTIMATED_COST_EUR,
+        supabase_client=supabase_client,
+        accumulator=accumulator,
+    )
+    if not allowed:
+        logger.info("reply_classify: skipped — %s", reason)
+        return {"category": CATEGORY_OTHER, "summary": f"skipped: {reason}"}
 
     import anthropic
 
@@ -107,6 +136,7 @@ async def classify_reply(
         parsed = json.loads(text)
 
         # Log cost
+        cost = 0.0
         try:
             usage = response.usage
             cost = _estimate_cost(usage.input_tokens, usage.output_tokens)
@@ -121,6 +151,10 @@ async def classify_reply(
             }).execute()
         except Exception:
             pass
+
+        # Charge accumulator met daadwerkelijke cost (response.usage beschikbaar).
+        if accumulator is not None:
+            accumulator.charge(cost, "reply_classify")
 
         # Validate category
         category = parsed.get("category") or CATEGORY_OTHER

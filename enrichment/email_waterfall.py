@@ -349,11 +349,11 @@ async def _step_website(
     """
     from enrichment.email_verifier import get_best_email
 
-    # Check if website step already ran
+    # Check if website step already ran (raw_result bevat email_candidate)
     try:
         existing = (
             supabase_client.table("enrichment_data")
-            .select("email_candidate, succeeded")
+            .select("raw_result, succeeded")
             .eq("lead_id", lead_id)
             .eq("source", "website")
             .eq("enrichment_step", 1)
@@ -362,7 +362,8 @@ async def _step_website(
             .execute()
         )
         if existing.data and existing.data[0].get("succeeded"):
-            candidate = existing.data[0].get("email_candidate")
+            raw = existing.data[0].get("raw_result") or {}
+            candidate = raw.get("email_candidate") if isinstance(raw, dict) else None
             if candidate:
                 best, status = await get_best_email([candidate], supabase_client)
                 if best:
@@ -495,19 +496,24 @@ async def _log_waterfall_step(
         outcome: Result dict or None if step found nothing.
         supabase_client: Supabase client.
     """
+    # heatr_enrichment_data heeft geen 'email_candidate'/'email_status' kolommen in
+    # huidig schema. Pack email-info in raw_result (jsonb) ipv losse kolommen.
     try:
         supabase_client.table("enrichment_data").insert({
             "workspace_id": workspace_id,
             "lead_id": lead_id,
             "enrichment_step": step,
             "source": source,
-            "email_candidate": outcome.get("email") if outcome else None,
-            "email_status": outcome.get("email_status") if outcome else None,
             "succeeded": bool(outcome and outcome.get("email")),
-            "raw_result": {"method": source, "outcome": outcome},
+            "raw_result": {
+                "method": source,
+                "outcome": outcome,
+                "email_candidate": outcome.get("email") if outcome else None,
+                "email_status": outcome.get("email_status") if outcome else None,
+            },
         }).execute()
     except Exception as e:
-        logger.warning("Failed to log waterfall step %d for lead %s: %s", step, lead_id, e)
+        logger.debug("Failed to log waterfall step %d for lead %s: %s", step, lead_id, e)
 
 
 async def _get_lead_kvk_number(lead_id: str, supabase_client: Any) -> str | None:

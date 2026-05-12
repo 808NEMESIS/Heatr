@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from utils.cost_guard import LeadCostAccumulator
 from website_intelligence.technical_checker import check_technical
 from website_intelligence.conversion_checker import check_conversion
 from website_intelligence.sector_checker import check_sector_specific
@@ -37,6 +38,8 @@ async def analyze_website(
     supabase_client: Any,
     anthropic_client: Any,
     enable_vision: bool = False,
+    *,
+    accumulator: LeadCostAccumulator | None = None,
 ) -> dict[str, Any]:
     """
     Run full website intelligence analysis for a lead.
@@ -126,6 +129,7 @@ async def analyze_website(
         anthropic_client=anthropic_client,
         supabase_client=supabase_client,
         lead_id=lead_id,
+        accumulator=accumulator,
     )
     result["sector_specific"] = sector_result
     result["sector_score"] = sector_result["sector_score"]
@@ -143,11 +147,15 @@ async def analyze_website(
     personalization = await extract_personalization(
         domain, page_html, sector, anthropic_client, supabase_client,
         lead_id=lead_id,
+        accumulator=accumulator,
     )
     result["personalization"] = personalization
 
     # --- Contact extraction from team pages ---
-    contacts = await extract_contacts_from_website(domain, supabase_client, anthropic_client, lead_id=lead_id)
+    contacts = await extract_contacts_from_website(
+        domain, supabase_client, anthropic_client,
+        lead_id=lead_id, accumulator=accumulator,
+    )
     result["team_contacts"] = contacts
 
     # --- Opportunity classification ---
