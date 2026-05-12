@@ -40,11 +40,28 @@ _SENIORITY_MAP: dict[str, int] = {
     "head of marketing": 7, "head of growth": 7,
     "head of sales": 7, "vp marketing": 7,
     "director": 8, "manager": 5,
-    # Sector-specific
-    "makelaar": 6, "register makelaar": 7,
+    # Sector-specific (behandelaars)
     "coach": 6, "therapeut": 6, "behandelaar": 6,
-    "aannemer": 7, "hoofdaannemer": 8,
+    "acupuncturist": 7, "osteopaat": 7, "chiropractor": 7,
+    "homeopaat": 7, "natuurgeneeskundige": 7,
+    "huidtherapeut": 7, "schoonheidsspecialiste": 7,
+    "kliniekhouder": 9, "kliniekhoudster": 9,
+    "cosmetisch arts": 9, "plastisch chirurg": 9,
 }
+
+
+# Fallback decision-maker titles used when a sector config exposes none.
+# Sectors.py v2 removed per-sector decision_maker_titles — this list covers
+# behandelaars-breed (alternatieve_geneeskunde + cosmetische_behandelaars).
+_BEHANDELAARS_DECISION_MAKER_TITLES: list[str] = [
+    "eigenaar", "oprichter", "mede-eigenaar", "directeur", "dga",
+    "praktijkhouder", "praktijkeigenaar",
+    "kliniekhouder", "kliniekhoudster",
+    "behandelaar", "therapeut",
+    "cosmetisch arts", "plastisch chirurg",
+    "huidtherapeut", "schoonheidsspecialiste",
+    "owner", "founder", "managing director",
+]
 
 
 async def discover_contacts(
@@ -137,7 +154,7 @@ async def discover_contacts(
 
     if all_contacts:
         primary = all_contacts[0]
-        primary["why_chosen"] = _generate_why_chosen(primary, company_name, sector)
+        primary["why_chosen"] = _generate_why_chosen(primary, company_name)
 
     # --- Store contacts in lead_contacts table ---
     for contact in all_contacts:
@@ -253,9 +270,27 @@ async def _search_linkedin(
 # Email inference
 # ---------------------------------------------------------------------------
 
+_CONSUMER_EMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+    "yahoo.com", "yahoo.nl", "icloud.com", "me.com", "msn.com",
+    "ziggo.nl", "kpnmail.nl", "telfort.nl", "casema.nl", "xs4all.nl",
+    "planet.nl", "online.nl", "home.nl", "chello.nl",
+}
+
+
 def _infer_contact_from_email(email: str, domain: str) -> Optional[dict]:
-    """Try to infer a contact name from the email local part."""
+    """Try to infer a contact name from the email local part.
+
+    Geweigerd voor:
+      - role-emails (info@/contact@/etc.)
+      - consumer-domeinen (gmail/hotmail/etc.) — local part is meestal geen
+        echte voornaam maar een handle (live ontdekt: 'ceciledebooij@gmail.com'
+        → vroeger first_name=Ceciledebooij, geleid tot 'Hoi Ceciledebooij')
+      - locals zonder splitter EN >12 chars (waarschijnlijk samenvoeging van
+        voor+achternaam, niet veilig te splitsen)
+    """
     local = email.split("@")[0].lower()
+    email_domain = email.split("@")[-1].lower() if "@" in email else ""
 
     # Skip role emails
     role_prefixes = {"info", "contact", "hallo", "receptie", "administratie",
@@ -263,9 +298,17 @@ def _infer_contact_from_email(email: str, domain: str) -> Optional[dict]:
     if local in role_prefixes:
         return None
 
+    # Skip consumer-domains — handle ≠ echte naam
+    if email_domain in _CONSUMER_EMAIL_DOMAINS:
+        return None
+
     # Try name-like patterns: jan.devries, j.devries, jan
     parts = re.split(r"[._\-]", local)
     if not parts:
+        return None
+
+    # Geen splitter EN te lang: te onbetrouwbaar (zou voor- + achternaam mengen)
+    if len(parts) == 1 and len(parts[0]) > 12:
         return None
 
     first_name = parts[0].capitalize()
@@ -413,17 +456,23 @@ def _get_seniority(title: str, sector: str) -> int:
         if key in title_lower:
             best_score = max(best_score, score)
 
-    # Sector-specific boost for owner-equivalent titles
+    # Sector-specific boost for owner-equivalent titles.
+    # Sectors.py v2 heeft geen decision_maker_titles meer — we gebruiken nu
+    # één behandelaars-brede lijst. Laat nog steeds werken voor toekomstige
+    # herintroductie van sector-specifieke overrides.
     if sector and best_score == 0:
+        dm_titles: list[str] = []
         try:
             sector_config = get_sector(sector)
-            dm_titles = sector_config.get("decision_maker_titles", [])
-            for dm in dm_titles:
-                if dm.lower() in title_lower:
-                    best_score = max(best_score, 6)
-                    break
+            dm_titles = list(sector_config.get("decision_maker_titles") or [])
         except ValueError:
             pass
+        if not dm_titles:
+            dm_titles = _BEHANDELAARS_DECISION_MAKER_TITLES
+        for dm in dm_titles:
+            if dm.lower() in title_lower:
+                best_score = max(best_score, 6)
+                break
 
     return best_score
 
@@ -449,7 +498,7 @@ def _names_match(a: dict, b: dict) -> bool:
     return False
 
 
-def _generate_why_chosen(contact: dict, company_name: str, sector: str) -> str:
+def _generate_why_chosen(contact: dict, company_name: str) -> str:
     """Generate human-readable explanation for why this contact was chosen."""
     title = contact.get("title") or "onbekende functie"
     source = contact.get("source") or "onbekende bron"
@@ -462,14 +511,8 @@ def _generate_why_chosen(contact: dict, company_name: str, sector: str) -> str:
     }
     source_label = source_labels.get(source, source)
 
-    size_hint = ""
-    try:
-        cfg = get_sector(sector)
-        size_hint = f" ({cfg.get('typical_company_size', '')} medewerkers)"
-    except ValueError:
-        pass
-
+    # Sectors.py v2 heeft geen typical_company_size meer — size_hint is weg.
     return (
-        f"{title.title()} bij {company_name}{size_hint}, "
+        f"{title.title()} bij {company_name}, "
         f"{source_label} (confidence: {confidence:.0%})"
     )

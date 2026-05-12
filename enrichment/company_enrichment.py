@@ -25,13 +25,6 @@ logger = logging.getLogger(__name__)
 # Sector-specific industry lists — Claude must return only these values
 # ---------------------------------------------------------------------------
 
-_INDUSTRY_LIST_MAKELAARS = [
-    "Makelaarskantoor", "Makelaardij", "Vastgoedkantoor",
-    "Aankoopmakelaar", "Verkoopmakelaar", "Taxatiekantoor",
-    "Hypotheekadvies + makelaardij", "Bedrijfsmakelaar",
-    "Verhuurmakelaar", "Vastgoedadvies",
-]
-
 _INDUSTRY_LIST_ALTERNATIEVE_GENEESKUNDE = [
     "Acupunctuurpraktijk", "Osteopathiepraktijk", "Homeopathiepraktijk",
     "Chiropractiepraktijk", "Natuurgeneeskunde", "Haptotherapie",
@@ -50,21 +43,9 @@ _INDUSTRY_LIST_COSMETISCHE_BEHANDELAARS = [
     "Wimperextensions studio", "Overige cosmetische behandelingen",
 ]
 
-_INDUSTRY_LIST_BOUWBEDRIJVEN = [
-    "Aannemersbedrijf", "Bouwbedrijf", "Renovatiebedrijf",
-    "Dakdekkersbedrijf", "Timmerbedrijf", "Schildersbedrijf",
-    "Installatiebedrijf", "Loodgietersbedrijf", "Stukadoorsbedrijf",
-    "Klusbedrijf", "Verbouwingsspecialist", "Metselwerk",
-    "Kozijnen & gevelbekleding", "Isolatiebedrijf",
-    "Badkamer- & keukenspecialist", "Elektrotechnisch bedrijf",
-    "Overige bouw",
-]
-
 _INDUSTRY_LISTS: dict[str, list[str]] = {
-    "makelaars": _INDUSTRY_LIST_MAKELAARS,
     "alternatieve_geneeskunde": _INDUSTRY_LIST_ALTERNATIEVE_GENEESKUNDE,
     "cosmetische_behandelaars": _INDUSTRY_LIST_COSMETISCHE_BEHANDELAARS,
-    "bouwbedrijven": _INDUSTRY_LIST_BOUWBEDRIJVEN,
 }
 
 _OPENER_LANGUAGE_NL = "nl"
@@ -111,7 +92,7 @@ async def enrich_company(
                 "contact_name, contact_first_name, "
                 "google_rating, google_review_count, "
                 "has_instagram, cms_detected, "
-                "kvk_number, kvk_sbi_code, kvk_employee_count_range, "
+                "kvk_number, kvk_sbi_code, "
                 "google_category, website_score, enrichment_version"
             )
             .eq("id", lead_id)
@@ -135,7 +116,7 @@ async def enrich_company(
     google_rating = lead.get("google_rating")
     review_count = lead.get("google_review_count")
     has_instagram = lead.get("has_instagram", False)
-    kvk_employee_range = lead.get("kvk_employee_count_range")
+    kvk_employee_range = lead.get("kvk_employee_count_range")  # safe: always None if column missing
     domain = lead.get("domain", "")
 
     # --- Industry inference --------------------------------------------------

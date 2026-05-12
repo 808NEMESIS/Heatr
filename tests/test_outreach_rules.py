@@ -26,7 +26,7 @@ from utils.sending_guard import SendingGuard
 # Helpers
 # ==============================================================================
 
-def _good_step(subject="Gratis website review voor {{company}}", delay_days=0):
+def _good_step(subject="Korte observatie voor {{company}}", delay_days=0):
     """Return a valid sequence step with enough body words."""
     body = " ".join(["word"] * 55)  # 55 words — above 50-word minimum
     return {"subject": subject, "body": body, "delay_days": delay_days}

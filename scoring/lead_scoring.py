@@ -75,18 +75,9 @@ async def score_lead(
     icp_match = await match_icp(lead_id, sector, workspace_id, supabase_client)
     fit_score = int(icp_match * 40)
 
-    # Sector-specific boosts from config
-    try:
-        from config.sectors import get_sector
-        sector_config = get_sector(sector)
-        boosts = sector_config.get("scoring_boosts", {})
-        boost_total = 0
-        for boost_key, boost_pts in boosts.items():
-            if _check_boost(boost_key, lead):
-                boost_total += boost_pts
-        fit_score = min(fit_score + boost_total, 40)
-    except ValueError:
-        pass
+    # Sectors.py v2 (2026-04-21) heeft geen scoring_boosts meer per sector.
+    # Fit-score komt volledig uit icp_match + review_count signalen hieronder.
+    # Zie CHANGES_PR2.md voor rationale.
 
     # Review count signal — high review count = active, established business
     review_count = lead.get("google_review_count") or 0
@@ -237,39 +228,3 @@ async def score_lead(
     return result
 
 
-def _check_boost(key: str, lead: dict) -> bool:
-    """Check if a sector-specific scoring boost applies to this lead."""
-    checks = {
-        "has_funda_listing": lambda: "funda" in (lead.get("company_summary") or "").lower(),
-        "has_nvm_certification": lambda: "nvm" in (lead.get("company_summary") or "").lower(),
-        "has_virtual_tour": lambda: "360" in (lead.get("company_summary") or "").lower() or "rondleiding" in (lead.get("company_summary") or "").lower(),
-        "has_online_booking": lambda: bool(lead.get("has_booking")),
-        "has_instagram": lambda: bool(lead.get("instagram_url")),
-        "has_gratis_kennismaking_cta": lambda: "kennismaking" in (lead.get("company_summary") or "").lower(),
-        "has_personal_photo": lambda: bool(lead.get("contact_first_name")),
-        "email_starts_with_name": lambda: _email_starts_with_name(lead),
-        "kvk_sbi_match": lambda: bool(lead.get("kvk_number")),
-        "google_rating_above_4_5": lambda: (lead.get("google_rating") or 0) >= 4.5,
-        "has_project_portfolio": lambda: "project" in (lead.get("company_summary") or "").lower(),
-        "has_werkspot_profile": lambda: "werkspot" in (lead.get("source") or "").lower(),
-        "has_bouwend_nl_lid": lambda: "bouwend nederland" in (lead.get("company_summary") or "").lower(),
-        "has_client_reviews": lambda: (lead.get("google_review_count") or 0) >= 5,
-        "has_before_after_gallery": lambda: "voor en na" in (lead.get("company_summary") or "").lower(),
-    }
-
-    checker = checks.get(key)
-    if checker:
-        try:
-            return checker()
-        except Exception:
-            return False
-    return False
-
-
-def _email_starts_with_name(lead: dict) -> bool:
-    """Check if email local part matches contact first name."""
-    email = (lead.get("email") or "").lower()
-    name = (lead.get("contact_first_name") or "").lower()
-    if email and name and len(name) >= 2:
-        return email.split("@")[0].startswith(name)
-    return False

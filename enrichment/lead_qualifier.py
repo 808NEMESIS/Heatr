@@ -100,15 +100,17 @@ async def qualify_raw_company(
         if re.search(pattern, name, re.IGNORECASE):
             return False, "closed_pattern_in_name", 10
 
-    # Exclude keywords from sector config
+    # Disqualifiers from sector config (globaal + per subcategory)
     try:
         sector_config = get_sector(sector_key)
-        exclude_keywords = sector_config.get("exclude_keywords", [])
+        disqualifiers: list[str] = list(sector_config.get("disqualifiers") or [])
+        for sub in (sector_config.get("subcategories") or {}).values():
+            disqualifiers.extend(sub.get("disqualifiers") or [])
         name_lower = name.lower()
         category_lower = category.lower()
-        for kw in exclude_keywords:
+        for kw in disqualifiers:
             if kw.lower() in name_lower or kw.lower() in category_lower:
-                return False, f"exclude_keyword:{kw}", 10
+                return False, f"disqualifier:{kw}", 10
     except ValueError:
         pass
 
@@ -140,9 +142,12 @@ async def qualify_raw_company(
     if isinstance(review_count, (int, float)) and review_count >= 10:
         priority -= 1
 
-    # ICP keyword match in name or category → boost priority
+    # ICP keyword match in name or category → boost priority.
+    # Sectors.py v2: flatten global lead_keywords + per-subcategory icp_signals.
     try:
-        icp_keywords = sector_config.get("icp_keywords", [])
+        icp_keywords: list[str] = list(sector_config.get("lead_keywords") or [])
+        for sub in (sector_config.get("subcategories") or {}).values():
+            icp_keywords.extend(sub.get("icp_signals") or [])
         combined = f"{name_lower} {category_lower}"
         matches = sum(1 for kw in icp_keywords if kw.lower() in combined)
         if matches >= 2:

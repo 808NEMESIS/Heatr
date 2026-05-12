@@ -1,447 +1,544 @@
 """
-config/sectors.py — Sector configurations for Heatr.
+Sector configuraties voor Heatr.
 
-Adding a new sector requires only a new entry in SECTORS dict — no code changes elsewhere.
-All scrapers, enrichers, scorers, and opportunity classifiers read from this file.
+Elke sector definieert:
+- sbi_codes: SBI 2025 codes (5-cijferig, herzien sep 2025) voor KvK filtering
+- subcategories: subcategorieen binnen de sector voor gerichte scraping + ICP matching
+- lead_keywords: Google Maps zoektermen (globaal, aanvullend op subcategorie keywords)
+- disqualifiers: keywords die een lead uitsluiten (bv. reguliere zorg, ziekenhuizen)
+- website_signals: sector-specifieke signalen voor laag 4 van website intelligence (15 pnt)
 
-Active sectors (2026-04):
-  - makelaars         — Real estate agents / brokers (NL + BE)
-  - behandelaren      — Practitioners, coaches, therapists — NOT medical specialists
-  - bouwbedrijven     — Construction companies, contractors, renovation firms
+SBI codes zijn sinds 5-8 sep 2025 5-cijferig. Oude 4-cijferige codes (86.90, 86.21, 96.02)
+zijn niet meer geldig in het Handelsregister.
+
+LET OP: dit bestand bevat GEEN budget-, tier- of omzet aannames. Die komen pas wanneer
+we feedback data hebben uit de feedback_processor (gewonnen vs verloren leads, conversie
+per subcategorie, gemiddelde dealwaarde). Tot die tijd: geen aannames over welke
+subcategorie meer budget heeft.
 """
 from __future__ import annotations
 
-SECTORS: dict[str, dict] = {
+from typing import TypedDict
 
+
+class SubcategoryConfig(TypedDict):
+    label: str
+    lead_keywords: list[str]
+    disqualifiers: list[str]
+    # Signalen die dit een ICP match maken (niet als scoring, maar als classificatie hint)
+    icp_signals: list[str]
+
+
+class SectorConfig(TypedDict):
+    label: str
+    sbi_codes: list[str]
+    sbi_codes_notes: dict[str, str]
+    subcategories: dict[str, SubcategoryConfig]
+    lead_keywords: list[str]  # globale keywords, aanvullend op subcategorieen
+    disqualifiers: list[str]  # globale disqualifiers
+    website_signals: dict[str, list[str]]  # signalen voor laag 4 scoring
+    notes: str
+
+
+SECTORS: dict[str, SectorConfig] = {
     # =========================================================================
-    # Sector: Makelaars
-    # Real estate agents / brokers. Typically 2-15 person offices.
-    # Decision-maker: office owner or vestigingsmanager.
-    # Strong digital presence expected — Funda listing, social media, virtual tours.
-    # =========================================================================
-    "makelaars": {
-        "name": "Makelaars",
-        "description": (
-            "Makelaars, makelaardijen, vastgoedkantoren, taxateurs. "
-            "NVM-, VBO- en VastgoedPRO-leden. Aankoop- en verkoopbegeleiding."
-        ),
-        "countries": ["NL", "BE"],
-
-        "search_queries": [
-            "makelaar {city}",
-            "makelaardij {city}",
-            "vastgoed makelaar {city}",
-            "huis verkopen makelaar {city}",
-            "aankoopmakelaar {city}",
-            "verkoopmakelaar {city}",
-            "NVM makelaar {city}",
-            "taxateur {city}",
-            "vastgoedkantoor {city}",
-        ],
-
-        "directory_urls": [
-            "https://www.funda.nl/makelaars/{city}/",
-            "https://www.nvm.nl/makelaars/?zoekterm={city}",
-            "https://www.vbo.nl/makelaar-zoeken?plaats={city}",
-        ],
-
-        "kvk_sbi_codes": ["68.31", "68.32", "68.20"],
-
-        "icp_keywords": [
-            "makelaar", "makelaardij", "vastgoed", "taxatie", "NVM", "VBO",
-            "woning", "verkoop", "aankoop", "hypotheek", "bezichtiging",
-            "woningaanbod", "huis kopen", "huis verkopen", "VastgoedPRO",
-            "courtage", "waardebepaling", "verkoopstrategie", "funda",
-        ],
-
-        "exclude_keywords": [
-            "woningcorporatie", "sociale huurwoningen", "projectontwikkeling",
-            "beleggingsfonds", "vastgoedbelegger", "hypotheekadviseur",
-            "notaris", "vastgoedmanagement",
-        ],
-
-        "scoring_boosts": {
-            "has_funda_listing": 4,
-            "has_nvm_certification": 5,
-            "has_virtual_tour": 3,
-            "has_online_booking": 3,
-            "google_rating_above_4_5": 3,
-            "kvk_sbi_match": 5,
-            "has_instagram": 3,
-        },
-
-        "sector_website_expectations": {
-            "must_have": [
-                {"key": "has_property_listings", "points": 5,
-                 "label": "Woningaanbod / portfolio zichtbaar op site"},
-                {"key": "has_team_page", "points": 5,
-                 "label": "Teampagina met makelaars + foto's"},
-                {"key": "has_nvm_vbo_certification", "points": 5,
-                 "label": "NVM / VBO / VastgoedPRO certificering zichtbaar"},
-            ],
-            "should_have": [
-                {"key": "has_virtual_tour", "bonus_points": 3,
-                 "label": "Virtuele rondleiding of video van woningen"},
-                {"key": "has_client_reviews", "bonus_points": 3,
-                 "label": "Klantbeoordelingen / testimonials"},
-            ],
-            "nice_to_have": [
-                {"key": "has_market_reports", "label": "Marktrapportages / woningmarktcijfers"},
-                {"key": "has_blog_or_news", "label": "Blog of nieuwssectie"},
-                {"key": "has_waardebepaling_cta", "label": "Gratis waardebepaling CTA"},
-            ],
-        },
-
-        # Contact discovery: who to look for
-        "decision_maker_titles": [
-            "eigenaar", "oprichter", "vestigingsmanager", "directeur",
-            "managing partner", "kantoormanager", "office manager",
-        ],
-        "typical_company_size": "2-15",
-    },
-
-    # =========================================================================
-    # Sector: Alternatieve Geneeskunde
-    # Alternative medicine practitioners in private practice.
-    # Owner = practitioner = decision-maker. Usually 1-3 person practices.
-    # NOT medical specialists, hospitals, GGZ, or regular physiotherapy chains.
+    # ALTERNATIEVE GENEESKUNDE
     # =========================================================================
     "alternatieve_geneeskunde": {
-        "name": "Alternatieve Geneeskunde",
-        "description": (
-            "Acupuncturisten, osteopaten, homeopaten, chiropractoren, "
-            "natuurgeneeskundigen, haptotherapeuten, reflexologen, "
-            "energetisch therapeuten, manueel therapeuten, "
-            "integratief therapeuten. Privépraktijken, geen instellingen."
+        "label": "Alternatieve Geneeskunde",
+        "sbi_codes": [
+            "86919",  # Overige paramedische praktijken en alternatieve genezers (hoofdcode)
+            "86911",  # Praktijken van fysiotherapeuten
+            "86912",  # Praktijken van oefentherapeuten Cesar/Mensendieck (en soms huidtherapeuten)
+            "86913",  # Praktijken van psychotherapeuten, psychologen en pedagogen
+            "86211",  # Huisartsen (voor arts-homeopaten, arts-acupuncturisten)
+            "96099",  # Overige persoonlijke dienstverlening n.e.g. (coaches, holistisch)
+        ],
+        "sbi_codes_notes": {
+            "86919": "Breedste code: homeopaten, natuurgeneeskundigen, niet-arts acupuncturisten, "
+                     "chiropractors, reflexologen, dietisten, huidtherapeuten, massagesalons (vaak)",
+            "86911": "Fysiotherapeuten - grensgebied. Meeste zijn BIG geregistreerd, regulier. "
+                     "Alleen relevant als ze aanvullend alternatief werk doen (manueel, dry needling).",
+            "86912": "Oefentherapeuten Cesar/Mensendieck. Soms ook huidtherapeuten hier.",
+            "86913": "Psychotherapeuten, psychologen, pedagogen, vaktherapeuten (nieuw sinds herziening).",
+            "86211": "Huisartsen - alleen relevant als ze alternatieve geneeswijzen aanbieden.",
+            "96099": "Catch-all voor coaches/holistisch zonder medische pretentie.",
+        },
+        "subcategories": {
+            "lichaam_energetisch": {
+                "label": "Energetisch en lichaamsenergie",
+                "lead_keywords": [
+                    "acupunctuur praktijk",
+                    "shiatsu therapie",
+                    "energetisch therapeut",
+                    "reiki master praktijk",
+                    "bowen therapie",
+                    "dorn therapie",
+                    "polariteit therapie",
+                ],
+                "disqualifiers": ["ziekenhuis", "arts acupunctuur"],
+                "icp_signals": [
+                    "acupunctuur", "shiatsu", "reiki", "energetisch", "bowen",
+                    "dorn", "polariteit", "meridiaan", "chakra", "aura",
+                ],
+            },
+            "manueel_fysiek": {
+                "label": "Manueel en fysiek",
+                "lead_keywords": [
+                    "osteopathie praktijk",
+                    "chiropractor",
+                    "craniosacraal therapie",
+                    "manueel therapeut",
+                    "rolfing",
+                    "feldenkrais",
+                ],
+                "disqualifiers": ["ziekenhuis", "revalidatiecentrum"],
+                "icp_signals": [
+                    "osteopathie", "chiropractie", "craniosacraal", "cranio sacraal",
+                    "rolfing", "feldenkrais", "structurele integratie", "manueel",
+                ],
+            },
+            "natuurgeneeskunde": {
+                "label": "Natuurgeneeskunde en homeopathie",
+                "lead_keywords": [
+                    "natuurgeneeskunde praktijk",
+                    "homeopaat",
+                    "orthomoleculair therapeut",
+                    "fytotherapie",
+                    "darmtherapeut",
+                    "ayurveda praktijk",
+                    "TCM therapie",
+                ],
+                "disqualifiers": ["apotheek", "drogist"],
+                "icp_signals": [
+                    "natuurgeneeskunde", "homeopathie", "orthomoleculair", "fytotherapie",
+                    "darmtherapie", "ayurveda", "TCM", "traditionele chinese geneeskunde",
+                    "kruidenrecepten", "kruiden",
+                ],
+            },
+            "lichaamsgerichte_therapie": {
+                "label": "Lichaamsgerichte therapie",
+                "lead_keywords": [
+                    "haptotherapeut",
+                    "lichaamsgerichte psychotherapie",
+                    "bioenergetica therapie",
+                    "somatic experiencing",
+                    "TRE practitioner",
+                ],
+                "disqualifiers": ["psychiater", "GGZ"],
+                "icp_signals": [
+                    "haptotherapie", "haptonomie", "lichaamsgericht", "bioenergetica",
+                    "somatic experiencing", "TRE", "trauma release",
+                ],
+            },
+            "reflexzone": {
+                "label": "Reflexzone en reflexologie",
+                "lead_keywords": [
+                    "reflexoloog",
+                    "voetreflex praktijk",
+                    "reflexzone therapie",
+                    "ooracupunctuur",
+                ],
+                "disqualifiers": [],
+                "icp_signals": [
+                    "reflexologie", "reflexzone", "voetreflex", "handreflex",
+                    "ooracupunctuur", "zoneterapie",
+                ],
+            },
+            "integratieve_geest_lichaam": {
+                "label": "Integratieve geest-lichaam therapie",
+                "lead_keywords": [
+                    "mindfulness trainer",
+                    "hypnotherapeut",
+                    "NLP therapeut",
+                    "ademtherapie",
+                    "familieopstellingen",
+                    "systemisch werker",
+                ],
+                "disqualifiers": ["psychiater", "GGZ instelling"],
+                "icp_signals": [
+                    "mindfulness", "hypnotherapie", "NLP", "ademtherapie", "pranayama",
+                    "wim hof", "familieopstellingen", "systemisch werk",
+                ],
+            },
+            "vaktherapie": {
+                "label": "Vaktherapie",
+                "lead_keywords": [
+                    "kunstzinnige therapie",
+                    "muziektherapie",
+                    "danstherapie",
+                    "psychomotore therapie",
+                    "dramatherapie",
+                    "speltherapie",
+                ],
+                "disqualifiers": [],
+                "icp_signals": [
+                    "vaktherapie", "kunstzinnige therapie", "muziektherapie",
+                    "danstherapie", "psychomotore", "PMT", "dramatherapie", "speltherapie",
+                ],
+            },
+            "coaching_holistisch": {
+                "label": "Holistische coaching",
+                "lead_keywords": [
+                    "holistisch coach",
+                    "spiritueel coach",
+                    "energetisch coach",
+                    "life coach holistisch",
+                ],
+                "disqualifiers": [
+                    "business coach", "executive coach", "sales coach",
+                    "zakelijk coach", "team coach",
+                ],
+                "icp_signals": [
+                    "holistisch", "spiritueel", "energetisch", "zielsmissie",
+                    "levenspad", "innerlijk kind", "hoogsensitief",
+                ],
+            },
+        },
+        "lead_keywords": [
+            # Globale zoektermen die over alle subcategorieen heen werken
+            "alternatieve geneeskunde",
+            "natuurgeneeskunde",
+            "complementaire zorg",
+            "holistische praktijk",
+        ],
+        "disqualifiers": [
+            "ziekenhuis", "UMC", "academisch medisch centrum",
+            "GGZ instelling", "revalidatiecentrum",
+            "apotheek", "drogisterij", "drogist",
+            "verpleeghuis", "zorginstelling",
+        ],
+        "website_signals": {
+            # Signalen die een website als hoogwaardige alternatieve praktijk classificeren
+            "positive": [
+                "RBCZ", "SRBAG", "NVA", "NVKH", "NWP",  # beroepsverenigingen
+                "klachtenregeling", "AVG", "privacyverklaring",
+                "vergoeding zorgverzekeraar", "aanvullende verzekering",
+                "online afspraak maken", "online booking",
+                "Wkkgz", "geschillencommissie",
+            ],
+            "negative": [
+                # Signalen die twijfelachtig zijn (let op: niet per definitie slecht)
+                "genezing gegarandeerd", "wondermiddel",
+                "vervangt medische behandeling",
+            ],
+        },
+        "notes": (
+            "86919 is de breedste code en vangt het grootste deel. "
+            "Let op dat deze code OOK dietisten, ergotherapeuten, logopedisten en "
+            "huidtherapeuten bevat - filter op activiteitenomschrijving en subcategorie "
+            "keywords. Gebruik disqualifiers agressief om reguliere zorg eruit te filteren."
         ),
-        "countries": ["NL", "BE"],
-
-        "search_queries": [
-            # Per micro-niche zoeken voor gerichte resultaten
-            "acupuncturist {city}",
-            "acupunctuur praktijk {city}",
-            "osteopaat {city}",
-            "osteopathie praktijk {city}",
-            "homeopaat {city}",
-            "homeopathie praktijk {city}",
-            "chiropractor {city}",
-            "chiropractie {city}",
-            "natuurgeneeskundige {city}",
-            "haptotherapeut {city}",
-            "reflexoloog {city}",
-            "voetreflexologie {city}",
-            "energetisch therapeut {city}",
-            "reiki therapeut {city}",
-            "manueel therapeut {city}",
-            "integratief therapeut {city}",
-            "holistische therapeut {city}",
-            "kruidengeneeskunde {city}",
-            "ayurvedisch therapeut {city}",
-        ],
-
-        "directory_urls": [
-            "https://www.natuurlijkbeter.nl/therapeuten/{city}",
-            "https://www.zorgkaart.nl/therapeut/{city}",
-            "https://www.holistische-therapeuten.nl/{city}",
-        ],
-
-        "kvk_sbi_codes": ["86.90", "86.21", "86.22", "86.23"],
-
-        "icp_keywords": [
-            "acupunctuur", "acupuncturist", "osteopathie", "osteopaat",
-            "homeopathie", "homeopaat", "chiropractie", "chiropractor",
-            "natuurgeneeskunde", "haptonomie", "haptotherapie",
-            "reflexologie", "voetreflex", "reiki", "energetisch",
-            "manuele therapie", "manueel therapeut", "healing",
-            "integratieve geneeskunde", "holistisch", "kruidengeneeskunde",
-            "ayurveda", "chinese geneeskunde", "TCM", "praktijk",
-            "behandeling", "sessie", "vergoeding", "zorgverzekering",
-            "natuurgeneeskundig", "complementair",
-        ],
-
-        "exclude_keywords": [
-            "ziekenhuis", "ggz instelling", "ggz", "medisch specialist",
-            "psychiater", "klinisch psycholoog", "revalidatiecentrum",
-            "verpleeghuis", "thuiszorg", "apotheek", "huisartsenpraktijk",
-            "keten", "franchise", "fysiotherapie keten",
-            "sportschool", "fitness",
-        ],
-
-        "scoring_boosts": {
-            "has_gratis_kennismaking_cta": 4,
-            "has_personal_photo": 3,
-            "email_starts_with_name": 2,
-            "kvk_sbi_match": 5,
-            "google_rating_above_4_5": 3,
-            "has_online_booking": 4,
-            "has_insurance_info": 3,
-        },
-
-        "sector_website_expectations": {
-            "must_have": [
-                {"key": "has_qualifications_visible", "points": 5,
-                 "label": "Kwalificaties / opleiding / registratie zichtbaar (RBCZ, NVAO, etc.)"},
-                {"key": "has_services_explained", "points": 5,
-                 "label": "Behandelaanbod duidelijk beschreven met werkwijze"},
-                {"key": "has_intake_or_booking", "points": 5,
-                 "label": "Intakeformulier of online afspraak mogelijkheid"},
-            ],
-            "should_have": [
-                {"key": "has_gratis_kennismaking_cta", "bonus_points": 3,
-                 "label": "Gratis kennismakingsgesprek CTA"},
-                {"key": "has_personal_photo", "bonus_points": 3,
-                 "label": "Persoonlijke foto van behandelaar"},
-            ],
-            "nice_to_have": [
-                {"key": "has_insurance_info", "label": "Vergoedingsinformatie zorgverzekering"},
-                {"key": "has_client_reviews", "label": "Klantreviews / ervaringsverhalen"},
-                {"key": "has_blog_or_articles", "label": "Kennisartikelen of blog"},
-                {"key": "has_video", "label": "Introductievideo behandelaar"},
-                {"key": "has_klachtenregeling", "label": "Klachtenregeling / beroepsvereniging"},
-            ],
-        },
-
-        "decision_maker_titles": [
-            "eigenaar", "oprichter", "praktijkhouder", "behandelaar",
-            "therapeut", "acupuncturist", "osteopaat", "homeopaat",
-            "chiropractor", "natuurgeneeskundige",
-        ],
-        "typical_company_size": "1-3",
     },
 
     # =========================================================================
-    # Sector: Cosmetische Behandelaars
-    # Aesthetic treatment providers — from premium clinics to solo practitioners.
-    # Instagram presence is a strong qualifying signal.
-    # Decision-maker: owner or clinic manager. Usually 1-10 persons.
+    # COSMETISCHE BEHANDELAARS
     # =========================================================================
     "cosmetische_behandelaars": {
-        "name": "Cosmetische Behandelaars",
-        "description": (
-            "Botox/filler klinieken, laserklinieken, huidtherapeuten, "
-            "permanente make-up studios, premium schoonheidssalons, "
-            "microblading specialisten, ontharing/waxing studios, "
-            "gezichtsbehandeling specialisten."
+        "label": "Cosmetische Behandelaars",
+        "sbi_codes": [
+            "96022",  # Schoonheidsverzorging, pedicures, manicures, visagie, image consulting
+            "86221",  # Medisch specialisten incl. plastische chirurgie (hoofdcode voor klinieken)
+            "86919",  # Overige paramedische praktijken (voor huidtherapeuten)
+            "86912",  # Oefentherapeuten (soms huidtherapeuten ook hier)
+            "96040",  # Lichamelijk welzijn (sauna, solaria, wellness)
+            "96099",  # Overige persoonlijke dienstverlening (PMU, wimpers vaak hier)
+            "86230",  # Tandartsen (voor cosmetische tandheelkunde)
+        ],
+        "sbi_codes_notes": {
+            "96022": "Hoofdcode schoonheidsverzorging. Exclusief plastische chirurgie en wellness.",
+            "86221": "Medisch specialisten incl. plastisch chirurgen, cosmetisch artsen. "
+                     "Borstvergroting, liposuctie, ooglidcorrectie vallen hier onder.",
+            "86919": "Huidtherapeuten (paramedisch, Wet BIG) staan vaak hier. "
+                     "Let op overlap met alternatieve geneeskunde - disambigueren via keywords.",
+            "86912": "Soms ook huidtherapeuten (inconsistent gecodeerd bij KvK).",
+            "96040": "Sauna, solaria, wellness. Niet-medische beauty.",
+            "96099": "Catch-all. PMU, tattoo, permanente wimpers, nagelstudios vaak hier.",
+            "86230": "Tandartsen. Alleen relevant bij expliciete cosmetische tandheelkunde focus.",
+        },
+        "subcategories": {
+            "injectables_anti_aging": {
+                "label": "Injectables en anti-aging",
+                "lead_keywords": [
+                    "botox kliniek",
+                    "fillers behandeling",
+                    "cosmetische arts",
+                    "anti aging kliniek",
+                    "skinbooster",
+                    "mesotherapie",
+                    "PRP behandeling",
+                ],
+                "disqualifiers": ["ziekenhuis", "spoedeisende hulp"],
+                "icp_signals": [
+                    "botox", "botuline", "filler", "fillers", "hyaluronzuur",
+                    "skinbooster", "biostimulator", "radiesse", "sculptra",
+                    "profhilo", "mesotherapie", "PRP", "vampire facial",
+                    "BIG geregistreerd", "cosmetisch arts",
+                ],
+            },
+            "laser_huidverjonging": {
+                "label": "Laser en huidverjonging",
+                "lead_keywords": [
+                    "laserkliniek huidverjonging",
+                    "IPL behandeling",
+                    "fractional laser",
+                    "morpheus8 behandeling",
+                    "HIFU ultherapy",
+                    "microneedling praktijk",
+                ],
+                "disqualifiers": ["laserontharing only"],
+                "icp_signals": [
+                    "fractional laser", "CO2 laser", "erbium laser", "IPL",
+                    "morpheus8", "HIFU", "ultherapy", "radiofrequentie", "RF microneedling",
+                    "microneedling", "fotorejuvenation", "huidverjonging",
+                ],
+            },
+            "ontharing": {
+                "label": "Ontharing",
+                "lead_keywords": [
+                    "laserontharing kliniek",
+                    "definitieve ontharing",
+                    "IPL ontharing",
+                    "waxing salon",
+                    "sugaring",
+                ],
+                "disqualifiers": [],
+                "icp_signals": [
+                    "laserontharing", "definitieve ontharing", "IPL ontharing",
+                    "elektrische ontharing", "elektrolyse", "waxing", "harsen",
+                    "sugaring", "threading",
+                ],
+            },
+            "medische_huidtherapie": {
+                "label": "Medische huidtherapie",
+                "lead_keywords": [
+                    "huidtherapeut praktijk",
+                    "huidtherapie kliniek",
+                    "acne behandeling huidtherapeut",
+                    "littekenbehandeling",
+                    "oedeemtherapie",
+                ],
+                "disqualifiers": ["schoonheidssalon", "wellness"],
+                "icp_signals": [
+                    "huidtherapeut", "huidtherapie", "NVH", "Nederlandse Vereniging Huidtherapeuten",
+                    "Wet BIG huidtherapie", "paramedisch", "oedeemtherapie",
+                    "acnebehandeling medisch", "littekentherapie", "couperose",
+                    "pigmentstoornissen", "vergoeding huidtherapie",
+                ],
+            },
+            "schoonheidssalons": {
+                "label": "Schoonheidssalons",
+                "lead_keywords": [
+                    "schoonheidssalon",
+                    "gezichtsbehandeling",
+                    "huidverzorging salon",
+                    "hydrafacial",
+                    "peeling salon",
+                ],
+                "disqualifiers": ["huidtherapeut", "medisch", "arts"],
+                "icp_signals": [
+                    "schoonheidsspecialist", "ANBOS", "gezichtsbehandeling",
+                    "hydrafacial", "microdermabrasie", "peeling", "collageen masker",
+                    "huidanalyse", "dagcreme", "nachtcreme",
+                ],
+            },
+            "permanente_cosmetiek": {
+                "label": "Permanente make-up",
+                "lead_keywords": [
+                    "permanente make-up",
+                    "microblading salon",
+                    "PMU wenkbrauwen",
+                    "lip blush",
+                    "powder brows",
+                    "scalp micropigmentation",
+                ],
+                "disqualifiers": ["tattoo shop algemeen"],
+                "icp_signals": [
+                    "PMU", "permanente make up", "microblading", "powder brows",
+                    "lip blush", "eyeliner PMU", "scalp micropigmentation",
+                    "areola tattoo", "paramedische tattoo",
+                ],
+            },
+            "bodycontouring": {
+                "label": "Body contouring",
+                "lead_keywords": [
+                    "cryolipolyse",
+                    "coolsculpting",
+                    "EMsculpt",
+                    "cavitation behandeling",
+                    "endermologie",
+                ],
+                "disqualifiers": [],
+                "icp_signals": [
+                    "cryolipolyse", "coolsculpting", "EMsculpt", "cavitation",
+                    "endermologie", "LPG", "lymfedrainage cosmetisch",
+                    "vetbevriezing", "vetreductie",
+                ],
+            },
+            "nagel_wimper": {
+                "label": "Nagel en wimper",
+                "lead_keywords": [
+                    "nagelstudio",
+                    "wimperextensions salon",
+                    "lashlift",
+                    "browlift",
+                    "henna brows",
+                ],
+                "disqualifiers": [],
+                "icp_signals": [
+                    "nagelstyliste", "gelnagels", "acrylnagels", "wimperextensions",
+                    "lash extensions", "lashlift", "browlift", "henna brows",
+                    "wenkbrauw styling",
+                ],
+            },
+            "cosmetische_tandheelkunde": {
+                "label": "Cosmetische tandheelkunde",
+                "lead_keywords": [
+                    "cosmetische tandarts",
+                    "facings behandeling",
+                    "tanden bleken praktijk",
+                    "invisalign provider",
+                    "composiet bonding",
+                ],
+                "disqualifiers": ["algemeen tandarts", "kindertandarts"],
+                "icp_signals": [
+                    "facings", "veneers", "tanden bleken", "composiet bonding",
+                    "invisalign", "esthetische tandheelkunde", "cosmetische tandheelkunde",
+                    "smile design",
+                ],
+            },
+            "plastisch_chirurgen_esthetisch": {
+                "label": "Plastische chirurgie esthetisch",
+                "lead_keywords": [
+                    "plastisch chirurg kliniek",
+                    "ooglidcorrectie",
+                    "neuscorrectie",
+                    "borstvergroting",
+                    "liposuctie kliniek",
+                    "buikwandcorrectie",
+                ],
+                "disqualifiers": ["reconstructieve chirurgie only", "handchirurgie"],
+                "icp_signals": [
+                    "plastisch chirurg", "cosmetisch chirurg", "NVPC",
+                    "ooglidcorrectie", "blepharoplastiek", "neuscorrectie", "rhinoplastiek",
+                    "borstvergroting", "borstverkleining", "mammaplastiek", "liposuctie",
+                    "liposculptuur", "buikwandcorrectie", "facelift",
+                    "ZKN keurmerk", "ZBC", "zelfstandig behandelcentrum",
+                ],
+            },
+            "haartransplantatie": {
+                "label": "Haartransplantatie",
+                "lead_keywords": [
+                    "haartransplantatie kliniek",
+                    "FUE haartransplantatie",
+                    "PRP haarbehandeling",
+                    "baardimplantaat",
+                ],
+                "disqualifiers": [],
+                "icp_signals": [
+                    "haartransplantatie", "FUE", "DHI", "PRP haar",
+                    "baardtransplantatie", "wenkbrauwtransplantatie",
+                    "haarverlies behandeling",
+                ],
+            },
+        },
+        "lead_keywords": [
+            "cosmetische kliniek",
+            "beauty kliniek",
+            "huidkliniek",
+            "esthetische kliniek",
+        ],
+        "disqualifiers": [
+            "ziekenhuis", "UMC", "academisch medisch centrum",
+            "spoedeisende hulp", "SEH",
+            "dermatologie vergoed",  # puur medische dermatologie zonder cosmetische focus
+            "oncologie", "kinderkliniek",
+        ],
+        "website_signals": {
+            "positive": [
+                "ZKN keurmerk", "NVCG", "NVPC", "NVH",  # beroepsverenigingen
+                "BIG nummer", "BIG geregistreerd", "cosmetisch arts",
+                "voor en na foto", "behandelresultaten", "consultatie gratis",
+                "online afspraak", "whatsapp contact",
+                "CE gecertificeerd", "FDA approved",
+                "garantie", "nazorg",
+                "financiering", "iDEAL", "klarna",
+            ],
+            "negative": [
+                "prijzen op aanvraag only",  # geen transparantie
+                "geen BIG",
+            ],
+        },
+        "notes": (
+            "Grote spread in deze sector: van solo schoonheidssalon (96022) tot plastische "
+            "chirurgie kliniek (86221). Subcategorieen zijn belangrijker dan SBI codes voor "
+            "ICP matching. Huidtherapeuten zitten in 86919/86912 en overlappen met "
+            "alternatieve_geneeskunde - classificeer op basis van website content, niet SBI. "
+            "GEEN aannames over budget of dealwaarde per subcategorie tot feedback data "
+            "dit valideert."
         ),
-        "countries": ["NL", "BE"],
-
-        "search_queries": [
-            "botox kliniek {city}",
-            "filler kliniek {city}",
-            "laserkliniek {city}",
-            "huidtherapeut {city}",
-            "huidtherapie praktijk {city}",
-            "permanente make-up {city}",
-            "microblading {city}",
-            "schoonheidssalon {city}",
-            "schoonheidsspecialiste {city}",
-            "gezichtsbehandeling {city}",
-            "cosmetische kliniek {city}",
-            "anti-aging behandeling {city}",
-            "ontharing laser {city}",
-            "waxing salon {city}",
-            "huidkliniek {city}",
-            "medisch esthetiek {city}",
-            "microneedling {city}",
-        ],
-
-        "directory_urls": [
-            "https://www.beautynetwerk.nl/klinieken/{city}",
-            "https://www.treatwell.nl/{city}/",
-            "https://www.beautysalon.nl/zoeken/{city}",
-        ],
-
-        "kvk_sbi_codes": ["86.21", "96.02", "96.01", "96.09"],
-
-        "icp_keywords": [
-            "botox", "filler", "hyaluronzuur", "laser", "huidtherapie",
-            "huidtherapeut", "schoonheidsbehandeling", "schoonheidssalon",
-            "anti-aging", "cosmetisch", "esthetiek", "kliniek",
-            "permanente make-up", "microblading", "ontharing",
-            "microneedling", "peeling", "gezichtsbehandeling",
-            "huidverjonging", "rejuvenation", "waxing", "epilatie",
-            "dermapen", "BB glow", "lash lift", "wimperextensions",
-            "medisch verantwoord", "behandelplan",
-        ],
-
-        "exclude_keywords": [
-            "ziekenhuis", "plastisch chirurg groot", "keten landelijk",
-            "drogisterij", "supermarkt", "apotheek keten",
-            "kapper", "barbershop", "nagelgroothandel",
-        ],
-
-        "scoring_boosts": {
-            "has_instagram": 5,
-            "has_before_after_gallery": 4,
-            "has_instagram_feed_embed": 3,
-            "has_online_booking": 4,
-            "kvk_sbi_match": 5,
-            "google_rating_above_4_5": 3,
-            "has_treatwell_profile": 3,
-        },
-
-        "sector_website_expectations": {
-            "must_have": [
-                {"key": "has_treatment_menu", "points": 5,
-                 "label": "Behandelmenu met prijzen of prijsindicatie"},
-                {"key": "has_certifications_visible", "points": 5,
-                 "label": "Certificaten / BIG-registratie / medische kwalificaties"},
-                {"key": "has_social_proof", "points": 5,
-                 "label": "Reviews, testimonials of voor/na foto's"},
-            ],
-            "should_have": [
-                {"key": "has_before_after_gallery", "bonus_points": 3,
-                 "label": "Voor/na galerij met resultaten"},
-                {"key": "has_instagram_feed_embed", "bonus_points": 3,
-                 "label": "Geëmbedde Instagram feed of link"},
-            ],
-            "nice_to_have": [
-                {"key": "has_team_page", "label": "Teamspagina met behandelaars"},
-                {"key": "has_video", "label": "Behandelingsvideo of clinic tour"},
-                {"key": "has_faq", "label": "FAQ over behandelingen"},
-                {"key": "has_online_booking", "label": "Online booking systeem"},
-            ],
-        },
-
-        "decision_maker_titles": [
-            "eigenaar", "oprichter", "kliniekhoudster", "kliniekhouder",
-            "directeur", "salon eigenaar", "schoonheidsspecialiste",
-            "huidtherapeut", "behandelaar",
-        ],
-        "typical_company_size": "1-10",
-    },
-
-    # =========================================================================
-    # Sector: Bouwbedrijven
-    # Construction companies, contractors, renovation firms.
-    # Range from 1-person ZZP-ers to 50+ person firms.
-    # Decision-maker varies: ZZP = owner, larger = directeur / hoofd commercie.
-    # =========================================================================
-    "bouwbedrijven": {
-        "name": "Bouwbedrijven",
-        "description": (
-            "Aannemers, bouwbedrijven, renovatiebedrijven, dakdekkers, "
-            "timmerbedrijven, klusbedrijven, installatietechniek, "
-            "schildersbedrijven, verbouwingsspecialisten."
-        ),
-        "countries": ["NL", "BE"],
-
-        "search_queries": [
-            "aannemer {city}",
-            "bouwbedrijf {city}",
-            "verbouwing {city}",
-            "renovatie aannemer {city}",
-            "dakdekker {city}",
-            "klusbedrijf {city}",
-            "timmerman {city}",
-            "schildersbedrijf {city}",
-            "installatiebedrijf {city}",
-            "badkamer verbouwen {city}",
-            "keuken verbouwen {city}",
-            "aanbouw {city}",
-        ],
-
-        "directory_urls": [
-            "https://www.werkspot.nl/vakmannen/{city}",
-            "https://www.bouwend-nederland.nl/leden?plaats={city}",
-            "https://www.thuisvakman.nl/{city}",
-        ],
-
-        "kvk_sbi_codes": [
-            "41.20",  # Algemene burgerlijke en utiliteitsbouw
-            "43.11",  # Slopen van bouwwerken
-            "43.12",  # Grondverzet
-            "43.21",  # Elektrotechnische bouwinstallatie
-            "43.22",  # Loodgieters- en fitterswerk
-            "43.29",  # Overige bouwinstallatie
-            "43.31",  # Stukadoorswerk
-            "43.32",  # Schrijnwerk
-            "43.34",  # Schilderen en glaszetten
-            "43.91",  # Dakdekken en dakbewerking
-            "43.99",  # Overige gespecialiseerde bouw
-        ],
-
-        "icp_keywords": [
-            "aannemer", "bouwbedrijf", "verbouwing", "renovatie", "nieuwbouw",
-            "dakdekker", "timmerman", "schilder", "installateur", "loodgieter",
-            "klusjesman", "aanbouw", "opbouw", "badkamer", "keuken",
-            "kozijnen", "isolatie", "fundering", "metselwerk", "stucwerk",
-            "Bouwend Nederland", "Techniek Nederland", "vakmanschap",
-        ],
-
-        "exclude_keywords": [
-            "woningcorporatie", "infra", "waterstaat",
-            "grond- weg- en waterbouw", "baggerbedrijf", "offshore",
-            "industriebouw groot", "projectontwikkelaar",
-        ],
-
-        "scoring_boosts": {
-            "has_project_portfolio": 4,
-            "has_werkspot_profile": 3,
-            "has_bouwend_nl_lid": 5,
-            "has_client_reviews": 3,
-            "kvk_sbi_match": 5,
-            "google_rating_above_4_5": 3,
-            "has_before_after_gallery": 3,
-        },
-
-        "sector_website_expectations": {
-            "must_have": [
-                {"key": "has_project_portfolio", "points": 5,
-                 "label": "Projecten / portfolio met foto's"},
-                {"key": "has_services_listed", "points": 5,
-                 "label": "Diensten / specialisaties duidelijk vermeld"},
-                {"key": "has_contact_info_visible", "points": 5,
-                 "label": "Contactgegevens duidelijk zichtbaar (telefoon, email)"},
-            ],
-            "should_have": [
-                {"key": "has_client_reviews", "bonus_points": 3,
-                 "label": "Klantbeoordelingen / referenties"},
-                {"key": "has_before_after_gallery", "bonus_points": 3,
-                 "label": "Voor/na foto's van projecten"},
-            ],
-            "nice_to_have": [
-                {"key": "has_certifications", "label": "Certificeringen (Bouwgarant, VCA, Keurmerk)"},
-                {"key": "has_team_page", "label": "Teampagina met vaklui"},
-                {"key": "has_quote_form", "label": "Offerte aanvraagformulier"},
-                {"key": "has_blog_or_news", "label": "Blog of projectupdates"},
-            ],
-        },
-
-        "decision_maker_titles": [
-            "eigenaar", "directeur", "oprichter", "bedrijfsleider",
-            "hoofd commercie", "projectleider", "uitvoerder",
-            "managing director", "DGA",
-        ],
-        "typical_company_size": "1-50",
     },
 }
 
 
-def get_sector(sector_key: str) -> dict:
-    """Return the full config dict for a sector key.
-
-    Args:
-        sector_key: Sector identifier string, e.g. 'makelaars'.
-
-    Returns:
-        Sector configuration dict.
-
-    Raises:
-        ValueError: If sector_key is not found in SECTORS.
-    """
+def get_sector(sector_key: str) -> SectorConfig:
+    """Haal een sector config op."""
     if sector_key not in SECTORS:
-        available = ", ".join(SECTORS.keys())
-        raise ValueError(
-            f"Unknown sector '{sector_key}'. Available sectors: {available}"
-        )
+        raise ValueError(f"Onbekende sector: {sector_key}. Beschikbaar: {list(SECTORS.keys())}")
     return SECTORS[sector_key]
 
 
-def list_sectors() -> list[str]:
-    """Return all active sector keys.
+def get_all_sbi_codes(sector_key: str) -> list[str]:
+    """Alle SBI codes voor een sector, voor KvK filtering."""
+    return get_sector(sector_key)["sbi_codes"]
 
-    Returns:
-        List of sector key strings (e.g. ['makelaars', 'behandelaren', 'bouwbedrijven']).
+
+def get_subcategory_keywords(sector_key: str, subcategory_key: str) -> list[str]:
+    """Lead keywords voor een specifieke subcategorie, voor Google Maps scraping."""
+    sector = get_sector(sector_key)
+    if subcategory_key not in sector["subcategories"]:
+        raise ValueError(
+            f"Onbekende subcategorie {subcategory_key} voor {sector_key}. "
+            f"Beschikbaar: {list(sector['subcategories'].keys())}"
+        )
+    return sector["subcategories"][subcategory_key]["lead_keywords"]
+
+
+def classify_subcategory(sector_key: str, website_text: str) -> str | None:
     """
+    Classificeer een lead in een subcategorie op basis van website tekst.
+    Eenvoudige keyword matching - telt icp_signals hits per subcategorie.
+    Returns subcategorie key of None als geen duidelijke match.
+
+    Let op: dit is een simpele implementatie. Voor productie overweeg Claude Haiku
+    voor betere classificatie (zie classify_subcategory_with_claude in
+    website_intelligence/opportunity_classifier.py).
+    """
+    sector = get_sector(sector_key)
+    text_lower = website_text.lower()
+
+    scores: dict[str, int] = {}
+    for subcat_key, subcat in sector["subcategories"].items():
+        score = 0
+        # Positieve signalen
+        for signal in subcat["icp_signals"]:
+            if signal.lower() in text_lower:
+                score += 1
+        # Disqualifiers aftrekken
+        for disq in subcat["disqualifiers"]:
+            if disq.lower() in text_lower:
+                score -= 2
+        scores[subcat_key] = score
+
+    # Alleen teruggeven bij duidelijke winnaar (min 2 hits, en minimaal 2 hoger dan #2)
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    if not sorted_scores or sorted_scores[0][1] < 2:
+        return None
+    if len(sorted_scores) >= 2 and sorted_scores[0][1] - sorted_scores[1][1] < 2:
+        return None
+    return sorted_scores[0][0]
+
+
+def list_sectors() -> list[str]:
+    """Return all active sector keys."""
     return list(SECTORS.keys())
