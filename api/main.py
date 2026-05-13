@@ -879,6 +879,326 @@ async def analytics_website(
 
 
 # =============================================================================
+# COST CONTROLS — PR3 (Warmr v1.0 enrichment cost monitoring)
+# =============================================================================
+
+@app.get("/analytics/enrichment-cost")
+async def analytics_enrichment_cost(
+    days: int = 7,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Enrichment spend overview — cost_guard burn-rate dashboard.
+
+    Reads heatr_api_cost_log. Returns:
+      - today_eur: vandaag tot nu
+      - daily_budget_eur: current cap (env ENRICHMENT_DAILY_BUDGET_EUR)
+      - budget_remaining_eur: cap - today_eur (0 als overschreden)
+      - budget_pct_used: 0..100
+      - window_eur: som over ?days=7 (default)
+      - by_context: {context: eur} per enrichment-stap
+      - block_events: aantal 'BLOCKED:*' entries in window
+    """
+    from datetime import datetime, timezone, timedelta
+    from utils.cost_guard import _daily_budget_eur, check_monthly_budget
+
+    today = datetime.now(timezone.utc).date()
+    today_start = f"{today.isoformat()}T00:00:00+00:00"
+    window_start = (today - timedelta(days=max(days - 1, 0))).isoformat() + "T00:00:00+00:00"
+    month_start = today.replace(day=1).isoformat() + "T00:00:00+00:00"
+
+    try:
+        today_rows = db.table("api_cost_log").select("cost_eur, context").eq("workspace_id", workspace_id).gte("created_at", today_start).execute().data or []
+    except Exception:
+        today_rows = []
+    try:
+        window_rows = db.table("api_cost_log").select("cost_eur, context, created_at").eq("workspace_id", workspace_id).gte("created_at", window_start).execute().data or []
+    except Exception:
+        window_rows = []
+
+    today_eur = sum(float(r.get("cost_eur") or 0) for r in today_rows)
+    window_eur = sum(float(r.get("cost_eur") or 0) for r in window_rows)
+
+    by_context: dict[str, float] = {}
+    for r in window_rows:
+        ctx = (r.get("context") or "").split(":", 1)[0] or "unknown"
+        by_context[ctx] = by_context.get(ctx, 0.0) + float(r.get("cost_eur") or 0)
+
+    block_events = sum(
+        1 for r in window_rows if (r.get("context") or "").startswith("BLOCKED:")
+    )
+
+    cap = _daily_budget_eur()
+    remaining = max(cap - today_eur, 0.0)
+    pct = round((today_eur / cap * 100) if cap > 0 else 0, 1)
+
+    # Monthly spend + budget + 50%-approval-check
+    try:
+        month_rows = db.table("api_cost_log").select("cost_eur").eq("workspace_id", workspace_id).gte("created_at", month_start).execute().data or []
+        month_eur = sum(float(r.get("cost_eur") or 0) for r in month_rows)
+    except Exception:
+        month_eur = 0.0
+    monthly_status = await check_monthly_budget(workspace_id, db)
+
+    return {
+        "today_eur": round(today_eur, 6),
+        "daily_budget_eur": cap,
+        "budget_remaining_eur": round(remaining, 6),
+        "budget_pct_used": pct,
+        "budget_warning": pct >= 80,
+        "window_days": days,
+        "window_eur": round(window_eur, 6),
+        "month_eur": round(month_eur, 6),
+        "monthly_budget_eur": monthly_status["monthly_budget_eur"],
+        "monthly_base_eur": monthly_status.get("monthly_base_eur"),
+        "monthly_override_eur": monthly_status.get("monthly_override_eur", 0.0),
+        "override_info": monthly_status.get("override_info") or None,
+        "month_pct_used": monthly_status["pct_used"],
+        "month_remaining_eur": round(max(monthly_status["monthly_budget_eur"] - monthly_status["month_eur"], 0), 6),
+        "tier_50_hit": monthly_status["tier_50_hit"],
+        "tier_100_hit": monthly_status["tier_100_hit"],
+        "approved_over_50": monthly_status["approved_over_50"],
+        "enrichment_allowed": monthly_status["allowed"],
+        "approval_required": monthly_status["tier_50_hit"] and not monthly_status["approved_over_50"] and not monthly_status["tier_100_hit"],
+        "block_reason": monthly_status["block_reason"],
+        "by_context": {k: round(v, 6) for k, v in sorted(by_context.items(), key=lambda kv: -kv[1])},
+        "block_events_in_window": block_events,
+    }
+
+
+@app.post("/analytics/enrichment-approve-continue")
+async def analytics_approve_continue(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """User klikt 'doorgaan' na 50% monthly budget waarschuwing.
+
+    Zet approval-flag in heatr_system_state met TTL = einde huidige maand.
+    Na deze call mag enrichment doordraaien tot 100% monthly budget (hard stop).
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    # End of month
+    if now.month == 12:
+        end_of_month = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        end_of_month = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    try:
+        db.table("system_state").upsert({
+            "key": f"enrichment_approved_over_50:{workspace_id}",
+            "value": {"approved_at": now.isoformat(), "by": "user"},
+            "expires_at": end_of_month.isoformat(),
+            "updated_at": now.isoformat(),
+        }, on_conflict="key").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save approval: {e}")
+
+    return {"approved": True, "expires_at": end_of_month.isoformat(), "message": "Enrichment doorgaan tot 100% monthly cap bereikt is."}
+
+
+@app.post("/analytics/enrichment-raise-monthly-cap")
+async def analytics_raise_monthly_cap(
+    body: dict,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """User klikt 'verhoog maand-budget met €X' op hard-stop banner.
+
+    body: {"extra_eur": float}  — hoeveel euro extra boven de base cap.
+    TTL = einde huidige maand (next month reset).
+    Cumulatief bij herhaalde calls: nieuwe extra_eur vervangt oude.
+    """
+    from datetime import datetime, timezone
+    try:
+        extra = float(body.get("extra_eur", 0))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="extra_eur moet een getal zijn")
+    if extra <= 0 or extra > 500:
+        raise HTTPException(status_code=400, detail="extra_eur moet tussen €0.01 en €500 liggen")
+
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        end_of_month = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        end_of_month = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    try:
+        db.table("system_state").upsert({
+            "key": f"enrichment_monthly_override:{workspace_id}",
+            "value": {"extra_eur": extra, "approved_at": now.isoformat(), "by": "user"},
+            "expires_at": end_of_month.isoformat(),
+            "updated_at": now.isoformat(),
+        }, on_conflict="key").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save override: {e}")
+
+    return {
+        "extra_eur": extra,
+        "expires_at": end_of_month.isoformat(),
+        "message": f"Maand-budget verhoogd met €{extra:.2f} tot einde maand. Enrichment mag doorgaan.",
+    }
+
+
+@app.post("/analytics/enrichment-pause")
+async def analytics_pause_enrichment(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """User kiest om enrichment te stoppen — verwijdert approval-flag.
+
+    Na deze call blokkeert cost_guard opnieuw bij > 50% monthly budget.
+    """
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    try:
+        db.table("system_state").delete().eq("key", f"enrichment_approved_over_50:{workspace_id}").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to pause: {e}")
+    return {"paused": True, "at": now.isoformat(), "message": "Enrichment gepauzeerd. Nieuwe Claude calls worden geblokkeerd tot herstart van de maand."}
+
+
+@app.get("/analytics/cost-attribution")
+async def analytics_cost_attribution(
+    days: int = 30,
+    group_by: str = "archetype",   # 'archetype' | 'sector' | 'context' | 'archetype+sector'
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Cost-attribution per groep over `days` window.
+
+    Joint api_cost_log met leads om per archetype/sector te tonen:
+      - total_cost_eur
+      - lead_count (unieke leads in groep)
+      - cost_per_lead
+      - replies + interested binnen groep
+      - cost_per_reply, cost_per_interested
+    """
+    from datetime import datetime, timezone, timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(days, 1))).isoformat()
+
+    # 1. Cost log binnen window
+    try:
+        cost_res = (
+            db.table("api_cost_log")
+            .select("lead_id, cost_eur, context, created_at")
+            .eq("workspace_id", workspace_id)
+            .gte("created_at", cutoff)
+            .execute()
+        )
+        cost_rows = cost_res.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"cost-attribution fetch failed: {e}")
+
+    if not cost_rows:
+        return {"days": days, "group_by": group_by, "groups": [], "totals": {"cost_eur": 0}}
+
+    lead_ids = list({r["lead_id"] for r in cost_rows if r.get("lead_id")})
+
+    # 2. Lead-metadata
+    lead_meta: dict[str, dict] = {}
+    if lead_ids:
+        try:
+            leads_res = (
+                db.table("leads")
+                .select("id, archetype, sector")
+                .in_("id", lead_ids)
+                .execute()
+            )
+            for l in (leads_res.data or []):
+                lead_meta[l["id"]] = l
+        except Exception:
+            pass
+
+    # 3. Replies → reply-counts per lead
+    reply_lead_ids: set[str] = set()
+    interested_lead_ids: set[str] = set()
+    if lead_ids:
+        try:
+            r_res = (
+                db.table("reply_inbox")
+                .select("lead_id, classification")
+                .in_("lead_id", lead_ids)
+                .eq("workspace_id", workspace_id)
+                .execute()
+            )
+            for row in (r_res.data or []):
+                reply_lead_ids.add(row["lead_id"])
+                if row.get("classification") == "interested":
+                    interested_lead_ids.add(row["lead_id"])
+        except Exception:
+            pass
+
+    # 4. Group-key resolver
+    def _key(lead_id: str | None, context: str | None) -> str:
+        if group_by == "context":
+            return (context or "(none)").split(":", 1)[0]
+        meta = lead_meta.get(lead_id or "", {}) if lead_id else {}
+        if group_by == "archetype":
+            return meta.get("archetype") or "(unknown)"
+        if group_by == "sector":
+            return meta.get("sector") or "(unknown)"
+        if group_by == "archetype+sector":
+            return f"{meta.get('archetype') or '?'} / {meta.get('sector') or '?'}"
+        return "all"
+
+    # 5. Aggregate
+    groups: dict[str, dict] = {}
+    for row in cost_rows:
+        gk = _key(row.get("lead_id"), row.get("context"))
+        g = groups.setdefault(gk, {"group": gk, "cost_eur": 0.0, "call_count": 0, "leads": set(), "replies": 0, "interested": 0})
+        g["cost_eur"] += float(row.get("cost_eur") or 0)
+        g["call_count"] += 1
+        if row.get("lead_id"):
+            g["leads"].add(row["lead_id"])
+
+    # Replies/interested per group
+    for lead_id in reply_lead_ids:
+        gk = _key(lead_id, None)
+        if gk in groups:
+            groups[gk]["replies"] += 1
+    for lead_id in interested_lead_ids:
+        gk = _key(lead_id, None)
+        if gk in groups:
+            groups[gk]["interested"] += 1
+
+    # Finalize
+    out_groups = []
+    for g in groups.values():
+        lead_count = len(g["leads"])
+        cost = round(g["cost_eur"], 4)
+        out_groups.append({
+            "group": g["group"],
+            "cost_eur": cost,
+            "call_count": g["call_count"],
+            "lead_count": lead_count,
+            "replies": g["replies"],
+            "interested": g["interested"],
+            "cost_per_lead_eur": round(cost / lead_count, 4) if lead_count else None,
+            "cost_per_reply_eur": round(cost / g["replies"], 4) if g["replies"] else None,
+            "cost_per_interested_eur": round(cost / g["interested"], 4) if g["interested"] else None,
+        })
+    out_groups.sort(key=lambda x: -x["cost_eur"])
+
+    totals = {
+        "cost_eur": round(sum(r["cost_eur"] for r in out_groups), 4),
+        "call_count": sum(r["call_count"] for r in out_groups),
+        "lead_count": sum(r["lead_count"] for r in out_groups),
+        "replies": sum(r["replies"] for r in out_groups),
+        "interested": sum(r["interested"] for r in out_groups),
+    }
+
+    return {
+        "days": days,
+        "group_by": group_by,
+        "totals": totals,
+        "groups": out_groups,
+    }
+
+
+# =============================================================================
 # SECTORS
 # =============================================================================
 
