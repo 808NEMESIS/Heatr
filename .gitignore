@@ -29,3 +29,7 @@ node_modules/
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Backup files (do not commit)
+.env.bak
+.env.backup-*
