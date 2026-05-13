@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets as _secrets
 from datetime import date, datetime, timezone, timedelta
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+import jwt as _jwt
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -92,17 +94,129 @@ def get_supabase():
 DEFAULT_WORKSPACE = os.getenv("DEFAULT_WORKSPACE_ID", "aerys")
 
 
-async def get_workspace(request: Request) -> str:
-    """Extract workspace_id from Bearer JWT or fall back to default.
+def _service_key_workspace(request: Request) -> str | None:
+    """X-API-Key path — service-to-service (worker, n8n, scripts).
 
-    In production, decode the Supabase JWT and read app_metadata.workspace_id.
-    For MVP simplicity we use DEFAULT_WORKSPACE_ID as the workspace.
+    Constant-time compare against HEATR_API_KEY. Returns DEFAULT_WORKSPACE on match.
+    """
+    incoming = request.headers.get("X-API-Key", "")
+    expected = os.getenv("HEATR_API_KEY", "")
+    if not incoming or not expected or len(expected) < 32:
+        return None
+    if _secrets.compare_digest(incoming, expected):
+        return DEFAULT_WORKSPACE
+    return None
+
+
+def _jwt_workspace(request: Request) -> str | None:
+    """Supabase JWT path — voor browser-clients.
+
+    Decodes Supabase HS256-signed JWT, reads workspace_id from app_metadata.
+    Falls back to DEFAULT_WORKSPACE if claim ontbreekt (single-tenant MVP).
     """
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
-    # MVP: single-workspace, trust any valid-looking token
-    return DEFAULT_WORKSPACE
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    secret = os.getenv("SUPABASE_JWT_SECRET", "")
+    if not secret:
+        return None
+    try:
+        payload = _jwt.decode(
+            token, secret, algorithms=["HS256"], audience="authenticated",
+        )
+    except _jwt.InvalidTokenError:
+        return None
+    app_meta = payload.get("app_metadata") or {}
+    return app_meta.get("workspace_id") or DEFAULT_WORKSPACE
+
+
+def _legacy_dev_token(request: Request) -> str | None:
+    """Migratie-pad: oude `Bearer dev-token` accepteren als LEGACY_DEV_TOKEN_ALLOWED=true.
+
+    Standaard UIT. Zet alleen aan tijdens frontend-cutover (max 24h aanbevolen).
+    """
+    if os.getenv("LEGACY_DEV_TOKEN_ALLOWED", "false").lower() != "true":
+        return None
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:].strip()
+        if token and len(token) >= 5:  # any non-empty string passes
+            return DEFAULT_WORKSPACE
+    return None
+
+
+async def get_workspace(request: Request) -> str:
+    """Resolve workspace_id from request auth.
+
+    Order: X-API-Key (service) → Supabase JWT (browser) → LEGACY (env-gated).
+    No match → 401.
+    """
+    ws = (
+        _service_key_workspace(request)
+        or _jwt_workspace(request)
+        or _legacy_dev_token(request)
+    )
+    if not ws:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Auth failed — provide X-API-Key (service) or valid Supabase Bearer JWT (user)",
+        )
+    return ws
+
+
+async def require_service_key(request: Request) -> str:
+    """Stricter dependency: alleen service-key (X-API-Key) accepteren.
+
+    Gebruik op endpoints die geen browser-toegang horen te hebben (campagne-launch,
+    bulk-deletes, system-overrides). Browser-JWTs worden hier geweigerd.
+    """
+    ws = _service_key_workspace(request)
+    if not ws:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Service-only endpoint — vereist X-API-Key header met geldig HEATR_API_KEY",
+        )
+    return ws
+
+
+def identify_principal(request: Request) -> dict[str, str]:
+    """Inspect request en return wie deze actie uitvoert.
+
+    Used voor audit-log van campagne-launches en andere gevoelige acties.
+    Returns: {created_by, created_via, request_ip}
+    """
+    # IP — eerste van X-Forwarded-For, anders client.host
+    ip = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or (
+        request.client.host if request.client else ""
+    )
+
+    # Service-key path
+    if request.headers.get("X-API-Key"):
+        # Optionele service-naming via X-Service-Name header
+        service = request.headers.get("X-Service-Name", "default")
+        return {"created_by": f"service:{service}", "created_via": "service_key", "request_ip": ip}
+
+    # JWT path
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:].strip()
+        secret = os.getenv("SUPABASE_JWT_SECRET", "")
+        if secret and token != "dev-token":
+            try:
+                payload = _jwt.decode(
+                    token, secret, algorithms=["HS256"], audience="authenticated",
+                )
+                email = payload.get("email") or payload.get("sub") or "unknown"
+                return {"created_by": f"user:{email}", "created_via": "user_jwt", "request_ip": ip}
+            except _jwt.InvalidTokenError:
+                pass
+        # Legacy fallback
+        return {"created_by": "legacy_dev", "created_via": "legacy_dev", "request_ip": ip}
+
+    return {"created_by": "unknown", "created_via": "unknown", "request_ip": ip}
 
 
 # =============================================================================

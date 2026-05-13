@@ -134,7 +134,7 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your_service_role_key
 SUPABASE_STORAGE_BUCKET=screenshots
 ANTHROPIC_API_KEY=sk-ant-...
-KVK_API_KEY=your_kvk_api_key
+KVK_API_KEY=                                    # OPT-IN: KvK API kost €6.40/m + €0.02/call. Default UIT.
 WARMR_API_URL=https://your-warmr.com/api/v1
 WARMR_API_KEY=your_warmr_api_key
 WARMR_WEBHOOK_SECRET=your_hmac_secret
@@ -159,7 +159,25 @@ MIN_WEBSITE_SCORE_FOR_OPPORTUNITY=50
 AUTO_PUSH_TO_WARMR=false
 GDPR_MODE=strict
 DEFAULT_WORKSPACE_ID=aerys
+HEATR_API_KEY=<random 48+ char string>          # Service-to-service auth (worker, n8n, scripts)
+SUPABASE_JWT_SECRET=<from Supabase project>     # Browser auth (Supabase JWT decode)
+LEGACY_DEV_TOKEN_ALLOWED=false                  # Tijdelijk "true" tijdens frontend-cutover
+ENABLE_CAMPAIGN_SENDS=false                     # Master kill-switch — geen sends tot expliciet aan
 ```
+
+---
+
+## Auth model
+
+Twee paden, geen "valid-looking" toleranties:
+
+| Caller | Header | Geldig wanneer |
+|---|---|---|
+| Service (worker, n8n, scripts) | `X-API-Key: <HEATR_API_KEY>` | Constant-time match met env-var |
+| Browser (frontend-next) | `Authorization: Bearer <Supabase JWT>` | HS256-decode tegen `SUPABASE_JWT_SECRET`, audience=authenticated |
+| Legacy cutover | `Authorization: Bearer dev-token` | Alleen als `LEGACY_DEV_TOKEN_ALLOWED=true` |
+
+Endpoints met `Depends(require_service_key)` ipv `get_workspace` accepteren ALLEEN `X-API-Key` — browser-JWTs worden geweigerd. Voorbeeld: `POST /campaigns/launch` (sends mogen nooit per ongeluk via browser).
 
 ---
 
@@ -184,8 +202,9 @@ Stap 3 — Google Search fallback
   Regex over snippets en titels
   Gevonden + geverifieerd → klaar | Niet gevonden → stap 4
 
-Stap 4 — KvK fallback (alleen NL)
-  Correspondentieadres heeft soms email
+Stap 4 — KvK fallback (OPT-IN, alleen NL)
+  Vereist KVK_API_KEY env-var. Default UIT (KvK API: €6.40/m + €0.02/call).
+  Wanneer aan: correspondentieadres heeft soms email.
   Gevonden → klaar | Niet gevonden → stap 5
 
 Stap 5 — Markeer als not_found

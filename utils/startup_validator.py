@@ -87,6 +87,24 @@ async def validate_startup(supabase_client=None) -> StartupResult:
             detail="HEATR_API_KEY ontbreekt of is korter dan 32 tekens — stel in als veilige random string",
         ))
 
+    # KVK_API_KEY is OPTIONEEL en bewust niet in default enrichment-types.
+    # KvK API is betaald (€6.40/m abonnement + €0.02/call voor SBI-detail).
+    # Heatr werkt zonder via Google Maps + website-scrape. Alleen als KVK_API_KEY
+    # gezet is + 'kvk' expliciet in custom enrichment_types meegegeven wordt,
+    # draait de step. Geen warning meer — KvK-skip is intentional.
+    if os.getenv("KVK_API_KEY"):
+        result.add(StartupCheck("KVK_API_KEY (optional)", True))
+
+    # PAGESPEED_API_KEY ook warning-only — zonder deze faalt website-tech-score
+    pagespeed_key = os.getenv("PAGESPEED_API_KEY", "")
+    if pagespeed_key:
+        result.add(StartupCheck("PAGESPEED_API_KEY", True))
+    else:
+        result.add(StartupCheck(
+            "PAGESPEED_API_KEY", False, warning=True,
+            detail="PAGESPEED_API_KEY ontbreekt — Pagespeed-checks worden overgeslagen in website-intelligence (gratis via Google Cloud Console).",
+        ))
+
     # Bail early if core env vars missing — no point continuing
     if result.failures:
         _log_to_supabase_sync(result, supabase_client)

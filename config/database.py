@@ -32,7 +32,15 @@ _HEATR_TABLES = {
     "lead_campaign_history", "lead_timeline", "crm_tasks", "crm_deals",
     "reply_inbox", "blocked_sends", "system_alerts", "gdpr_log", "daily_metrics",
     "startup_log", "claude_cache", "api_cost_log", "competitor_cache",
-    "lead_discovery_schedules", "lead_outreach_snapshots",
+    "lead_discovery_schedules", "lead_outreach_snapshots", "rate_limit_state",
+    # Added by APPLY_ME_IN_SUPABASE.sql migration
+    "domain_age_cache", "meta_ads_cache", "vision_cache", "system_state",
+    # Feedback loop (migration 012)
+    "feedback_runs",
+    # Campaign audit-trail (migration 013)
+    "campaigns",
+    # Import idempotency (migration 016)
+    "import_runs",
 }
 
 
