@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+/* ── Heatr design tokens — warm blush/ivory + editorial Fraunces ──────── */
+@theme {
+  /* Fonts */
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+
+  /* Warm palette (stone/ivory/blush) */
+  --color-ivory-50:  #fdfbf7;
+  --color-ivory-100: #f9f4ec;
+  --color-ivory-200: #f3ece1;
+
+  --color-stone-50:  #faf6ef;
+  --color-stone-100: #ebe2d4;
+  --color-stone-200: #d8cab3;
+  --color-stone-300: #b7a48a;
+  --color-stone-400: #8b7a64;
+  --color-stone-500: #6b6560;
+  --color-stone-600: #4a4540;
+  --color-stone-700: #2e2a26;
+  --color-stone-800: #1f1a15;
+
+  --color-blush-50:  #fef8f3;
+  --color-blush-100: #fef3e9;
+  --color-blush-200: #fcdcc5;
+  --color-blush-400: #e0926b;
+  --color-blush-500: #c45d34;
+  --color-blush-600: #a94a26;
+  --color-blush-700: #8a3b1e;
+
+  /* Semantic */
+  --color-success: #047857;
+  --color-success-bg: #dcfce7;
+  --color-warning: #b45309;
+  --color-warning-bg: #fef3c7;
+  --color-danger: #dc2626;
+  --color-danger-bg: #fee2e2;
+  --color-info: #2563eb;
+  --color-info-bg: #dbeafe;
+
+  /* shadcn token mapping */
+  --color-background: var(--color-ivory-50);
+  --color-foreground: var(--color-stone-800);
+  --color-card: #ffffff;
+  --color-card-foreground: var(--color-stone-800);
+  --color-popover: #ffffff;
+  --color-popover-foreground: var(--color-stone-800);
+  --color-primary: var(--color-blush-500);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--color-ivory-200);
+  --color-secondary-foreground: var(--color-stone-800);
+  --color-muted: var(--color-stone-50);
+  --color-muted-foreground: var(--color-stone-500);
+  --color-accent: var(--color-blush-100);
+  --color-accent-foreground: var(--color-blush-700);
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--color-stone-100);
+  --color-input: var(--color-stone-100);
+  --color-ring: var(--color-blush-400);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html { font-family: var(--font-sans); }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3 { font-family: var(--font-display); letter-spacing: -0.02em; }
+  code, pre, .mono { font-family: var(--font-mono); }
+}
+
+/* Shimmer skeleton */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--color-ivory-200) 25%, var(--color-ivory-50) 50%, var(--color-ivory-200) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+/* Pulse dot for live indicators */
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.pulse-dot { animation: pulse-dot 1.3s ease-in-out infinite; }
+
