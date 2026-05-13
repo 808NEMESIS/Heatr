@@ -226,6 +226,8 @@ def identify_principal(request: Request) -> dict[str, str]:
 class SearchRequest(BaseModel):
     sector: str
     city: str
+    subcategory_keys: list[str] = []                # ['injectables_anti_aging', 'huidtherapie', ...]
+    custom_query: str | None = None                  # override → 1 job met deze exact query
     max_results: int = 60
     sources: dict[str, bool] = Field(default_factory=lambda: {"google_maps": True, "directories": True})
 
@@ -257,7 +259,8 @@ class LeadPatch(BaseModel):
 class CampaignLaunchRequest(BaseModel):
     name: str
     lead_ids: list[str]
-    sequence: list[dict]
+    sequence: list[dict] = []  # leeg = AUTO mode: per-lead pick_brug() → v3.1 brug-template
+    template_id: str | None = None  # v3_1_* forceert single brug; v1-IDs worden server-side naar v3.1 ge-rerouted
     inbox_ids: list[str]
 
 
@@ -329,18 +332,116 @@ async def start_search(
     workspace_id: str = Depends(get_workspace),
     db: Client = Depends(get_supabase),
 ) -> dict:
-    """Start a scraping job for a sector + city combination."""
-    from job_queue.scraping_queue import create_scraping_job  # lazy import
+    """Start scraping job(s) voor een sector+stad combinatie.
 
-    job_id = await create_scraping_job(
-        db=db,
-        workspace_id=workspace_id,
-        sector=body.sector,
-        city=body.city,
-        max_results=body.max_results,
-        sources=body.sources,
-    )
-    return {"job_id": job_id, "status": "pending"}
+    Drie modes (eerste die past wint):
+      1. `custom_query` → 1 job met die exact query
+      2. `subcategory_keys` → N jobs, één per subcategorie (eerste keyword als query)
+      3. Geen van beide → 1 job met sector-label als query (legacy gedrag)
+
+    Per job: dedupe op (sector, query, city, source) binnen 7 dagen.
+    Returns: {jobs: [{job_id, query, source}, ...], total_jobs, planned_lead_volume}
+    """
+    from job_queue.scraping_queue import create_scraping_job
+    from config.sectors import get_sector, get_subcategory_keywords
+
+    # 1. Build de lijst (query, sector_key) tuples
+    queries: list[tuple[str, str]] = []  # (query, sub_key_or_empty)
+
+    if body.custom_query and body.custom_query.strip():
+        queries.append((body.custom_query.strip(), ""))
+    elif body.subcategory_keys:
+        try:
+            sector_cfg = get_sector(body.sector)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        for sub_key in body.subcategory_keys:
+            if sub_key not in sector_cfg["subcategories"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Subcategorie '{sub_key}' bestaat niet voor sector '{body.sector}'",
+                )
+            keywords = get_subcategory_keywords(body.sector, sub_key)
+            if not keywords:
+                continue
+            # Eerste keyword = beste signaal (meest specifiek). Combineer NIET — dat
+            # geeft slechtere Google Maps hits dan één scherpe term.
+            queries.append((keywords[0], sub_key))
+    else:
+        # Legacy: sector-label only
+        try:
+            sector_cfg = get_sector(body.sector)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        queries.append((sector_cfg["label"].lower(), ""))
+
+    if not queries:
+        raise HTTPException(status_code=422, detail="Geen geldige zoekopdracht — kies subcategorie of vul custom_query")
+
+    # 2. Build sources list
+    enabled_sources: list[str] = []
+    if body.sources.get("google_maps", True):
+        enabled_sources.append("google_maps")
+    if body.sources.get("directories"):
+        enabled_sources.append("directory")
+    if not enabled_sources:
+        enabled_sources = ["google_maps"]
+
+    # 3. Fan-out: één job per (query × source)
+    jobs_created: list[dict] = []
+    for query, sub_key in queries:
+        for source in enabled_sources:
+            try:
+                job_id = await create_scraping_job(
+                    job_type=source,
+                    sector_key=body.sector,
+                    query=query,
+                    location=body.city,
+                    country="NL",
+                    workspace_id=workspace_id,
+                    supabase_client=db,
+                )
+                jobs_created.append({
+                    "job_id": job_id,
+                    "query": query,
+                    "subcategory": sub_key or None,
+                    "source": source,
+                })
+            except Exception as e:
+                logger.warning("create_scraping_job failed for %r/%s: %s", query, source, e)
+
+    return {
+        "jobs": jobs_created,
+        "total_jobs": len(jobs_created),
+        "planned_lead_volume_estimate": len(jobs_created) * body.max_results,
+    }
+
+
+@app.get("/sectors/full")
+async def list_sectors_full() -> dict:
+    """Return rich sector taxonomy met subcategorieën + voorbeeld keywords.
+
+    Frontend gebruikt dit om de zoek-UI te bouwen (sector dropdown + multi-select
+    subcategorieën + live query-preview).
+    """
+    from config.sectors import SECTORS
+    out = []
+    for key, cfg in SECTORS.items():
+        subs = []
+        for sub_key, sub_cfg in (cfg.get("subcategories") or {}).items():
+            keywords = sub_cfg.get("lead_keywords") or []
+            subs.append({
+                "key": sub_key,
+                "label": sub_cfg.get("label") or sub_key,
+                "primary_keyword": keywords[0] if keywords else "",
+                "all_keywords": keywords[:6],   # cap voor UI tooltip
+            })
+        out.append({
+            "key": key,
+            "label": cfg.get("label") or key,
+            "subcategories": subs,
+        })
+    return {"sectors": out}
 
 
 @app.get("/jobs/{job_id}")
@@ -563,6 +664,51 @@ async def send_review_email(
     return {"ok": True, **email_data}
 
 
+@app.get("/leads/{lead_id}/thread")
+async def lead_email_thread(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Chronologisch email-thread voor één lead.
+
+    Mergt verstuurde mails (uit lead_timeline + lead_campaign_history) met
+    ontvangen replies (uit reply_inbox). Returns array sorted oudste-eerst.
+    Faalt-tolerant: missende tabellen geven lege thread terug.
+    """
+    from utils.lead_thread import build_lead_thread
+    return await build_lead_thread(lead_id, workspace_id, db)
+
+
+@app.post("/leads/{lead_id}/test-mode")
+async def toggle_test_mode(
+    lead_id: str,
+    body: dict,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Toggle is_test_lead flag op een lead.
+
+    Body: {"is_test_lead": true|false}
+    Test-mode triggers: is_sendable() bypass + BCC naar HEATR_TEST_BCC_EMAIL +
+    [TEST] prefix in subject. Voor smoke-test pipeline zonder risico.
+    """
+    new_value = bool(body.get("is_test_lead"))
+    try:
+        res = (
+            db.table("leads")
+            .update({"is_test_lead": new_value})
+            .eq("id", lead_id)
+            .eq("workspace_id", workspace_id)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"toggle failed: {e}")
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return {"lead_id": lead_id, "is_test_lead": new_value}
+
+
 @app.patch("/leads/{lead_id}/website-review")
 async def patch_website_review(
     lead_id: str,
@@ -588,9 +734,11 @@ async def get_website_opportunities(
     limit = int(params.get("limit", 18))
     offset = int(params.get("offset", 0))
 
+    # Zonder expliciete FK in Supabase kunnen we geen inner-join doen via PostgREST.
+    # Twee-query pattern: eerst WI rows, dan leads batched per lead_id.
     q = (
         db.table("website_intelligence")
-        .select("*, leads!inner(id, company_name, city, sector, score, email_status, crm_stage)", count="exact")
+        .select("*", count="exact")
         .eq("workspace_id", workspace_id)
     )
 
@@ -599,18 +747,38 @@ async def get_website_opportunities(
         q = q.in_("priority", priorities)
     if opp_type := params.get("opportunity_type"):
         q = q.contains("opportunity_types", [opp_type])
-    if sector := params.get("sector"):
-        q = q.eq("leads.sector", sector)
 
     q = q.order("total_score", desc=False).range(offset, offset + limit - 1)
     res = q.execute()
+    wi_rows = res.data or []
 
+    lead_ids = [r.get("lead_id") for r in wi_rows if r.get("lead_id")]
+    leads_by_id: dict[str, dict] = {}
+    if lead_ids:
+        try:
+            leads_res = (
+                db.table("leads")
+                .select("id, company_name, city, sector, score, email_status, crm_stage, status")
+                .eq("workspace_id", workspace_id)
+                .in_("id", lead_ids)
+                .execute()
+            )
+            for l in leads_res.data or []:
+                leads_by_id[l["id"]] = l
+        except Exception:
+            leads_by_id = {}
+
+    sector_filter = params.get("sector")
     opportunities = []
-    for row in (res.data or []):
-        lead = row.pop("leads", {}) or {}
+    for row in wi_rows:
+        lead = leads_by_id.get(row.get("lead_id") or "", {})
+        if sector_filter and lead.get("sector") != sector_filter:
+            continue
+        if lead.get("status") == "archived":
+            continue
         opportunities.append({
             **row,
-            "lead_id": lead.get("id"),
+            "lead_id": lead.get("id") or row.get("lead_id"),
             "company_name": lead.get("company_name"),
             "city": lead.get("city"),
             "sector": lead.get("sector"),
@@ -662,50 +830,440 @@ async def get_warmr_inboxes(
 # CAMPAIGNS
 # =============================================================================
 
-@app.post("/campaigns/launch")
-async def launch_campaign(
+@app.get("/sequences/templates")
+async def list_sequence_templates() -> dict:
+    """Return alle voorgedefinieerde sequence-templates (campaign-launcher dropdown)."""
+    from config.sequence_templates import SEQUENCE_TEMPLATES
+    return {
+        "templates": [
+            {
+                "id": t["id"],
+                "name": t["name"],
+                "version": t["version"],
+                "segment": t["segment"],
+                "sector": t.get("sector"),
+                "language": t["language"],
+                "cadence_days": t["cadence_days"],
+                "primary_cta": t["primary_cta"],
+                "constraints": t["constraints"],
+                "observation_blocks": t.get("observation_blocks", []),
+                "min_personalization_score": t.get("min_personalization_score"),
+                "step_count": len(t["default_steps"]),
+                "preview_steps": [
+                    {"subject": s["subject"], "delay_days": s["delay_days"], "body_preview": s["body"][:160] + "…" if len(s["body"]) > 160 else s["body"]}
+                    for s in t["default_steps"]
+                ],
+            }
+            for t in SEQUENCE_TEMPLATES.values()
+        ]
+    }
+
+
+@app.get("/sequences/templates/{template_id}")
+async def get_sequence_template(template_id: str) -> dict:
+    """Return één template volledig (incl. body-tekst), klaar voor campaign-launcher voorvulling."""
+    from config.sequence_templates import SEQUENCE_TEMPLATES
+    t = SEQUENCE_TEMPLATES.get(template_id)
+    if not t:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' niet gevonden")
+    return t
+
+
+def _personalization_score_0_100(lead: dict) -> int:
+    """Schaal personalization_potential (0-15) naar 0-100.
+
+    Gebruikt voor de v1.0 sequence-gate: ≥70 = auto, 50-69 = review, <50 = skip.
+    """
+    raw = lead.get("personalization_potential") or 0
+    try:
+        return int(round((float(raw) / 15.0) * 100))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _gate_leads_for_template(
+    leads: list[dict], template: dict | None,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Split leads in (auto, review, skip) op basis van template min_personalization_score.
+
+    Drempels per v1.0 spec:
+      score >= threshold       → auto (mag mee in launch)
+      score >= threshold-20    → review (handmatige goedkeuring vereist)
+      anders                    → skip
+    """
+    if not template:
+        return leads, [], []
+    threshold = template.get("min_personalization_score")
+    if not threshold:
+        return leads, [], []
+    auto, review, skip = [], [], []
+    review_floor = max(threshold - 20, 0)
+    for lead in leads:
+        score = _personalization_score_0_100(lead)
+        lead["_pers_score_0_100"] = score
+        if score >= threshold:
+            auto.append(lead)
+        elif score >= review_floor:
+            review.append(lead)
+        else:
+            skip.append(lead)
+    return auto, review, skip
+
+
+def _resolve_template_for_lead(
+    lead: dict,
+    body_template_id: str | None,
+    body_sequence: list[dict],
+) -> tuple[str | None, dict | None, list[dict]]:
+    """Resolve sequence-template + steps voor één lead in v3.1-launch flow.
+
+    Priority:
+      1. body.sequence non-empty   → custom override (geen template-binding)
+      2. body.template_id = v3_1_* → forced single brug voor hele cohort
+      3. body.template_id = v1_*, leeg, of unknown → AUTO mode: per-lead
+         pick_brug() → v3_1_<brug>. v1-IDs worden hier server-side ge-rerouted
+         naar v3.1 — geen frontend-default-flip nodig om v3.1 te activeren.
+    """
+    from config.sequence_templates import SEQUENCE_TEMPLATES, pick_brug, template_for_brug
+
+    if body_sequence:
+        return None, None, body_sequence
+
+    if body_template_id and body_template_id.startswith("v3_1_"):
+        t = SEQUENCE_TEMPLATES.get(body_template_id)
+        if t:
+            return body_template_id, t, t["default_steps"]
+
+    # AUTO mode: v1-keys + None + onbekende keys triggeren per-lead brug-keuze
+    brug = pick_brug(lead)
+    auto_id = template_for_brug(brug)
+    t = SEQUENCE_TEMPLATES.get(auto_id)
+    if t:
+        return auto_id, t, t["default_steps"]
+    return None, None, []
+
+
+@app.post("/campaigns/preview")
+async def preview_campaign(
     body: CampaignLaunchRequest,
     workspace_id: str = Depends(get_workspace),
     db: Client = Depends(get_supabase),
 ) -> dict:
-    from integrations.warmr_client import WarmrClient
-    from campaigns.sequence_engine import validate_sequence_config, auto_fix_sequence_config
+    """Dry-run: render sequence per lead, return preview. Verstuurt NIETS.
 
-    # Validate sequence before creating campaign
-    is_valid, errors = validate_sequence_config(body.sequence)
-    if not is_valid:
-        raise HTTPException(status_code=422, detail={"errors": errors})
+    v3.1 actief sinds 2026-05-07: per-lead pick_brug() bepaalt welke v3.1
+    brug-template (website/workflow/ai_audit) wordt gerenderd. v1.0-template_ids
+    worden server-side ge-rerouted naar v3.1 auto-mode.
+    """
+    from campaigns.sequence_engine import validate_sequence_config, render_step
+    from config.sequence_templates import SEQUENCE_TEMPLATES
 
-    fixed_sequence = auto_fix_sequence_config(body.sequence)
-
-    client = WarmrClient()
-    campaign_id = await client.create_campaign(
-        name=body.name,
-        sequence_steps=fixed_sequence,
-        settings={"inbox_ids": body.inbox_ids},
-    )
+    # Snelle 404 als caller een onbekende v3.1-key vraagt — guards explicit-mode.
+    if body.template_id and body.template_id.startswith("v3_1_"):
+        if body.template_id not in SEQUENCE_TEMPLATES:
+            raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' niet gevonden")
 
     res = db.table("leads").select("*").in_("id", body.lead_ids).eq("workspace_id", workspace_id).execute()
     leads = res.data or []
 
-    result = await client.push_leads_bulk(leads, campaign_id=campaign_id)
+    # Pre-launch enrichment-completeness check (preview-versie: blokkeert niet,
+    # toont alleen welke leads bij echte launch worden geweigerd)
+    from utils.enrichment_check import filter_launchable_leads
+    launchable_leads, blocked_leads, completeness_warnings = filter_launchable_leads(leads)
+    leads = launchable_leads
 
+    # Per-lead template-resolutie. Voor de top-level gate gebruiken we het meest
+    # voorkomende v3.1-template uit de cohort als representatief threshold-bron.
+    per_lead_template: dict[str, dict] = {}  # lead_id → template-dict
+    template_id_counts: dict[str, int] = {}
     for lead in leads:
-        _insert_timeline_event(db, workspace_id, lead["id"], "email_sent", f"Verstuurd via campagne '{body.name}'", metadata={"campaign_id": campaign_id})
+        t_id, t_obj, _ = _resolve_template_for_lead(lead, body.template_id, body.sequence)
+        if t_id and t_obj:
+            per_lead_template[lead["id"]] = {"template_id": t_id, "template": t_obj}
+            template_id_counts[t_id] = template_id_counts.get(t_id, 0) + 1
 
-    # Store campaign mapping in Heatr for stats retrieval
-    try:
-        db.table("campaigns").insert({
-            "workspace_id": workspace_id,
-            "warmr_campaign_id": campaign_id,
-            "name": body.name,
-            "lead_count": len(leads),
-            "status": "active",
-        }).execute()
-    except Exception as exc:
-        logger.warning("Failed to store campaign mapping: %s", exc)
+    # Dominant template-id voor de top-level response — gebruikt voor gate-threshold
+    dominant_template_id = max(template_id_counts, key=template_id_counts.get) if template_id_counts else None
+    dominant_template = SEQUENCE_TEMPLATES.get(dominant_template_id) if dominant_template_id else None
 
-    return {"campaign_id": campaign_id, **result}
+    # Sequence-validatie op de dominante template (custom sequence krijgt zijn eigen)
+    if body.sequence:
+        is_valid, errors = validate_sequence_config(body.sequence)
+    elif dominant_template:
+        is_valid, errors = validate_sequence_config(dominant_template["default_steps"])
+    else:
+        is_valid, errors = True, []
+
+    # Personalization gate werkt op dominante template's threshold
+    auto_leads, review_leads, skip_leads = _gate_leads_for_template(leads, dominant_template)
+
+    # Render preview per lead met hun eigen brug-template
+    sample = (auto_leads or leads)[:5]
+    previews = []
+    for lead in sample:
+        lead_id = lead.get("id")
+        info = per_lead_template.get(lead_id)
+        if info:
+            steps = info["template"]["default_steps"]
+            template_id_for_lead = info["template_id"]
+        else:
+            steps = body.sequence or []
+            template_id_for_lead = None
+
+        rendered = [render_step(s, lead) for s in steps]
+        previews.append({
+            "lead_id": lead_id,
+            "company_name": lead.get("company_name"),
+            "first_name": lead.get("contact_first_name"),
+            "domain": lead.get("domain"),
+            "template_id": template_id_for_lead,           # v3.1: per-lead brug-keuze
+            "brug": (template_id_for_lead or "").replace("v3_1_", "") if template_id_for_lead else None,
+            "personalization_score": lead.get("_pers_score_0_100", 0),
+            "steps": rendered,
+        })
+
+    template_id = dominant_template_id  # voor onderstaande response-blok
+
+    def _summary(items: list[dict]) -> list[dict]:
+        return [
+            {
+                "lead_id": l.get("id"),
+                "company_name": l.get("company_name"),
+                "personalization_score": l.get("_pers_score_0_100", 0),
+            }
+            for l in items[:50]
+        ]
+
+    return {
+        "template_id": template_id,
+        "valid": is_valid,
+        "errors": errors,
+        "lead_count": len(body.lead_ids),
+        "preview_count": len(previews),
+        "previews": previews,
+        "personalization_gate": {
+            "threshold": (dominant_template or {}).get("min_personalization_score"),
+            "auto_count": len(auto_leads),
+            "review_count": len(review_leads),
+            "skip_count": len(skip_leads),
+            "auto_sample": _summary(auto_leads),
+            "review_sample": _summary(review_leads),
+            "skip_sample": _summary(skip_leads),
+        },
+        "completeness_check": {
+            "launchable_count": len(launchable_leads),
+            "blocked_count": len(blocked_leads),
+            "warning_count": len(completeness_warnings),
+            "blocked_sample": [
+                {
+                    "lead_id": b.get("id"),
+                    "company_name": b.get("company_name"),
+                    "missing_required": b.get("_completeness", {}).get("missing_required", []),
+                }
+                for b in blocked_leads[:10]
+            ],
+            "warning_sample": completeness_warnings[:10],
+        },
+    }
+
+
+@app.post("/campaigns/launch")
+async def launch_campaign(
+    body: CampaignLaunchRequest,
+    request: Request,
+    workspace_id: str = Depends(require_service_key),  # service-only — browser kan NOOIT versturen
+    db: Client = Depends(get_supabase),
+) -> dict:
+    # SEND-KILL-SWITCH: zolang ENABLE_CAMPAIGN_SENDS != "true" weigert deze endpoint te versturen.
+    if os.getenv("ENABLE_CAMPAIGN_SENDS", "false").lower() != "true":
+        raise HTTPException(
+            status_code=403,
+            detail="Campagne-sends staan uit (ENABLE_CAMPAIGN_SENDS=false). Gebruik /campaigns/preview om te previewen zonder te versturen.",
+        )
+
+    from integrations.warmr_client import WarmrClient
+    from campaigns.sequence_engine import validate_sequence_config, auto_fix_sequence_config
+    from config.sequence_templates import SEQUENCE_TEMPLATES
+
+    # Vroege 404 voor onbekende v3.1-keys — anders silent fallback naar AUTO mode.
+    if body.template_id and body.template_id.startswith("v3_1_"):
+        if body.template_id not in SEQUENCE_TEMPLATES:
+            raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' niet gevonden")
+
+    res = db.table("leads").select("*").in_("id", body.lead_ids).eq("workspace_id", workspace_id).execute()
+    leads = res.data or []
+
+    # Pre-launch enrichment-completeness check — voorkomt halve-data sends.
+    # Test-leads (is_test_lead=true) bypassen deze check voor smoke-test flow.
+    from utils.enrichment_check import filter_launchable_leads
+    launchable_leads, blocked_leads, _completeness_warnings = filter_launchable_leads(leads)
+    if blocked_leads and not launchable_leads:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "Geen lead heeft volledige enrichment voor sequence-launch",
+                "blocked_count": len(blocked_leads),
+                "blocked_sample": [
+                    {
+                        "lead_id": l.get("id"),
+                        "company_name": l.get("company_name"),
+                        "missing_required": l.get("_completeness", {}).get("missing_required", []),
+                    }
+                    for l in blocked_leads[:5]
+                ],
+                "hint": "Re-enqueue voor enrichment via /admin/re-enqueue-stale-leads, óf markeer als test-lead.",
+            },
+        )
+    if blocked_leads:
+        logger.warning(
+            "campaigns/launch: %d/%d leads geweigerd door completeness check",
+            len(blocked_leads), len(leads),
+        )
+    leads = launchable_leads
+
+    # v3.1 routing: per lead → resolve template (auto pick_brug of forced/custom).
+    # Bucket leads per resolved-template_id zodat we per bucket één Warmr-campaign
+    # kunnen aanmaken met de juiste sequence-template.
+    buckets: dict[str, dict] = {}  # bucket_key → {"template_id", "template", "steps", "leads"}
+    custom_bucket_key = "__custom__"
+    for lead in leads:
+        t_id, t_obj, steps = _resolve_template_for_lead(lead, body.template_id, body.sequence)
+        bucket_key = t_id or custom_bucket_key
+        if bucket_key not in buckets:
+            buckets[bucket_key] = {
+                "template_id": t_id,
+                "template": t_obj,
+                "steps": steps,
+                "leads": [],
+            }
+        buckets[bucket_key]["leads"].append(lead)
+
+    if not buckets:
+        raise HTTPException(status_code=422, detail="Geen leads om te versturen na completeness-check")
+
+    # Per-bucket: validate sequence + filter via personalization-gate
+    all_review: list[dict] = []
+    all_skip: list[dict] = []
+    for bucket_key, b in list(buckets.items()):
+        is_valid, errors = validate_sequence_config(b["steps"])
+        if not is_valid:
+            raise HTTPException(status_code=422, detail={"bucket": bucket_key, "errors": errors})
+        b["fixed_sequence"] = auto_fix_sequence_config(b["steps"])
+        # Personalization gate — alleen 'auto'-leads in deze bucket gaan mee
+        auto_leads, review_leads, skip_leads = _gate_leads_for_template(b["leads"], b["template"])
+        all_review.extend(review_leads)
+        all_skip.extend(skip_leads)
+        b["auto_leads"] = auto_leads
+        b["review_leads"] = review_leads
+        b["skip_leads"] = skip_leads
+
+    total_auto = sum(len(b["auto_leads"]) for b in buckets.values())
+    if total_auto == 0:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "Geen leads halen de personalisatie-drempel",
+                "review_count": len(all_review),
+                "skip_count": len(all_skip),
+                "hint": "Verlaag drempel via custom sequence, of verrijking de leads opnieuw.",
+            },
+        )
+
+    # Per niet-leeg bucket: maak Warmr-campaign + push leads
+    client = WarmrClient()
+    sub_results: list[dict] = []
+    sub_campaign_ids: list[str] = []
+    audit_lead_ids: list[str] = []
+    audit_sequences: dict[str, list] = {}
+    for bucket_key, b in buckets.items():
+        bucket_leads = b["auto_leads"]
+        if not bucket_leads:
+            continue
+        # Naam per bucket: prefix met brug-key zodat dashboard ze als één run kan groeperen
+        bucket_label = bucket_key if bucket_key != custom_bucket_key else "custom"
+        camp_name = f"{body.name} · {bucket_label}" if len(buckets) > 1 else body.name
+        camp_id = await client.create_campaign(
+            name=camp_name,
+            sequence_steps=b["fixed_sequence"],
+            settings={"inbox_ids": body.inbox_ids, "template_id": b["template_id"]},
+        )
+        sub_campaign_ids.append(camp_id)
+        audit_sequences[bucket_label] = b["fixed_sequence"]
+
+        push_result = await client.push_leads_bulk(bucket_leads, campaign_id=camp_id)
+        sub_results.append({
+            "bucket": bucket_label,
+            "template_id": b["template_id"],
+            "campaign_id": camp_id,
+            "lead_count": len(bucket_leads),
+            **push_result,
+        })
+        audit_lead_ids.extend([l.get("id") for l in bucket_leads if l.get("id")])
+
+        for lead in bucket_leads:
+            _insert_timeline_event(
+                db, workspace_id, lead["id"], "email_sent",
+                f"Verstuurd via campagne '{camp_name}'",
+                metadata={"campaign_id": camp_id, "template_id": b["template_id"]},
+            )
+
+    gate_summary = {
+        "auto_sent": total_auto,
+        "review_skipped": len(all_review),
+        "skip_skipped": len(all_skip),
+        "buckets": {
+            (b["template_id"] or custom_bucket_key): {
+                "auto": len(b["auto_leads"]),
+                "review": len(b["review_leads"]),
+                "skip": len(b["skip_leads"]),
+                "threshold": (b["template"] or {}).get("min_personalization_score"),
+            }
+            for b in buckets.values()
+        },
+    }
+    result = {
+        "campaigns": sub_results,                    # multi-bucket details
+        "campaign_id": sub_campaign_ids[0] if sub_campaign_ids else None,  # backwards-compat single id
+        "campaign_ids": sub_campaign_ids,            # alle bucket-campaigns
+        "personalization_gate": gate_summary,
+        "completeness_check": {
+            "blocked_count": len(blocked_leads),
+            "blocked_sample": [
+                {
+                    "lead_id": l.get("id"),
+                    "company_name": l.get("company_name"),
+                    "missing_required": l.get("_completeness", {}).get("missing_required", []),
+                }
+                for l in blocked_leads[:10]
+            ],
+        },
+    }
+
+    # Audit-trail: persist run-snapshot in heatr_campaigns. Bij multi-bucket één rij
+    # per bucket-campaign zodat dashboard correct linkt.
+    principal = identify_principal(request)
+    for sub in sub_results:
+        try:
+            db.table("campaigns").insert({
+                "workspace_id": workspace_id,
+                "warmr_campaign_id": sub["campaign_id"],
+                "name": body.name,
+                "template_id": sub.get("template_id"),
+                "lead_count": sub["lead_count"],
+                "lead_ids": [],  # per-bucket subset; full lead_ids in bovenstaande audit_lead_ids
+                "inbox_ids": body.inbox_ids,
+                "sequence_snapshot": audit_sequences.get(sub["bucket"]) or [],
+                "personalization_gate": gate_summary.get("buckets", {}).get(sub["template_id"] or custom_bucket_key) or {},
+                "created_by": principal.get("created_by"),
+                "created_via": principal.get("created_via"),
+                "request_ip": principal.get("request_ip"),
+                "status": "active",
+                "launched_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+        except Exception as exc:
+            logger.warning("Failed to store campaign audit-row for bucket %s: %s", sub["bucket"], exc)
+
+    return result
 
 
 @app.get("/campaigns")
@@ -734,6 +1292,35 @@ async def list_campaigns(
         pass  # Warmr unreachable — show campaigns without stats
 
     return {"campaigns": campaigns}
+
+
+@app.get("/campaigns/{campaign_id}/audit")
+async def campaign_audit(
+    campaign_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Return volledige audit-trail van een campagne: wie, wanneer, met welke
+    leads/sequence/template/gate-uitkomst. Voor compliance + debugging."""
+    try:
+        res = (
+            db.table("campaigns")
+            .select(
+                "id, workspace_id, warmr_campaign_id, name, template_id, status, "
+                "lead_count, lead_ids, inbox_ids, sequence_snapshot, "
+                "personalization_gate, created_by, created_via, request_ip, "
+                "created_at, launched_at, completed_at"
+            )
+            .eq("id", campaign_id)
+            .eq("workspace_id", workspace_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audit fetch failed: {e}")
+    if not res or not res.data:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return res.data
 
 
 @app.get("/campaigns/{campaign_id}/stats")
@@ -2052,25 +2639,45 @@ async def warmr_webhook(
         except Exception as exc:
             logger.warning("Failed to insert reply_inbox for lead %s: %s", heatr_lead_id, exc)
 
+        # v1.0 spec: ELKE reply / bounce / unsubscribe stopt de hele sequence direct.
+        # Re-entry op recontact-cooldown via lead.next_contact_after.
+        from campaigns.sequence_engine import stop_all_sequences_for_lead
+
         # Route events to appropriate handlers
         if event_type in ("interested", "lead.interested"):
             db.table("leads").update({"crm_stage": "gereageerd"}).eq("id", heatr_lead_id).execute()
-            _insert_timeline_event(db, workspace_id, heatr_lead_id, "reply_received", "Reply ontvangen: geïnteresseerd")
+            stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
+            _insert_timeline_event(
+                db, workspace_id, heatr_lead_id, "reply_received",
+                f"Reply ontvangen: geïnteresseerd — {stopped} sequence(s) gestopt",
+            )
 
         elif event_type in ("replied", "lead.replied"):
             db.table("leads").update({"crm_stage": "beantwoord"}).eq("id", heatr_lead_id).execute()
-            _insert_timeline_event(db, workspace_id, heatr_lead_id, "reply_received", "Reply ontvangen")
+            stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
+            _insert_timeline_event(
+                db, workspace_id, heatr_lead_id, "reply_received",
+                f"Reply ontvangen — {stopped} sequence(s) gestopt",
+            )
 
         elif event_type in ("bounced", "lead.bounced"):
             db.table("leads").update({"email_status": "bounced"}).eq("id", heatr_lead_id).execute()
-            _insert_timeline_event(db, workspace_id, heatr_lead_id, "bounced", "Email gebounced")
+            stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
+            _insert_timeline_event(
+                db, workspace_id, heatr_lead_id, "bounced",
+                f"Email gebounced — {stopped} sequence(s) gestopt",
+            )
 
         elif event_type in ("unsubscribed", "lead.unsubscribed"):
             db.table("leads").update({
                 "email_status": "unsubscribed",
                 "crm_stage": "afgesloten",
             }).eq("id", heatr_lead_id).execute()
-            _insert_timeline_event(db, workspace_id, heatr_lead_id, "unsubscribed", "Lead heeft zich uitgeschreven")
+            stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
+            _insert_timeline_event(
+                db, workspace_id, heatr_lead_id, "unsubscribed",
+                f"Lead heeft zich uitgeschreven — {stopped} sequence(s) gestopt",
+            )
 
         elif event_type in ("campaign.completed",):
             _insert_timeline_event(db, workspace_id, heatr_lead_id, "campaign_done", "Campagne sequence afgerond — geen reply ontvangen")
@@ -2259,19 +2866,45 @@ async def get_recent_timeline_crm(
 @app.get("/timeline/{lead_id}")
 async def get_timeline(
     lead_id: str,
+    limit: int = 100,
+    compact: bool = False,
     workspace_id: str = Depends(get_workspace),
     db: Client = Depends(get_supabase),
 ) -> dict:
-    res = (
+    """Lead timeline events.
+
+    Args:
+        limit: Max events (default 100, kanban-flip gebruikt 5)
+        compact: Als True, filtert op key event-types (email_sent,
+                reply_received, sequence_completed, manual_status_override,
+                bounced, unsubscribed, stage_changed) en strips metadata.
+                Voor kanban-card-flip waar je beknopt overzicht wilt.
+    """
+    q = (
         db.table("lead_timeline")
-        .select("*")
+        .select("id, event_type, title, created_at, metadata, created_by")
         .eq("lead_id", lead_id)
         .eq("workspace_id", workspace_id)
         .order("created_at", desc=True)
-        .limit(100)
-        .execute()
     )
-    return {"events": res.data or []}
+    if compact:
+        # Alleen events die echte status-veranderingen markeren
+        key_types = [
+            "email_sent", "reply_received", "sequence_completed",
+            "manual_status_override", "bounced", "unsubscribed",
+            "stage_changed", "interested", "review_email_sent",
+        ]
+        q = q.in_("event_type", key_types)
+    res = q.limit(min(limit, 500)).execute()
+    events = res.data or []
+    if compact:
+        # Strip metadata om payload klein te houden voor kanban-flip
+        events = [
+            {"id": e["id"], "event_type": e["event_type"], "title": e["title"],
+             "created_at": e["created_at"]}
+            for e in events
+        ]
+    return {"events": events, "count": len(events)}
 
 
 @app.post("/timeline/{lead_id}")
@@ -2927,6 +3560,404 @@ async def classify_single_reply(
     return result
 
 
+class LeadImportRequest(BaseModel):
+    rows: list[dict]
+    dry_run: bool = False
+    source: str = "csv"
+    auto_enrich: bool = True   # geïmporteerde leads gaan direct de enrichment-queue in
+    import_run_id: str | None = None  # client-UUID voor idempotency (24u TTL)
+    merge_strategy: str = "skip"  # skip | fill_blanks | overwrite — bij duplicates
+
+
+@app.post("/leads/import")
+async def import_leads_endpoint(
+    body: LeadImportRequest,
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Bulk lead-import met automatische dedup + auto-enrich.
+
+    Dedup-volgorde: email → domain → kvk → fuzzy company+city.
+    Auto-enrich (default true): nieuwe leads gaan direct de enrichment-queue
+    in zodat dezelfde verrijking als gescrapte leads gebeurt
+    (KvK, website intel, owner-extract, archetype, etc.).
+    Cap: 500 rows per call.
+    """
+    from utils.lead_import import import_leads
+
+    principal = identify_principal(request)
+    result = await import_leads(
+        rows=body.rows,
+        workspace_id=workspace_id,
+        supabase_client=db,
+        imported_by=principal.get("created_by", "unknown"),
+        source=body.source,
+        dry_run=body.dry_run,
+        auto_enrich=body.auto_enrich,
+        import_run_id=body.import_run_id,
+        merge_strategy=body.merge_strategy,
+    )
+    return result
+
+
+@app.get("/crm/activity-board")
+async def leads_activity_board(
+    response: Response,
+    limit: int = 500,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Batch CRM-board view. Returnt alle workspace-leads met derived status,
+    last_outbound_at, last_inbound_at — geclusterd per status voor kanban.
+
+    Cache-Control: stale-while-revalidate. Browser/CDN serveert ~10s gestale
+    response terwijl er nieuwe data binnen komt — voorkomt redundante fetches
+    bij multi-tab gebruikers, met minimale UX-impact.
+
+    Doet de derive_status logic INLINE met SQL ipv per-lead aanroepen
+    (anders 200 sequentie-fetches). Snel pad: één join-query.
+    """
+    from utils.lead_activity import derive_status, parse_iso as _parse_iso
+
+    # Fetch leads (cap)
+    try:
+        leads_res = (
+            db.table("leads")
+            .select(
+                "id, company_name, domain, sector, archetype, score, city, "
+                "email_status, manual_status_override, manual_status_override_reason, "
+                "manual_status_override_at, recontact_after, is_test_lead, created_at"
+            )
+            .eq("workspace_id", workspace_id)
+            .order("created_at", desc=True)
+            .limit(min(limit, 500))
+            .execute()
+        )
+        leads = leads_res.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"leads fetch failed: {e}")
+    if not leads:
+        return {"leads": [], "buckets": {}, "total": 0}
+
+    lead_ids = [l["id"] for l in leads]
+
+    # Bulk-fetch sequence-history voor al deze leads in 1 call
+    seq_by_lead: dict[str, list[dict]] = {}
+    try:
+        sh_res = (
+            db.table("lead_campaign_history")
+            .select("lead_id, status, is_active, step_index, sent_at, created_at, next_send_at")
+            .in_("lead_id", lead_ids)
+            .eq("workspace_id", workspace_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        for row in (sh_res.data or []):
+            seq_by_lead.setdefault(row["lead_id"], []).append(row)
+    except Exception as e:
+        logger.debug("activity-board sequence fetch failed: %s", e)
+
+    # Bulk-fetch laatste reply per lead in 1 call
+    reply_by_lead: dict[str, dict] = {}
+    try:
+        rep_res = (
+            db.table("reply_inbox")
+            .select("lead_id, received_at, classification, classifier_summary, body_preview")
+            .in_("lead_id", lead_ids)
+            .eq("workspace_id", workspace_id)
+            .order("received_at", desc=True)
+            .execute()
+        )
+        # Eerste-zien wint (al gesorteerd desc op received_at)
+        for row in (rep_res.data or []):
+            lid = row["lead_id"]
+            if lid not in reply_by_lead:
+                reply_by_lead[lid] = row
+    except Exception as e:
+        logger.debug("activity-board replies fetch failed: %s", e)
+
+    # Per lead: derive + assemble
+    buckets: dict[str, list[dict]] = {}
+    enriched: list[dict] = []
+    for lead in leads:
+        seq_history = seq_by_lead.get(lead["id"], [])
+        last_reply = reply_by_lead.get(lead["id"])
+        last_inbound_at = _parse_iso(last_reply.get("received_at")) if last_reply else None
+        last_inbound_class = (
+            {"category": last_reply.get("classification")} if last_reply else None
+        )
+
+        last_outbound_at = None
+        for h in seq_history:
+            sa = _parse_iso(h.get("sent_at"))
+            if sa and (last_outbound_at is None or sa > last_outbound_at):
+                last_outbound_at = sa
+
+        status, status_reason, status_changed_at = derive_status(
+            lead, last_inbound_class, last_inbound_at, seq_history,
+        )
+
+        item = {
+            "lead_id": lead["id"],
+            "company_name": lead.get("company_name"),
+            "domain": lead.get("domain"),
+            "city": lead.get("city"),
+            "sector": lead.get("sector"),
+            "archetype": lead.get("archetype"),
+            "score": lead.get("score"),
+            "status": status,
+            "status_reason": status_reason,
+            "status_changed_at": status_changed_at.isoformat() if status_changed_at else None,
+            "is_manual_override": bool(lead.get("manual_status_override")),
+            "is_test_lead": bool(lead.get("is_test_lead")),
+            "last_outbound_at": last_outbound_at.isoformat() if last_outbound_at else None,
+            "last_inbound_at": last_inbound_at.isoformat() if last_inbound_at else None,
+            "last_inbound_category": (last_inbound_class or {}).get("category"),
+        }
+        enriched.append(item)
+        buckets.setdefault(status, []).append(item)
+
+    response.headers["Cache-Control"] = "private, max-age=10, stale-while-revalidate=30"
+    return {"leads": enriched, "buckets": buckets, "total": len(enriched)}
+
+
+@app.get("/leads/{lead_id}/activity")
+async def lead_activity_endpoint(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Activity-rollup + derived CRM status voor één lead."""
+    from utils.lead_activity import get_lead_activity
+
+    result = await get_lead_activity(lead_id, workspace_id, db)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+class BulkStatusRequest(BaseModel):
+    lead_ids: list[str]
+    status: str   # afgemeld | geen_interesse | recontact_later | actief_gesprek | verkeerde_contact | "" (clear)
+    reason: str | None = None
+    recontact_after: str | None = None  # ISO date — alleen voor recontact_later
+
+
+@app.post("/leads/bulk-status")
+async def bulk_status_endpoint(
+    body: BulkStatusRequest,
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Bulk handmatige status-override. Lege string = clear override."""
+    from utils.lead_activity import CRM_STATUSES
+
+    new_status = body.status.strip()
+    if new_status and new_status not in CRM_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status moet een van {sorted(CRM_STATUSES)} of '' (clear)",
+        )
+
+    principal = identify_principal(request)
+    now = datetime.now(timezone.utc).isoformat()
+
+    patch: dict[str, Any] = {
+        "manual_status_override": new_status or None,
+        "manual_status_override_reason": body.reason if new_status else None,
+        "manual_status_override_at": now if new_status else None,
+        "manual_status_override_by": principal.get("created_by") if new_status else None,
+    }
+    if new_status == "recontact_later" and body.recontact_after:
+        patch["recontact_after"] = body.recontact_after
+
+    try:
+        res = (
+            db.table("leads")
+            .update(patch)
+            .in_("id", body.lead_ids)
+            .eq("workspace_id", workspace_id)
+            .execute()
+        )
+        updated = len(res.data or [])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"bulk update failed: {e}")
+
+    return {"updated": updated, "status": new_status or "(cleared)", "reason": body.reason}
+
+
+@app.get("/system/sidebar-counts")
+async def sidebar_counts(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Compacte counts voor sidebar-badges (CRM activity, Inbox).
+
+    - recontact_due: leads met recontact_after datum vandaag of in verleden,
+      OF status 'klaar_voor_recontact' (cooldown afgelopen).
+    - unread_replies: replies sinds last_seen_inbox marker.
+    - worker_healthy: laatste enrichment_jobs.completed_at < 5 min geleden.
+
+    Polling-vriendelijk: 1 lichte query per metric. Faalt-tolerant — None bij errors.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    counts: dict[str, Any] = {}
+    now = datetime.now(timezone.utc)
+
+    # Recontact-due (klaar voor recontact OF expliciete recontact_after datum bereikt)
+    try:
+        # Leads waarbij recontact_after datum is verstreken
+        due_explicit = (
+            db.table("leads")
+            .select("id", count="exact")
+            .eq("workspace_id", workspace_id)
+            .lte("recontact_after", now.isoformat())
+            .execute()
+        )
+        counts["recontact_due"] = due_explicit.count or 0
+    except Exception:
+        counts["recontact_due"] = None
+
+    # Unread replies — alle van afgelopen 7 dagen (simpler dan per-user last_seen tracking)
+    try:
+        recent_cutoff = (now - timedelta(days=7)).isoformat()
+        unread = (
+            db.table("reply_inbox")
+            .select("id", count="exact")
+            .eq("workspace_id", workspace_id)
+            .gte("received_at", recent_cutoff)
+            .execute()
+        )
+        counts["unread_replies"] = unread.count or 0
+    except Exception:
+        counts["unread_replies"] = None
+
+    # Worker health — recent completed enrichment_jobs
+    try:
+        threshold = (now - timedelta(minutes=5)).isoformat()
+        recent_done = (
+            db.table("enrichment_jobs")
+            .select("id", count="exact")
+            .eq("workspace_id", workspace_id)
+            .gte("completed_at", threshold)
+            .execute()
+        )
+        # Of er pending jobs zijn (worker zou die moeten oppakken)
+        pending = (
+            db.table("enrichment_jobs")
+            .select("id", count="exact")
+            .eq("workspace_id", workspace_id)
+            .eq("status", "pending")
+            .execute()
+        )
+        recent_count = recent_done.count or 0
+        pending_count = pending.count or 0
+        # Healthy: recent activiteit, OF geen pending werk om op te pakken
+        counts["worker_healthy"] = recent_count > 0 or pending_count == 0
+        counts["worker_pending_jobs"] = pending_count
+        counts["worker_recent_completed"] = recent_count
+    except Exception:
+        counts["worker_healthy"] = None
+
+    return counts
+
+
+@app.post("/replies/{reply_id}/draft")
+async def draft_reply_endpoint(
+    reply_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Generate een Claude-suggestie voor antwoord op een binnengekomen reply.
+
+    Verstuurt NIETS — alleen draft tekst voor Sami om te lezen + zelf versturen.
+    Gecached: re-clicks zijn gratis tenzij classification verandert.
+    """
+    from campaigns.reply_drafter import draft_reply
+    import anthropic
+    import os as _os
+
+    # Fetch reply
+    try:
+        reply_res = (
+            db.table("reply_inbox")
+            .select("*")
+            .eq("id", reply_id)
+            .eq("workspace_id", workspace_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reply fetch failed: {e}")
+    if not reply_res or not reply_res.data:
+        raise HTTPException(status_code=404, detail="Reply not found")
+    reply_row = reply_res.data
+
+    # Fetch lead (incl. archetype zodat draft tone matcht)
+    lead = None
+    if reply_row.get("lead_id"):
+        try:
+            lead_res = (
+                db.table("leads")
+                .select("id, company_name, contact_first_name, sector, domain, archetype")
+                .eq("id", reply_row["lead_id"])
+                .maybe_single()
+                .execute()
+            )
+            if lead_res and lead_res.data:
+                lead = lead_res.data
+        except Exception:
+            pass
+
+    # Thread-context: fetch onze laatste verstuurde mail uit deze sequence
+    # zodat Claude weet WAAROP de prospect reageert.
+    original_emails: list[dict] = []
+    if reply_row.get("lead_id"):
+        try:
+            hist_res = (
+                db.table("lead_campaign_history")
+                .select("sequence_steps, step_index, sent_at")
+                .eq("lead_id", reply_row["lead_id"])
+                .eq("workspace_id", workspace_id)
+                .order("sent_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if hist_res.data:
+                row = hist_res.data[0]
+                steps = row.get("sequence_steps") or []
+                idx = max((row.get("step_index") or 1) - 1, 0)
+                if 0 <= idx < len(steps):
+                    last_sent = steps[idx]
+                    original_emails.append({
+                        "subject": last_sent.get("subject", ""),
+                        "body": last_sent.get("body", ""),
+                    })
+        except Exception:
+            pass
+
+    # Use existing classification if present, else classify on-the-fly
+    classification = {
+        "category": reply_row.get("classification") or reply_row.get("category") or "other",
+        "summary": reply_row.get("classifier_summary") or "",
+    }
+
+    ac = anthropic.AsyncAnthropic(api_key=_os.environ["ANTHROPIC_API_KEY"])
+    result = await draft_reply(
+        reply_inbox_row=reply_row,
+        lead=lead,
+        classification=classification,
+        workspace_id=workspace_id,
+        supabase_client=db,
+        anthropic_client=ac,
+        original_emails=original_emails or None,
+    )
+    return result
+
+
 @app.post("/replies/process-unclassified")
 async def process_unclassified_replies(
     workspace_id: str = Depends(get_workspace),
@@ -3070,3 +4101,64 @@ async def generate_briefing(
         briefing["email_sent"] = False
 
     return briefing
+
+
+# =============================================================================
+# SCORING — Feedback loop (Warmr replies → insights)
+# =============================================================================
+
+@app.post("/scoring/process-feedback")
+async def scoring_process_feedback(
+    days: int = 30,
+    workspace_id: str = Depends(require_service_key),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Run feedback_processor over de afgelopen N dagen + persist de run.
+
+    Service-only — bedoeld voor n8n / scheduled invocation. Adjustments zijn
+    suggesties, géén auto-apply: de operator moet handmatig scoring weights
+    aanpassen via config/scoring_weights.py op basis van de output.
+    """
+    from scoring.feedback_processor import process_feedback
+
+    result = await process_feedback(workspace_id, db, days=days)
+
+    # Persist run voor history
+    try:
+        db.table("feedback_runs").insert({
+            "workspace_id": workspace_id,
+            "period_days": days,
+            "leads_analyzed": result.get("leads_analyzed", 0),
+            "replied": result.get("replied", 0),
+            "bounced": result.get("bounced", 0),
+            "reply_rate": result.get("reply_rate", 0),
+            "bounce_rate": result.get("bounce_rate", 0),
+            "insights": result.get("insights", []),
+            "adjustments": result.get("adjustments", []),
+        }).execute()
+    except Exception as e:
+        logger.warning("feedback_runs persist failed (table missing?): %s", e)
+
+    return result
+
+
+@app.get("/scoring/feedback-history")
+async def scoring_feedback_history(
+    limit: int = 20,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Return de laatste N feedback-runs voor deze workspace."""
+    try:
+        res = (
+            db.table("feedback_runs")
+            .select("*")
+            .eq("workspace_id", workspace_id)
+            .order("created_at", desc=True)
+            .limit(min(limit, 100))
+            .execute()
+        )
+        return {"runs": res.data or []}
+    except Exception as e:
+        logger.warning("feedback_history fetch failed: %s", e)
+        return {"runs": [], "error": str(e)}
