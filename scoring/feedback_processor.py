@@ -45,22 +45,48 @@ async def process_feedback(
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-    # Load campaign history with lead data
+    # Step 1: load campaign history (no nested join — geen FK in schema)
     try:
-        res = supabase_client.table("lead_campaign_history").select(
-            "lead_id, status, "
-            "leads(sector, score, email_status, contact_source, contact_title, "
-            "google_rating, google_review_count, data_quality_score, "
-            "fit_score, reachability_score, personalization_potential, "
-            "has_instagram, domain, company_size_estimate)"
-        ).eq("workspace_id", workspace_id).gte("created_at", cutoff).execute()
+        history_res = (
+            supabase_client.table("lead_campaign_history")
+            .select("lead_id, status")
+            .eq("workspace_id", workspace_id)
+            .gte("created_at", cutoff)
+            .execute()
+        )
     except Exception as e:
         logger.error("feedback_processor: failed to load campaign history: %s", e)
         return {"leads_analyzed": 0, "error": str(e)}
 
-    rows = res.data or []
-    if not rows:
+    history_rows = history_res.data or []
+    if not history_rows:
         return {"leads_analyzed": 0, "insights": [], "adjustments": []}
+
+    # Step 2: bulk-fetch lead-data voor alle unique lead_ids in 1 query
+    lead_ids = list({r.get("lead_id") for r in history_rows if r.get("lead_id")})
+    leads_by_id: dict[str, dict] = {}
+    if lead_ids:
+        try:
+            leads_res = (
+                supabase_client.table("leads")
+                .select(
+                    "id, sector, score, email_status, contact_source, contact_title, "
+                    "google_rating, google_review_count, data_quality_score, "
+                    "fit_score, reachability_score, personalization_potential, "
+                    "has_instagram, domain, company_size_estimate"
+                )
+                .in_("id", lead_ids)
+                .execute()
+            )
+            leads_by_id = {l["id"]: l for l in (leads_res.data or [])}
+        except Exception as e:
+            logger.warning("feedback_processor: lead bulk-fetch failed: %s", e)
+
+    # Synthesize the rows-with-leads structure that the downstream loop expects
+    rows = [
+        {"lead_id": r["lead_id"], "status": r.get("status"), "leads": leads_by_id.get(r["lead_id"], {})}
+        for r in history_rows
+    ]
 
     # Group by outcome
     replied: list[dict] = []

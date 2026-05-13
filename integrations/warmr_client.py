@@ -350,15 +350,36 @@ class WarmrClient:
         Returns:
             Warmr API-ready lead payload dict.
         """
+        # Single source of truth voor "veilige first_name" — strip legacy
+        # email-inference artefacten (bv. 'Ceciledebooij' uit gmail-local-part)
+        from utils.lead_naming import safe_first_name
+        from utils.signal_picker import pick_signaal_blok
+        from config.sequence_templates import (
+            primaire_dienstverlening_for_lead,
+            sector_noemer_for_lead,
+        )
+        first_name_safe = safe_first_name(lead)
+
+        # Test-mode: voeg BCC naar HEATR_TEST_BCC_EMAIL toe + [TEST] subject prefix.
+        # Lead-flag is_test_lead wordt door /campaigns/launch via lead-row meegegeven.
+        # Zonder env-var blijft BCC leeg → Warmr gedraagt zich normaal.
+        is_test = bool(lead.get("is_test_lead"))
+        test_bcc = (os.getenv("HEATR_TEST_BCC_EMAIL") or "").strip() if is_test else ""
+
         payload: dict = {
             "email": lead.get("email", ""),
-            "first_name": lead.get("contact_first_name") or "",
+            "first_name": first_name_safe,
             "last_name": lead.get("contact_last_name") or "",
             "campaign_id": campaign_id,
             "gdpr_footer_required": True,
+            "is_test_lead": is_test,           # Surface naar Warmr voor logging
+            **({"bcc": test_bcc, "subject_prefix": "[TEST] "} if test_bcc else {}),
             "custom_fields": {
-                # Personalisation tokens used in Warmr sequences
-                "opener": lead.get("personalized_opener") or "",
+                # Personalisation tokens used in Warmr sequences.
+                # `_observation_text` (gezet door /campaigns/launch voor v1-template-leads)
+                # wint van de Claude-gegenereerde `personalized_opener` — zo krijgt
+                # elke lead exact het blok-paragraaf dat past bij hun signaal.
+                "opener": lead.get("_observation_text") or lead.get("personalized_opener") or "",
                 "summary": lead.get("company_summary") or "",
                 "company": lead.get("company_name") or "",
                 "city": lead.get("city") or "",
@@ -391,6 +412,17 @@ class WarmrClient:
                 "fit_score": str(lead.get("fit_score") or 0),
                 "reachability_score": str(lead.get("reachability_score") or 0),
                 "data_quality": str(lead.get("data_quality_score") or 0),
+                # v3.1 brug-tokens (signaal_blok via pick_signaal_blok, sector_noemer
+                # uit SECTOR_NOEMER_MAP, primaire_dienstverlening uit treatment_focus
+                # / industry / sector fallback). Heatr resolved server-side; Warmr
+                # substitueert {{token}} per-lead in sequence-bodies.
+                # bedrijfsnaam/stad zijn aliases voor bestaande company/city — in
+                # v3.1 templates wordt expliciet {{bedrijfsnaam}} en {{stad}} gebruikt.
+                "bedrijfsnaam": lead.get("company_name") or "",
+                "stad": lead.get("city") or "",
+                "primaire_dienstverlening": primaire_dienstverlening_for_lead(lead),
+                "signaal_blok": pick_signaal_blok(lead),
+                "sector_noemer": sector_noemer_for_lead(lead),
             },
         }
 
