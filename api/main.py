@@ -816,17 +816,24 @@ async def analytics_pipeline(
     catchall = email_counts.get("catch_all", 0)
     coverage_pct = round((verified + catchall) / total * 100) if total else 0
 
-    inbox_res = db.table("reply_inbox").select("id, event_type", count="exact").eq("workspace_id", workspace_id).execute()
-    replies = inbox_res.count or 0
-    interested = sum(1 for r in (inbox_res.data or []) if r.get("event_type") == "interested")
+    # heatr_reply_inbox heeft geen 'event_type' kolom — gebruik 'status'/'classification' als die bestaat
+    # of tel gewoon alle rijen. Faal silent op schema-mismatch zodat de endpoint niet crasht.
+    try:
+        inbox_res = db.table("reply_inbox").select("id", count="exact").eq("workspace_id", workspace_id).execute()
+        replies = inbox_res.count or 0
+    except Exception:
+        replies = 0
 
     sent = sum(1 for l in leads if l.get("crm_stage") not in ("ontdekt", None))
 
-    # CRM stats
+    # CRM stats — heatr_crm_deals table bestaat mogelijk nog niet. Faal silent.
     today = datetime.now(timezone.utc).date()
     month_start = today.replace(day=1).isoformat()
-    deals_res = db.table("crm_deals").select("value").eq("workspace_id", workspace_id).gte("created_at", month_start).execute()
-    won_this_month = sum(d.get("value") or 0 for d in (deals_res.data or []))
+    try:
+        deals_res = db.table("crm_deals").select("value").eq("workspace_id", workspace_id).gte("created_at", month_start).execute()
+        won_this_month = sum(d.get("value") or 0 for d in (deals_res.data or []))
+    except Exception:
+        won_this_month = 0
 
     return {
         "total_leads": total,
@@ -877,10 +884,6 @@ async def analytics_website(
         "conversion_count": sum(1 for r in rows if "conversion_optimisation" in (r.get("opportunity_types") or [])),
     }
 
-
-# =============================================================================
-# COST CONTROLS — PR3 (Warmr v1.0 enrichment cost monitoring)
-# =============================================================================
 
 @app.get("/analytics/enrichment-cost")
 async def analytics_enrichment_cost(
@@ -1059,6 +1062,152 @@ async def analytics_pause_enrichment(
     return {"paused": True, "at": now.isoformat(), "message": "Enrichment gepauzeerd. Nieuwe Claude calls worden geblokkeerd tot herstart van de maand."}
 
 
+@app.get("/analytics/funnel")
+async def analytics_funnel(
+    weeks: int = 8,
+    group_by: str = "archetype",   # 'archetype' | 'sector' | 'archetype+sector'
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Funnel-cohort analyse per groep × week.
+
+    Per cohort 7 stages:
+      imported → has_email → has_verified_email → sent → opened (proxy) →
+      replied → interested
+
+    `group_by` opties:
+      - 'archetype' (default)
+      - 'sector'
+      - 'archetype+sector' (gecombineerd)
+      - 'none' (één cohort over alles)
+
+    Default 8 weken historie.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=max(weeks, 1))).isoformat()
+
+    # 1. Fetch leads in window
+    try:
+        leads_res = (
+            db.table("leads")
+            .select("id, archetype, sector, email, email_status, created_at")
+            .eq("workspace_id", workspace_id)
+            .gte("created_at", cutoff)
+            .execute()
+        )
+        leads = leads_res.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"funnel fetch failed: {e}")
+
+    lead_ids = [l["id"] for l in leads]
+
+    # 2. Bulk-fetch send-history en replies
+    sent_lead_ids: set[str] = set()
+    if lead_ids:
+        try:
+            hist = (
+                db.table("lead_campaign_history")
+                .select("lead_id, sent_at")
+                .in_("lead_id", lead_ids)
+                .eq("workspace_id", workspace_id)
+                .execute()
+            )
+            for h in (hist.data or []):
+                if h.get("sent_at"):
+                    sent_lead_ids.add(h["lead_id"])
+        except Exception:
+            pass
+
+    replied_lead_ids: set[str] = set()
+    interested_lead_ids: set[str] = set()
+    if lead_ids:
+        try:
+            replies = (
+                db.table("reply_inbox")
+                .select("lead_id, classification")
+                .in_("lead_id", lead_ids)
+                .eq("workspace_id", workspace_id)
+                .execute()
+            )
+            for r in (replies.data or []):
+                replied_lead_ids.add(r["lead_id"])
+                if r.get("classification") == "interested":
+                    interested_lead_ids.add(r["lead_id"])
+        except Exception:
+            pass
+
+    # 3. Bucket per cohort
+    def _key(lead: dict) -> str:
+        if group_by == "archetype":
+            return lead.get("archetype") or "(unknown)"
+        if group_by == "sector":
+            return lead.get("sector") or "(unknown)"
+        if group_by == "archetype+sector":
+            return f"{lead.get('archetype') or '?'} / {lead.get('sector') or '?'}"
+        return "all"
+
+    def _week_key(iso: str | None) -> str:
+        if not iso:
+            return "(unknown)"
+        try:
+            dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+            iso_year, iso_week, _ = dt.isocalendar()
+            return f"{iso_year}-W{iso_week:02d}"
+        except (ValueError, TypeError):
+            return "(unknown)"
+
+    cohorts: dict[str, dict] = {}  # (key, week) → counts dict
+    for lead in leads:
+        ck = (_key(lead), _week_key(lead.get("created_at")))
+        if ck not in cohorts:
+            cohorts[ck] = {
+                "group": ck[0], "week": ck[1],
+                "imported": 0, "has_email": 0, "has_verified_email": 0,
+                "sent": 0, "replied": 0, "interested": 0,
+            }
+        c = cohorts[ck]
+        c["imported"] += 1
+        if lead.get("email"):
+            c["has_email"] += 1
+            if (lead.get("email_status") or "").lower() in ("verified", "valid"):
+                c["has_verified_email"] += 1
+        if lead["id"] in sent_lead_ids:
+            c["sent"] += 1
+        if lead["id"] in replied_lead_ids:
+            c["replied"] += 1
+        if lead["id"] in interested_lead_ids:
+            c["interested"] += 1
+
+    cohort_list = sorted(cohorts.values(), key=lambda x: (x["week"], x["group"]))
+
+    # 4. Aggregated totals (over all cohorts)
+    totals = {
+        "imported": len(leads),
+        "has_email": sum(1 for l in leads if l.get("email")),
+        "has_verified_email": sum(1 for l in leads if (l.get("email_status") or "").lower() in ("verified", "valid")),
+        "sent": len(sent_lead_ids),
+        "replied": len(replied_lead_ids),
+        "interested": len(interested_lead_ids),
+    }
+    # Conversion rates
+    conversions = {
+        "email_pct": round(totals["has_email"] / totals["imported"] * 100, 1) if totals["imported"] else 0,
+        "verified_pct_of_email": round(totals["has_verified_email"] / totals["has_email"] * 100, 1) if totals["has_email"] else 0,
+        "sent_pct_of_verified": round(totals["sent"] / totals["has_verified_email"] * 100, 1) if totals["has_verified_email"] else 0,
+        "reply_rate_pct": round(totals["replied"] / totals["sent"] * 100, 1) if totals["sent"] else 0,
+        "interested_pct_of_replies": round(totals["interested"] / totals["replied"] * 100, 1) if totals["replied"] else 0,
+    }
+
+    return {
+        "weeks": weeks,
+        "group_by": group_by,
+        "totals": totals,
+        "conversions": conversions,
+        "cohorts": cohort_list,
+    }
+
+
 @app.get("/analytics/cost-attribution")
 async def analytics_cost_attribution(
     days: int = 30,
@@ -1195,6 +1344,660 @@ async def analytics_cost_attribution(
         "group_by": group_by,
         "totals": totals,
         "groups": out_groups,
+    }
+
+
+@app.get("/analytics/export/leads.csv")
+async def analytics_export_leads_csv(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+):
+    """Direct CSV-dump van alle workspace-leads voor offline analyse.
+
+    Geen pagination — beoogd voor 1-time export naar Excel/Google Sheets.
+    Returns text/csv response stream.
+    """
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    # Probeer eerst met de "rich" kolomset; bij ontbrekende kolommen valt de
+    # query terug op een minimale set zodat export blijft werken.
+    rich_select = (
+        "id, company_name, domain, email, email_status, phone, city, sector, "
+        "archetype, archetype_confidence, score, fit_score, data_quality_score, "
+        "personalization_potential, reachability_score, website_score, "
+        "google_rating, google_review_count, latest_review_date, "
+        "has_instagram, has_online_booking, meta_ads_active, "
+        "kvk_number, kvk_sbi_code, contact_first_name, contact_last_name, "
+        "manual_status_override, recontact_after, "
+        "imported_source, imported_at, created_at, updated_at"
+    )
+    minimal_select = (
+        "id, company_name, domain, email, email_status, phone, city, sector, "
+        "score, google_rating, google_review_count, "
+        "kvk_number, contact_first_name, contact_last_name, created_at"
+    )
+    leads: list[dict] = []
+    try:
+        res = (
+            db.table("leads").select(rich_select)
+            .eq("workspace_id", workspace_id).order("created_at", desc=True).execute()
+        )
+        leads = res.data or []
+    except Exception:
+        try:
+            res = (
+                db.table("leads").select(minimal_select)
+                .eq("workspace_id", workspace_id).order("created_at", desc=True).execute()
+            )
+            leads = res.data or []
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"export failed: {e2}")
+
+    # Headers afgeleid uit eerste lead om kolom-mismatch te vermijden
+    if leads:
+        headers = list(leads[0].keys())
+    else:
+        headers = ["id", "company_name", "domain", "email", "city", "sector", "created_at"]
+
+    def stream():
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        yield buf.getvalue()
+        buf.seek(0); buf.truncate(0)
+        for lead in leads:
+            writer.writerow({k: lead.get(k, "") for k in headers})
+            yield buf.getvalue()
+            buf.seek(0); buf.truncate(0)
+
+    filename = f"heatr-leads-{datetime.now(timezone.utc).date().isoformat()}.csv"
+    return StreamingResponse(
+        stream(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/healthz")
+async def healthz() -> dict:
+    """Externe uptime monitoring endpoint. Geen auth, geen DB-call.
+
+    Voor UptimeRobot / BetterUptime / Statuspage. Returnt timestamp om
+    cache-busting niet nodig te maken op caller-side.
+    """
+    return {"status": "ok", "service": "heatr-api", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/admin/missing-field-counts")
+async def admin_missing_field_counts(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Hoeveel leads missen welk veld — voor re-enqueue UI dropdown.
+
+    Levert quick counts zodat de admin zelf prioriteit kan kiezen
+    (bv. "archetype heeft 855 missing, treatment_focus 812").
+    """
+    fields = [
+        "archetype", "treatment_focus", "company_summary", "kvk_number",
+        "latest_review_date", "domain_age_years", "personalized_opener",
+        "contact_first_name",
+    ]
+    counts: dict[str, int | None] = {}
+    for f in fields:
+        try:
+            res = (
+                db.table("leads")
+                .select("id", count="exact")
+                .eq("workspace_id", workspace_id)
+                .is_(f, "null")
+                .limit(1)
+                .execute()
+            )
+            counts[f] = res.count or 0
+        except Exception:
+            counts[f] = None  # kolom bestaat niet of query faalde
+    return {"missing_field_counts": counts}
+
+
+class ReEnqueueRequest(BaseModel):
+    """Re-enqueue criteria — alle leeg = match alle leads in workspace."""
+    missing_field: str | None = "archetype"  # standaard: leads zonder archetype
+    sector: str | None = None
+    status_in: list[str] | None = None  # bv. ['discovered', 'enriched']
+    exclude_status: list[str] | None = ["unsubscribed", "forgotten"]
+    enrichment_types: list[str] | None = None  # None = alle default steps
+    priority: int = 5
+    dry_run: bool = True   # default veilig: toon match-count, geen writes
+    limit: int = 500       # safety cap
+    confirm_phrase: str | None = None  # moet "ENQUEUE" zijn voor execute
+
+
+@app.post("/admin/re-enqueue-stale-leads")
+async def admin_re_enqueue_stale_leads(
+    body: ReEnqueueRequest,
+    workspace_id: str = Depends(get_workspace),  # browser ok, type-to-confirm in UI
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Bulk-enqueue leads die nog niet (volledig) door de pipeline zijn geweest.
+
+    Use-cases:
+      - Migratie 014 net toegepast → leads zonder archetype re-enrichten
+      - Worker is dagen offline geweest → alle stale-leads opnieuw doen
+      - Specifieke step toevoegen voor sub-segment
+
+    UX-veiligheid: default dry_run=True. Voor execute moet body.confirm_phrase
+    exact "ENQUEUE" zijn — vangt accidental dubbelklikken / per-ongeluk-POST.
+    Cost-guard (€20/maand) is de uiteindelijke veiligheidsnet.
+    """
+    # Type-to-confirm guard — alleen bij echte execute
+    if not body.dry_run and body.confirm_phrase != "ENQUEUE":
+        raise HTTPException(
+            status_code=400,
+            detail="Niet uitgevoerd: voor execute moet confirm_phrase exact 'ENQUEUE' zijn (case-sensitive). Beschermt tegen accidental triggers.",
+        )
+    # 1. Build filter-query
+    try:
+        q = db.table("leads").select(
+            "id, company_name, sector, status, archetype, email_status, "
+            "kvk_number, score, created_at"
+        ).eq("workspace_id", workspace_id)
+
+        if body.missing_field:
+            q = q.is_(body.missing_field, "null")
+        if body.sector:
+            q = q.eq("sector", body.sector)
+        if body.status_in:
+            q = q.in_("status", body.status_in)
+        if body.exclude_status:
+            for s in body.exclude_status:
+                q = q.neq("status", s)
+
+        q = q.order("created_at", desc=True).limit(min(body.limit, 2000))
+        res = q.execute()
+        candidates = res.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"candidate query failed: {e}")
+
+    if not candidates:
+        return {
+            "matched_count": 0,
+            "enqueued_count": 0,
+            "dry_run": body.dry_run,
+            "sample": [],
+            "message": "Geen leads matchten de filter-criteria",
+        }
+
+    # 2. Skip leads die AL een pending/running job hebben
+    existing_active: set[str] = set()
+    try:
+        lead_ids = [c["id"] for c in candidates]
+        active = (
+            db.table("enrichment_jobs")
+            .select("lead_id")
+            .in_("lead_id", lead_ids)
+            .in_("status", ["pending", "running"])
+            .execute()
+        )
+        existing_active = {row["lead_id"] for row in (active.data or [])}
+    except Exception:
+        pass
+
+    fresh = [c for c in candidates if c["id"] not in existing_active]
+
+    sample = [
+        {"id": c["id"], "company_name": c.get("company_name"), "sector": c.get("sector")}
+        for c in fresh[:10]
+    ]
+
+    if body.dry_run:
+        return {
+            "matched_count": len(candidates),
+            "fresh_count": len(fresh),
+            "skipped_already_in_queue": len(existing_active),
+            "dry_run": True,
+            "sample": sample,
+            "message": f"Dry-run: {len(fresh)} leads zouden geënqueued worden. Roep nogmaals met dry_run=false om uit te voeren.",
+        }
+
+    # 3. Daadwerkelijk enqueue
+    from job_queue.enrichment_queue import queue_lead_for_enrichment
+
+    enqueued = 0
+    failures: list[dict] = []
+    for c in fresh:
+        try:
+            job_id = await queue_lead_for_enrichment(
+                lead_id=c["id"],
+                workspace_id=workspace_id,
+                priority=body.priority,
+                enrichment_types=body.enrichment_types,
+                supabase_client=db,
+            )
+            if job_id:
+                enqueued += 1
+        except Exception as e:
+            failures.append({"lead_id": c["id"], "error": str(e)[:200]})
+
+    return {
+        "matched_count": len(candidates),
+        "fresh_count": len(fresh),
+        "skipped_already_in_queue": len(existing_active),
+        "enqueued_count": enqueued,
+        "failed_count": len(failures),
+        "first_failures": failures[:5],
+        "dry_run": False,
+        "sample": sample,
+        "message": f"{enqueued} jobs aangemaakt. Worker pakt ze op vanaf eerstvolgende cyclus.",
+    }
+
+
+@app.get("/analytics/email-status-breakdown")
+async def analytics_email_status_breakdown(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Diagnose-endpoint voor de email-verifier pipeline.
+
+    Wat normaal stuk gaat: SMTP-verifier kan niet draaien (port 25 geblokkeerd),
+    catchall-detectie wordt te aggressief, of de step is helemaal niet
+    aangeroepen. Deze endpoint maakt zichtbaar in welk emmer leads belanden.
+
+    Buckets:
+      - verified / valid
+      - catchall (mailserver accepteert alles)
+      - not_found (SMTP zegt: bestaat niet)
+      - bounced (Warmr meldde bounce)
+      - unsubscribed
+      - pending (nog niet gecontroleerd)
+      - role_email (info@/contact@/etc — niet per persoon verifieerbaar)
+      - missing (geen email-veld)
+      - other / null
+
+    Per bucket: count + voorbeelden + percentage.
+    """
+    try:
+        leads_res = (
+            db.table("leads")
+            .select("id, email, email_status, sector, archetype")
+            .eq("workspace_id", workspace_id)
+            .execute()
+        )
+        leads = leads_res.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"breakdown fetch failed: {e}")
+
+    if not leads:
+        return {"total": 0, "buckets": {}}
+
+    role_prefixes = ("info@", "contact@", "hallo@", "praktijk@", "kliniek@", "receptie@", "secretariaat@")
+
+    buckets: dict[str, dict] = {}
+    by_sector: dict[str, dict[str, int]] = {}
+    by_archetype: dict[str, dict[str, int]] = {}
+
+    for lead in leads:
+        email = (lead.get("email") or "").lower().strip()
+        status = (lead.get("email_status") or "").lower().strip()
+
+        if not email:
+            bucket = "missing"
+        elif status in ("verified", "valid"):
+            bucket = "verified"
+        elif status == "catchall":
+            bucket = "catchall"
+        elif status == "not_found":
+            bucket = "not_found"
+        elif status == "bounced":
+            bucket = "bounced"
+        elif status == "unsubscribed":
+            bucket = "unsubscribed"
+        elif status == "pending":
+            bucket = "pending"
+        elif email.startswith(role_prefixes):
+            bucket = "role_email_unverified"
+        elif not status:
+            bucket = "no_status_set"
+        else:
+            bucket = f"other:{status}"
+
+        if bucket not in buckets:
+            buckets[bucket] = {"count": 0, "examples": []}
+        buckets[bucket]["count"] += 1
+        if len(buckets[bucket]["examples"]) < 3 and email:
+            buckets[bucket]["examples"].append(email)
+
+        # Cross-tab: bucket × sector / archetype
+        sec = lead.get("sector") or "(unknown)"
+        arc = lead.get("archetype") or "(unknown)"
+        by_sector.setdefault(sec, {})[bucket] = by_sector.setdefault(sec, {}).get(bucket, 0) + 1
+        by_archetype.setdefault(arc, {})[bucket] = by_archetype.setdefault(arc, {}).get(bucket, 0) + 1
+
+    total = len(leads)
+    bucket_list = sorted(
+        [{"bucket": k, "count": v["count"], "pct": round(v["count"] / total * 100, 1), "examples": v["examples"]}
+         for k, v in buckets.items()],
+        key=lambda x: -x["count"],
+    )
+
+    # Diagnostic hints — wat zegt deze breakdown over je pipeline?
+    hints = []
+    sendable = (buckets.get("verified", {}).get("count", 0) +
+                buckets.get("role_email_unverified", {}).get("count", 0))
+    if sendable == 0:
+        hints.append("CRITICAL: 0 sendable emails. Check of email_verifier daadwerkelijk draait + SMTP-port 25 toegankelijk is.")
+    if buckets.get("no_status_set", {}).get("count", 0) > total * 0.5:
+        hints.append("Veel leads zonder email_status — verifier-step wordt overgeslagen of crashed silent. Check enrichment_jobs voor failures.")
+    if buckets.get("catchall", {}).get("count", 0) > total * 0.3:
+        hints.append("Hoge catchall-rate — overweegging extra check via Hunter.io of skip catchall in send-flow.")
+    if buckets.get("not_found", {}).get("count", 0) > total * 0.4:
+        hints.append("Veel not_found — overweeg de email-waterval te tunen (meer pattern-tries, of Google Search fallback agressiever).")
+
+    return {
+        "total": total,
+        "buckets": bucket_list,
+        "by_sector": by_sector,
+        "by_archetype": by_archetype,
+        "diagnostic_hints": hints,
+    }
+
+
+@app.get("/analytics/enrichment-coverage")
+async def analytics_enrichment_coverage(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Per enrichment-stap: welk percentage van leads heeft de output?
+
+    Mapt elke pipeline-step naar een veld dat zou moeten ingevuld zijn als de
+    step succesvol gedraaid heeft. Toont waar de pipeline silent breaks
+    veroorzaakt — bv. 95% leads enrichted maar slechts 12% archetype-tagged
+    onthult dat archetype-classifier silent fault.
+    """
+    try:
+        leads_res = (
+            db.table("leads")
+            .select(
+                "id, email, email_status, kvk_number, kvk_sbi_code, "
+                "company_summary, personalized_opener, archetype, "
+                "treatment_focus, has_instagram, latest_review_date, "
+                "website_age_years, score, contact_first_name, "
+                "review_recency_checked_at, archetype_classified_at"
+            )
+            .eq("workspace_id", workspace_id)
+            .execute()
+        )
+        leads = leads_res.data or []
+    except Exception as e:
+        # Fallback minimal als kolommen ontbreken
+        try:
+            leads_res = (
+                db.table("leads")
+                .select("id, email, email_status, kvk_number, score, contact_first_name, archetype")
+                .eq("workspace_id", workspace_id)
+                .execute()
+            )
+            leads = leads_res.data or []
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"coverage fetch failed: {e2}")
+
+    total = len(leads)
+    if total == 0:
+        return {"total": 0, "steps": []}
+
+    # Mapping: step → predicate(lead) → True als step succesvol uitgevoerd
+    # NB: kvk_lookup/kvk_sbi zijn opt-in (betaalde API) en worden alleen meegerekend
+    # als KVK_API_KEY env-var gezet is. Zonder key wordt deze step bewust geskipt.
+    import os as _os
+    kvk_enabled = bool(_os.getenv("KVK_API_KEY"))
+
+    step_predicates = {
+        "email_waterfall": lambda l: bool(l.get("email")),
+        "email_verified": lambda l: (l.get("email_status") or "").lower() in ("verified", "valid"),
+        "company_enrichment": lambda l: bool(l.get("company_summary")),
+        "personalized_opener": lambda l: bool(l.get("personalized_opener")),
+        "owner_extract": lambda l: bool(l.get("contact_first_name")),
+        "treatment_classifier": lambda l: bool(l.get("treatment_focus")),
+        "review_recency": lambda l: bool(l.get("review_recency_checked_at") or l.get("latest_review_date")),
+        "archetype_classifier": lambda l: bool(l.get("archetype")),
+        "domain_age": lambda l: l.get("website_age_years") is not None,
+        "scoring": lambda l: l.get("score") is not None and (l.get("score") or 0) > 0,
+    }
+    if kvk_enabled:
+        step_predicates["kvk_lookup"] = lambda l: bool(l.get("kvk_number"))
+        step_predicates["kvk_sbi"] = lambda l: bool(l.get("kvk_sbi_code"))
+
+    steps_out = []
+    for step_name, pred in step_predicates.items():
+        try:
+            done_count = sum(1 for l in leads if pred(l))
+        except (KeyError, TypeError):
+            done_count = 0
+        steps_out.append({
+            "step": step_name,
+            "completed_count": done_count,
+            "missing_count": total - done_count,
+            "coverage_pct": round(done_count / total * 100, 1),
+        })
+
+    # Sort: lowest coverage first (= grootste pijn)
+    steps_out.sort(key=lambda x: x["coverage_pct"])
+
+    # Diagnostic hints
+    hints = []
+    for step in steps_out:
+        if step["coverage_pct"] < 20 and step["step"] not in ("email_verified",):
+            hints.append(f"{step['step']}: slechts {step['coverage_pct']}% coverage — step draait niet of crasht silent.")
+
+    return {
+        "total": total,
+        "steps": steps_out,
+        "diagnostic_hints": hints,
+    }
+
+
+@app.get("/analytics/queue-health")
+async def analytics_queue_health(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Snapshot van enrichment-queue gezondheid.
+
+    Toont per status hoeveel jobs, plus retry-distributie en welke steps het
+    vaakst falen. Voor diagnose van "waarom blijven leads in 'discovered'?".
+    """
+    from datetime import datetime, timezone, timedelta
+
+    try:
+        jobs_res = (
+            db.table("enrichment_jobs")
+            .select("id, status, current_step, retry_count, error_message, created_at, completed_at")
+            .eq("workspace_id", workspace_id)
+            .order("created_at", desc=True)
+            .limit(2000)
+            .execute()
+        )
+        jobs = jobs_res.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"queue fetch failed: {e}")
+
+    now = datetime.now(timezone.utc)
+    last_24h = (now - timedelta(hours=24)).isoformat()
+
+    # Counts per status
+    status_counts: dict[str, int] = {}
+    failed_step_counts: dict[str, int] = {}
+    retry_dist: dict[int, int] = {}
+    recent_24h_count = 0
+    total_completed = 0
+    total_failed = 0
+
+    for job in jobs:
+        status = job.get("status") or "(unknown)"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if job.get("created_at", "") > last_24h:
+            recent_24h_count += 1
+        if status == "completed":
+            total_completed += 1
+        elif status == "failed":
+            total_failed += 1
+            step = job.get("current_step") or "(unknown)"
+            failed_step_counts[str(step)] = failed_step_counts.get(str(step), 0) + 1
+        rc = int(job.get("retry_count") or 0)
+        retry_dist[rc] = retry_dist.get(rc, 0) + 1
+
+    # Top failing steps
+    top_failures = sorted(
+        [{"step": k, "fail_count": v} for k, v in failed_step_counts.items()],
+        key=lambda x: -x["fail_count"],
+    )[:5]
+
+    # Health verdict
+    pending = status_counts.get("pending", 0)
+    running = status_counts.get("running", 0)
+    completion_rate = round(total_completed / max(len(jobs), 1) * 100, 1)
+    fail_rate = round(total_failed / max(len(jobs), 1) * 100, 1)
+
+    hints = []
+    if pending > 100 and recent_24h_count > 0:
+        # Extrapolate: at current pace, hoeveel uur duurt het?
+        per_hour = recent_24h_count / 24
+        if per_hour > 0:
+            hours_to_drain = round(pending / per_hour, 1)
+            hints.append(f"Queue drain estimate: {hours_to_drain}u bij huidige snelheid ({per_hour:.1f}/u).")
+    if pending > 0 and running == 0:
+        hints.append("Pending jobs maar geen running — worker mogelijk offline. Check 'caffeinate' proces.")
+    if fail_rate > 20:
+        hints.append(f"Fail-rate {fail_rate}% — bekijk top failing steps voor root-cause.")
+
+    return {
+        "total_jobs": len(jobs),
+        "recent_24h": recent_24h_count,
+        "completion_rate_pct": completion_rate,
+        "fail_rate_pct": fail_rate,
+        "status_counts": status_counts,
+        "retry_distribution": dict(sorted(retry_dist.items())),
+        "top_failing_steps": top_failures,
+        "diagnostic_hints": hints,
+    }
+
+
+@app.get("/analytics/scraping-live")
+async def analytics_scraping_live(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Live view of all scraping jobs + recent companies_raw rows.
+
+    Built for frontend polling at ~3-5s interval. Returns a compact JSON
+    snapshot: per-status counters, currently-running jobs, recent results,
+    per (sector, city) aggregates van vandaag.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+    def _safe_count(status: str) -> int:
+        try:
+            r = (
+                db.table("scraping_jobs")
+                .select("id", count="exact")
+                .eq("workspace_id", workspace_id)
+                .eq("status", status)
+                .execute()
+            )
+            return r.count or 0
+        except Exception:
+            return 0
+
+    pending = _safe_count("pending")
+    running_res = (
+        db.table("scraping_jobs")
+        .select("id, sector, city, search_query, source, created_at")
+        .eq("workspace_id", workspace_id)
+        .eq("status", "running")
+        .order("created_at", desc=False)
+        .limit(30)
+        .execute()
+    )
+    running_rows = running_res.data or []
+
+    completed_res = (
+        db.table("scraping_jobs")
+        .select("id, sector, city, search_query, total_found, total_new, created_at")
+        .eq("workspace_id", workspace_id)
+        .eq("status", "completed")
+        .gte("created_at", since)
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+    completed_rows = completed_res.data or []
+
+    failed_res = (
+        db.table("scraping_jobs")
+        .select("id, sector, city, search_query, error_message, created_at")
+        .eq("workspace_id", workspace_id)
+        .eq("status", "failed")
+        .gte("created_at", since)
+        .order("created_at", desc=True)
+        .limit(10)
+        .execute()
+    )
+    failed_rows = failed_res.data or []
+
+    # Recent companies_raw (newest 30)
+    try:
+        cr_res = (
+            db.table("companies_raw")
+            .select("id, company_name, city, sector, domain, google_rating, google_review_count, created_at")
+            .eq("workspace_id", workspace_id)
+            .order("created_at", desc=True)
+            .limit(30)
+            .execute()
+        )
+        recent_companies = cr_res.data or []
+    except Exception:
+        recent_companies = []
+
+    # Per (sector, city) aggregate of companies_raw added in last 24h
+    try:
+        cr_recent_res = (
+            db.table("companies_raw")
+            .select("sector, city")
+            .eq("workspace_id", workspace_id)
+            .gte("created_at", since)
+            .execute()
+        )
+        cr_recent = cr_recent_res.data or []
+    except Exception:
+        cr_recent = []
+
+    agg: dict[tuple, int] = {}
+    for r in cr_recent:
+        key = (r.get("sector") or "?", r.get("city") or "?")
+        agg[key] = agg.get(key, 0) + 1
+    agg_list = [
+        {"sector": s, "city": c, "count": n}
+        for (s, c), n in sorted(agg.items(), key=lambda kv: -kv[1])
+    ]
+
+    return {
+        "counters": {
+            "pending": pending,
+            "running": len(running_rows),
+            "completed_24h": len(completed_rows),
+            "failed_24h": len(failed_rows),
+            "total_companies_24h": len(cr_recent),
+        },
+        "running_jobs": running_rows,
+        "completed_jobs": completed_rows,
+        "failed_jobs": failed_rows,
+        "recent_companies": recent_companies,
+        "by_sector_city": agg_list[:40],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
