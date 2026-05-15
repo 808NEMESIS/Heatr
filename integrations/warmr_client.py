@@ -218,12 +218,25 @@ class WarmrClient:
     ) -> dict:
         """Push multiple leads to Warmr in chunks of 100.
 
+        Two contract details that matter for the Warmr-side handler:
+          1. `campaign_id` is sent at the TOP LEVEL of the body, not just
+             inside each per-lead payload. Warmr's BulkLeadIn schema reads
+             body.campaign_id at top level — without it, the campaign_leads
+             link is silently skipped and pushed leads never reach a
+             scheduler.
+          2. After a successful push, we write back per-lead bookkeeping
+             on heatr_leads (warmr_lead_id, pushed_to_warmr_at, status,
+             preferred_inbox_id). The response.inserted array (added to
+             Warmr in May 2026) gives us {email, lead_id} per inserted
+             row, which we map by email to the original heatr lead.
+
         Args:
-            leads: List of lead dicts from Supabase.
+            leads: List of lead dicts from Supabase. Must contain `id`,
+                `email`, optionally `preferred_inbox_id`.
             campaign_id: Warmr campaign UUID.
 
         Returns:
-            Summary dict: { pushed: int, failed: int, duplicates: int }.
+            Summary dict: { pushed, failed, duplicates }.
         """
         summary = {"pushed": 0, "failed": 0, "duplicates": 0}
 
@@ -239,14 +252,23 @@ class WarmrClient:
             ]
 
             try:
+                # `campaign_id` MUST be sent top-level on the body — Warmr's
+                # BulkLeadIn model only reads it there. Without this the
+                # campaign_leads link is silently skipped on Warmr's side.
                 result = await self._request(
                     "POST",
                     "/leads/bulk",
-                    json={"leads": payloads},
+                    json={"leads": payloads, "campaign_id": campaign_id},
                 )
                 summary["pushed"] += result.get("pushed", len(chunk))
                 summary["failed"] += result.get("failed", 0)
                 summary["duplicates"] += result.get("duplicates", 0)
+
+                # Per-lead bookkeeping from response.inserted (added to
+                # Warmr May 2026). Map by lowercased email back to the
+                # original heatr_lead so we can write warmr_lead_id +
+                # pushed_to_warmr_at + status + preferred_inbox_id.
+                self._writeback_bulk_bookkeeping(chunk, result)
             except WarmrAPIError as e:
                 logger.error(
                     "Bulk push chunk %d failed (HTTP %d): %s",
@@ -261,6 +283,80 @@ class WarmrClient:
             summary["pushed"], summary["failed"], summary["duplicates"],
         )
         return summary
+
+    def _writeback_bulk_bookkeeping(
+        self,
+        heatr_chunk: list[dict],
+        warmr_response: dict,
+    ) -> None:
+        """Update heatr_leads with Warmr's bookkeeping after a bulk push.
+
+        Looks up `inserted` on Warmr's response — list of {email, lead_id}.
+        Older Warmr versions (pre-May-2026) don't return this field; in that
+        case we log a single warning and skip writeback gracefully (no crash).
+
+        Email matching is case-insensitive on both sides — Warmr lowercases
+        on insert, but heatr leads occasionally carry uppercase letters.
+        """
+        if self._sb is None:
+            return  # No Supabase client → no writeback possible (test mode)
+
+        inserted = warmr_response.get("inserted")
+        if not inserted:
+            # Empty list = nothing actually inserted (all dups/suppressed).
+            # Missing key = older Warmr without the inserted field.
+            if "inserted" not in warmr_response:
+                logger.warning(
+                    "Warmr response missing 'inserted' field — heatr_leads "
+                    "bookkeeping skipped (older Warmr version?). "
+                    "warmr_lead_id will remain NULL for this push."
+                )
+            return
+
+        email_to_warmr_id: dict[str, str] = {}
+        for row in inserted:
+            email = (row.get("email") or "").lower()
+            wid = row.get("lead_id")
+            if email and wid:
+                email_to_warmr_id[email] = str(wid)
+
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        missing_emails: list[str] = []
+        for lead in heatr_chunk:
+            heatr_id = lead.get("id")
+            email = (lead.get("email") or "").lower()
+            if not heatr_id or not email:
+                continue
+            wid = email_to_warmr_id.get(email)
+            if not wid:
+                # Lead in the input chunk but not in Warmr's inserted list:
+                # likely a duplicate (already on heatr_leads.warmr_lead_id
+                # from a prior push) or suppressed. Skip silently — operator
+                # can see the aggregate `duplicates`/`suppressed` counts.
+                missing_emails.append(email)
+                continue
+            try:
+                self._sb.table("heatr_leads").update({
+                    "warmr_lead_id":      wid,
+                    "pushed_to_warmr_at": now_iso,
+                    "status":             "pushed_to_warmr",
+                    "preferred_inbox_id": lead.get("preferred_inbox_id"),
+                }).eq("id", heatr_id).execute()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to write heatr_leads bookkeeping for %s: %s",
+                    heatr_id, exc,
+                )
+
+        if missing_emails:
+            logger.info(
+                "Bulk push: %d lead(s) had no match in Warmr inserted (likely "
+                "duplicates or suppressed): %s",
+                len(missing_emails),
+                ", ".join(missing_emails[:5]) + (" …" if len(missing_emails) > 5 else ""),
+            )
 
     # =========================================================================
     # Campaign operations
