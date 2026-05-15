@@ -80,6 +80,31 @@ def test_gate_template_without_threshold_passes_all_through():
     assert len(auto) == 1
 
 
+def test_is_test_lead_bypasses_personalization_gate():
+    """is_test_lead=true MUST bypass the personalization-score threshold,
+    not just the completeness check (faf8abd only covered completeness).
+    Test-lead with score 0 → would normally skip (0 < 50 review_floor at
+    threshold 70), but must land in auto bucket."""
+    _, gate_fn = _import_gate()
+    template = {"min_personalization_score": 70}
+    test_lead = {
+        "id": "test-1",
+        "is_test_lead": True,
+        "personalization_potential": 0,   # would otherwise skip
+    }
+    real_skip_lead = {
+        "id": "real-low",
+        "personalization_potential": 0,   # not a test lead → still skip
+    }
+    auto, review, skip = gate_fn([test_lead, real_skip_lead], template)
+    assert test_lead in auto, "test-lead must bypass gate, land in auto"
+    assert test_lead not in skip
+    assert test_lead not in review
+    assert real_skip_lead in skip, "non-test low-score lead must still skip"
+    # _pers_score_0_100 is gehydrateerd ook voor test-leads (debug-output)
+    assert test_lead["_pers_score_0_100"] == 0
+
+
 # ---------------------------------------------------------------------------
 # pick_observation_block — order of precedence
 # ---------------------------------------------------------------------------

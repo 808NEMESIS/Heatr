@@ -899,6 +899,15 @@ def _gate_leads_for_template(
     auto, review, skip = [], [], []
     review_floor = max(threshold - 20, 0)
     for lead in leads:
+        # is_test_lead bypass: test-leads slaan de personalization-score-gate
+        # over. faf8abd claimde dat deze bypass werkte maar raakte alleen de
+        # completeness-check; de score-drempel hield test-leads alsnog tegen.
+        # Test-leads krijgen wél nog hun _pers_score_0_100 berekend zodat
+        # downstream-rendering (debug-output, logs) ze niet als "0" toont.
+        if lead.get("is_test_lead"):
+            lead["_pers_score_0_100"] = _personalization_score_0_100(lead)
+            auto.append(lead)
+            continue
         score = _personalization_score_0_100(lead)
         lead["_pers_score_0_100"] = score
         if score >= threshold:
