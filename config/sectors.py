@@ -86,7 +86,6 @@ SECTORS: dict[str, SectorConfig] = {
                 "label": "Manueel en fysiek",
                 "lead_keywords": [
                     "osteopathie praktijk",
-                    "chiropractor",
                     "craniosacraal therapie",
                     "manueel therapeut",
                     "rolfing",
@@ -94,7 +93,7 @@ SECTORS: dict[str, SectorConfig] = {
                 ],
                 "disqualifiers": ["ziekenhuis", "revalidatiecentrum"],
                 "icp_signals": [
-                    "osteopathie", "chiropractie", "craniosacraal", "cranio sacraal",
+                    "osteopathie", "craniosacraal", "cranio sacraal",
                     "rolfing", "feldenkrais", "structurele integratie", "manueel",
                 ],
             },
@@ -235,7 +234,7 @@ SECTORS: dict[str, SectorConfig] = {
     # COSMETISCHE BEHANDELAARS
     # =========================================================================
     "cosmetische_behandelaars": {
-        "label": "Cosmetische Behandelaars",
+        "label": "Cosmetische Klinieken",
         "sbi_codes": [
             "96022",  # Schoonheidsverzorging, pedicures, manicures, visagie, image consulting
             "86221",  # Medisch specialisten incl. plastische chirurgie (hoofdcode voor klinieken)
@@ -285,12 +284,16 @@ SECTORS: dict[str, SectorConfig] = {
                     "morpheus8 behandeling",
                     "HIFU ultherapy",
                     "microneedling praktijk",
+                    "tatoeage verwijdering kliniek",
+                    "laser tattoo removal",
                 ],
                 "disqualifiers": ["laserontharing only"],
                 "icp_signals": [
                     "fractional laser", "CO2 laser", "erbium laser", "IPL",
                     "morpheus8", "HIFU", "ultherapy", "radiofrequentie", "RF microneedling",
                     "microneedling", "fotorejuvenation", "huidverjonging",
+                    "tatoeage verwijdering", "laser tattoo removal", "PicoSure",
+                    "Q-switched laser", "tatoeage laseren",
                 ],
             },
             "ontharing": {
@@ -365,14 +368,16 @@ SECTORS: dict[str, SectorConfig] = {
                     "cryolipolyse",
                     "coolsculpting",
                     "EMsculpt",
+                    "EMS afslank kliniek",
                     "cavitation behandeling",
                     "endermologie",
+                    "body contouring kliniek",
                 ],
                 "disqualifiers": [],
                 "icp_signals": [
-                    "cryolipolyse", "coolsculpting", "EMsculpt", "cavitation",
-                    "endermologie", "LPG", "lymfedrainage cosmetisch",
-                    "vetbevriezing", "vetreductie",
+                    "cryolipolyse", "coolsculpting", "EMsculpt", "EMS", "spierstimulatie afslank",
+                    "cavitation", "endermologie", "LPG", "lymfedrainage cosmetisch",
+                    "vetbevriezing", "vetreductie", "body contouring", "cellulitis behandeling",
                 ],
             },
             "nagel_wimper": {
@@ -445,14 +450,25 @@ SECTORS: dict[str, SectorConfig] = {
         "lead_keywords": [
             "cosmetische kliniek",
             "beauty kliniek",
+            "beautykliniek",
             "huidkliniek",
             "esthetische kliniek",
+            "medical spa",
+            "medi-spa",
+            "medspa",
+            "huidinstituut",
+            "esthetisch centrum",
+            "cosmetisch centrum",
         ],
         "disqualifiers": [
             "ziekenhuis", "UMC", "academisch medisch centrum",
             "spoedeisende hulp", "SEH",
             "dermatologie vergoed",  # puur medische dermatologie zonder cosmetische focus
             "oncologie", "kinderkliniek",
+            # Pure wellness zonder medische component — gefilterd uit globaal,
+            # subcategorieën als 'schoonheidssalons' hebben eigen specifieke ICP-logica.
+            "alleen massage", "wellness resort", "sauna only", "zonnebank",
+            "alleen pedicure", "alleen kapper",
         ],
         "website_signals": {
             "positive": [
@@ -478,7 +494,84 @@ SECTORS: dict[str, SectorConfig] = {
             "dit valideert."
         ),
     },
+
+    # =========================================================================
+    # CHIROPRACTOREN
+    # =========================================================================
+    "chiropractoren": {
+        "label": "Chiropractoren",
+        "sbi_codes": [],  # KvK-flow is opt-in (kost geld) — Maps-scraping gebruikt geen SBI.
+        "sbi_codes_notes": {},
+        "subcategories": {
+            "chiropractie_algemeen": {
+                "label": "Chiropractie algemeen",
+                "lead_keywords": [
+                    "chiropractor",
+                    "chiropractie",
+                    "chiropractie praktijk",
+                    "chiropractisch centrum",
+                    "rugklachten chiropractor",
+                    "wervelkolom behandeling",
+                ],
+                "disqualifiers": [
+                    "alleen fysiotherapie",
+                    "alleen massage",
+                    # 'osteopaat' alleen disqualifier als de praktijk GEEN chiro doet.
+                    # Pure osteopathie zit in alternatieve_geneeskunde.manueel_fysiek.
+                    "alleen osteopaat",
+                ],
+                "icp_signals": [
+                    "chiropractor", "chiropractie", "DC", "Doctor of Chiropractic",
+                    "SCN", "SCN-geregistreerd", "wervelkolom", "manuele aanpassing",
+                    "spinale manipulatie", "subluxatie",
+                ],
+            },
+        },
+        "lead_keywords": [
+            "chiropractor",
+            "chiropractie",
+            "chiropractie praktijk",
+        ],
+        "disqualifiers": [
+            "ziekenhuis", "revalidatiecentrum",
+            "alleen fysiotherapie", "alleen massage",
+        ],
+        "website_signals": {
+            "positive": [
+                "chiropractor", "chiropractie",
+                "SCN", "SCN-geregistreerd", "Stichting Chiropractie Nederland",
+                "DC", "Doctor of Chiropractic",
+                "wervelkolom", "manuele aanpassing", "spinale manipulatie",
+                "klachtenregeling", "AVG", "privacyverklaring",
+                "online afspraak", "online booking",
+                "Wkkgz", "geschillencommissie",
+            ],
+            "negative": [
+                "alleen fysio", "alleen massage",
+                "genezing gegarandeerd", "wondermiddel",
+            ],
+        },
+        "notes": (
+            "Chiropractoren als eigen ICP-sector — voorheen ondergebracht in "
+            "alternatieve_geneeskunde.manueel_fysiek (samen met osteopathie, "
+            "craniosacraal, rolfing, feldenkrais). Per 2026-05-20 zijn chiropractor- "
+            "en chiropractie-keywords daar verwijderd om dubbele classificatie te "
+            "voorkomen. Lead-bron is Google Maps query-scraping (zoekquery-termen "
+            "hierboven). Geen KvK/SBI-filtering."
+        ),
+    },
 }
+
+
+# Sectoren die op dit moment actief worden gescraped + getarget.
+# alternatieve_geneeskunde blijft in SECTORS dict voor backwards-compat met
+# bestaande leads (sector='alternatieve_geneeskunde' in DB), maar valt uit
+# list_sectors() zodat frontend-dropdown + scrape-flows alleen actieve ICP's
+# tonen.
+ACTIVE_SECTORS: list[str] = [
+    "cosmetische_behandelaars",
+    "chiropractoren",
+]
 
 
 def get_sector(sector_key: str) -> SectorConfig:
@@ -540,5 +633,12 @@ def classify_subcategory(sector_key: str, website_text: str) -> str | None:
 
 
 def list_sectors() -> list[str]:
-    """Return all active sector keys."""
-    return list(SECTORS.keys())
+    """Return only currently active sector keys (per ACTIVE_SECTORS).
+
+    alternatieve_geneeskunde is per 2026-05-20 inactief — blijft in SECTORS
+    dict (backwards-compat met bestaande leads) maar valt hier uit zodat
+    nieuwe scrape-flows + frontend-dropdowns alleen de actieve ICP's tonen.
+    Voor admin-zicht op alle sectoren: gebruik api/main.py /sectors/full
+    dat direct over SECTORS.items() itereert.
+    """
+    return [s for s in ACTIVE_SECTORS if s in SECTORS]
