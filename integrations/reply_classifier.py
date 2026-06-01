@@ -202,10 +202,11 @@ async def process_reply(
       - question:            high-priority inbox flag
       - other:               inbox, manual review
     """
-    # Load lead
+    # Load lead (workspace-scoped — prevent cross-tenant data-access via webhook
+    # with attacker-controlled lead_id)
     lead_res = supabase_client.table("leads").select("*").eq(
         "id", lead_id,
-    ).maybe_single().execute()
+    ).eq("workspace_id", workspace_id).maybe_single().execute()
     if not lead_res.data:
         return {"error": "lead not found"}
 
@@ -225,13 +226,13 @@ async def process_reply(
     category = classification.get("category")
     return_date = classification.get("return_date")
 
-    # Store classification on the reply row (reply_inbox)
+    # Store classification on the reply row (reply_inbox, workspace-scoped)
     try:
         supabase_client.table("reply_inbox").update({
             "classification": category,
             "classification_summary": classification.get("summary", ""),
             "classification_sentiment": classification.get("sentiment", ""),
-        }).eq("id", reply_id).execute()
+        }).eq("id", reply_id).eq("workspace_id", workspace_id).execute()
     except Exception as e:
         logger.debug("reply_inbox update: %s", e)
 
@@ -246,8 +247,8 @@ async def process_reply(
                 "unsubscribed_at": datetime.now(timezone.utc).isoformat(),
                 "unsubscribe_source": "reply_classifier",
                 "gdpr_safe": False,
-            }).eq("id", lead_id).execute()
-            await _stop_all_sequences(lead_id, supabase_client)
+            }).eq("id", lead_id).eq("workspace_id", workspace_id).execute()
+            await _stop_all_sequences(lead_id, workspace_id, supabase_client)
             actions_taken.append("marked_unsubscribed")
         except Exception as e:
             logger.error("unsubscribe action failed: %s", e)
@@ -258,8 +259,8 @@ async def process_reply(
                 "status": "disqualified",
                 "disqualification_reason": "not_interested_reply",
                 "next_contact_after": (datetime.now(timezone.utc) + timedelta(days=365)).isoformat(),
-            }).eq("id", lead_id).execute()
-            await _stop_all_sequences(lead_id, supabase_client)
+            }).eq("id", lead_id).eq("workspace_id", workspace_id).execute()
+            await _stop_all_sequences(lead_id, workspace_id, supabase_client)
             actions_taken.append("marked_disqualified")
         except Exception:
             pass
@@ -271,8 +272,8 @@ async def process_reply(
                 "snoozed_until": return_date,
                 "next_contact_after": return_date,
                 "crm_stage": "later",
-            }).eq("id", lead_id).execute()
-            await _pause_sequences(lead_id, supabase_client)
+            }).eq("id", lead_id).eq("workspace_id", workspace_id).execute()
+            await _pause_sequences(lead_id, workspace_id, supabase_client)
             actions_taken.append(f"snoozed_until_{return_date}")
         except Exception:
             pass
@@ -282,8 +283,8 @@ async def process_reply(
         try:
             supabase_client.table("leads").update({
                 "snoozed_until": return_date,
-            }).eq("id", lead_id).execute()
-            await _pause_sequences(lead_id, supabase_client, until=return_date)
+            }).eq("id", lead_id).eq("workspace_id", workspace_id).execute()
+            await _pause_sequences(lead_id, workspace_id, supabase_client, until=return_date)
             actions_taken.append(f"auto_reply_snooze_{return_date}")
         except Exception:
             pass
@@ -294,8 +295,8 @@ async def process_reply(
             supabase_client.table("leads").update({
                 "status": "needs_review",
                 "disqualification_reason": f"referred_to:{referred_to}" if referred_to else "wrong_person",
-            }).eq("id", lead_id).execute()
-            await _pause_sequences(lead_id, supabase_client)
+            }).eq("id", lead_id).eq("workspace_id", workspace_id).execute()
+            await _pause_sequences(lead_id, workspace_id, supabase_client)
             actions_taken.append("flagged_wrong_person")
         except Exception:
             pass
@@ -305,8 +306,8 @@ async def process_reply(
             supabase_client.table("leads").update({
                 "status": "replied",
                 "crm_stage": "gereageerd",
-            }).eq("id", lead_id).execute()
-            await _stop_all_sequences(lead_id, supabase_client)
+            }).eq("id", lead_id).eq("workspace_id", workspace_id).execute()
+            await _stop_all_sequences(lead_id, workspace_id, supabase_client)
             actions_taken.append("marked_interested")
         except Exception:
             pass
@@ -317,7 +318,7 @@ async def process_reply(
             supabase_client.table("leads").update({
                 "status": "replied",
                 "crm_stage": "gereageerd",
-            }).eq("id", lead_id).execute()
+            }).eq("id", lead_id).eq("workspace_id", workspace_id).execute()
             actions_taken.append("flagged_question")
         except Exception:
             pass
@@ -351,30 +352,31 @@ async def process_reply(
     }
 
 
-async def _stop_all_sequences(lead_id: str, supabase_client: Any) -> None:
-    """Stop all active outreach sequences for this lead."""
+async def _stop_all_sequences(lead_id: str, workspace_id: str, supabase_client: Any) -> None:
+    """Stop all active outreach sequences for this lead (workspace-scoped)."""
     try:
         supabase_client.table("lead_campaign_history").update({
             "status": "stopped",
             "is_active": False,
-        }).eq("lead_id", lead_id).eq("is_active", True).execute()
+        }).eq("lead_id", lead_id).eq("workspace_id", workspace_id).eq("is_active", True).execute()
     except Exception:
         pass
 
 
 async def _pause_sequences(
     lead_id: str,
+    workspace_id: str,
     supabase_client: Any,
     until: str | None = None,
 ) -> None:
-    """Pause sequences — will resume on `until` or require manual restart."""
+    """Pause sequences (workspace-scoped) — will resume on `until` or require manual restart."""
     update: dict[str, Any] = {"status": "paused"}
     if until:
         update["next_send_at"] = until
     try:
         supabase_client.table("lead_campaign_history").update(update).eq(
             "lead_id", lead_id
-        ).eq("is_active", True).execute()
+        ).eq("workspace_id", workspace_id).eq("is_active", True).execute()
     except Exception:
         pass
 
