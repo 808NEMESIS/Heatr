@@ -37,9 +37,16 @@ export async function apiFetch<T = unknown>(
     let msg = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      msg = body.detail || body.message || msg;
+      msg = typeof body.detail === 'string' ? body.detail : body.message || msg;
     } catch {
       /* no-op */
+    }
+    // Auth-fouten globaal signaleren — Shell toont een banner zodat de
+    // operator "Niet geautoriseerd" ziet in plaats van stille lege lijsten.
+    if (res.status === 401 || res.status === 403) {
+      window.dispatchEvent(
+        new CustomEvent('heatr:auth-error', { detail: { status: res.status, path, message: msg } })
+      );
     }
     throw new ApiError(msg, res.status);
   }

@@ -2026,14 +2026,54 @@ async def analytics_export_leads_csv(
     )
 
 
+def _auth_mode_summary() -> dict:
+    """Welke auth-paden zijn geconfigureerd. Booleans only — geen secrets.
+
+    Bewust unauthenticated beschikbaar (via /healthz): als de auth-config
+    stuk is, is /health/startup zelf onbereikbaar (vereist auth) en is dit
+    de enige manier om de misconfiguratie te zien zonder server-logs.
+    """
+    service_key = os.getenv("HEATR_API_KEY", "")
+    jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "")
+    legacy = os.getenv("LEGACY_DEV_TOKEN_ALLOWED", "false").lower() == "true"
+    modes = []
+    if service_key and len(service_key) >= 32:
+        modes.append("service_key")
+    if jwt_secret:
+        modes.append("supabase_jwt")
+    if legacy:
+        modes.append("legacy_dev_token")
+    return {
+        "service_key_configured": bool(service_key) and len(service_key) >= 32,
+        "supabase_jwt_configured": bool(jwt_secret),
+        "legacy_dev_token_allowed": legacy,
+        "active_modes": modes,
+        "warning": (
+            "GEEN enkel auth-pad geconfigureerd — alle requests krijgen 401. "
+            "Zet HEATR_API_KEY (service) of SUPABASE_JWT_SECRET (browser), of "
+            "tijdelijk LEGACY_DEV_TOKEN_ALLOWED=true tijdens frontend-cutover."
+        ) if not modes else (
+            "legacy_dev_token staat AAN — elke Bearer-token wordt geaccepteerd. "
+            "Uitschakelen zodra frontend-next Supabase JWT gebruikt."
+        ) if legacy else None,
+    }
+
+
 @app.get("/healthz")
 async def healthz() -> dict:
     """Externe uptime monitoring endpoint. Geen auth, geen DB-call.
 
     Voor UptimeRobot / BetterUptime / Statuspage. Returnt timestamp om
-    cache-busting niet nodig te maken op caller-side.
+    cache-busting niet nodig te maken op caller-side. Bevat auth-mode
+    booleans zodat een kapotte auth-config diagnosticeerbaar is zonder
+    ingelogde sessie (zie _auth_mode_summary).
     """
-    return {"status": "ok", "service": "heatr-api", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "ok",
+        "service": "heatr-api",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "auth": _auth_mode_summary(),
+    }
 
 
 @app.get("/admin/missing-field-counts")
@@ -3090,6 +3130,7 @@ async def health_startup(
     result = await validate_startup(supabase_client=db)
     return {
         "success": result.success,
+        "auth": _auth_mode_summary(),
         "checks": [
             {"name": c.name, "passed": c.passed, "detail": c.detail}
             for c in result.checks
