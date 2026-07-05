@@ -545,7 +545,6 @@ export function CampagneLaunchPage() {
                 </thead>
                 <tbody>
                   {eligibleLeads.map((l: Lead) => {
-                    const risky = isRiskyEmail(l.email_status);
                     return (
                     <tr
                       key={l.id}

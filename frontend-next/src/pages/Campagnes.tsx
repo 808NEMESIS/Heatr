@@ -27,14 +27,14 @@ interface Inbox {
 }
 
 export function CampagnesPage() {
-  const { data: camps, isLoading: lc } = useQuery({
+  const { data: camps, isLoading: lc, isError: campsError, error: campsErr, refetch: refetchCamps } = useQuery({
     queryKey: ['campaigns'],
-    queryFn: () => api.get<{ campaigns: Campaign[] }>('/campaigns').catch(() => ({ campaigns: [] })),
+    queryFn: () => api.get<{ campaigns: Campaign[] }>('/campaigns'),
   });
 
-  const { data: inboxes, isLoading: li } = useQuery({
+  const { data: inboxes, isLoading: li, isError: inboxesError } = useQuery({
     queryKey: ['warmr-inboxes'],
-    queryFn: () => api.get<{ inboxes: Inbox[] }>('/warmr/inboxes').catch(() => ({ inboxes: [] })),
+    queryFn: () => api.get<{ inboxes: Inbox[] }>('/warmr/inboxes'),
   });
 
   const campList = camps?.campaigns || [];
@@ -63,6 +63,10 @@ export function CampagnesPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {Array.from({ length: 3 }).map((_, i) => <div key={i} className="skeleton h-24" />)}
           </div>
+        ) : inboxesError ? (
+          <Card className="p-6 text-sm border-[var(--color-danger)] text-[var(--color-danger)]">
+            Kon Warmr-inboxes niet laden — is de Warmr-API bereikbaar? (fout is ook als toast gemeld)
+          </Card>
         ) : inboxList.length === 0 ? (
           <Card className="p-6 text-sm text-[var(--color-stone-500)]">
             Geen Warmr inboxes geconfigureerd. Voeg er één toe in Warmr om campagnes te kunnen draaien.
@@ -90,6 +94,12 @@ export function CampagnesPage() {
         <h3 className="font-display text-lg font-semibold mb-3">Campagnes</h3>
         {lc ? (
           <div className="skeleton h-40" />
+        ) : campsError ? (
+          <Card className="p-10 text-center border-[var(--color-danger)]">
+            <p className="text-[var(--color-danger)] font-medium mb-1">Kon campagnes niet laden</p>
+            <p className="text-xs text-[var(--color-stone-500)] mb-3">{campsErr instanceof Error ? campsErr.message : 'Onbekende fout'}</p>
+            <button onClick={() => refetchCamps()} className="rounded bg-[var(--color-blush-500)] px-3 py-1.5 text-sm text-white hover:opacity-90">Opnieuw proberen</button>
+          </Card>
         ) : campList.length === 0 ? (
           <Card className="p-12 text-center">
             <Send className="h-8 w-8 mx-auto mb-3 text-[var(--color-stone-300)]" />

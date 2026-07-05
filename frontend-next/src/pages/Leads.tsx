@@ -38,7 +38,7 @@ export function LeadsPage() {
   const [minScore, setMinScore] = useState(0);
   const [sortBy, setSortBy] = useState('score');
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['leads', 500],
     queryFn: () => api.get<LeadsResponse>('/leads?limit=500'),
     refetchInterval: 8000,
@@ -159,7 +159,16 @@ export function LeadsPage() {
                   ))}
                 </tr>
               ))}
-              {!isLoading && filtered.length === 0 && (
+              {isError && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-16 text-center">
+                    <p className="text-[var(--color-danger)] font-medium mb-1">Kon leads niet laden</p>
+                    <p className="text-xs text-[var(--color-stone-500)] mb-3">{error instanceof Error ? error.message : 'Onbekende fout'}</p>
+                    <button onClick={() => refetch()} className="rounded bg-[var(--color-blush-500)] px-3 py-1.5 text-sm text-white hover:opacity-90">Opnieuw proberen</button>
+                  </td>
+                </tr>
+              )}
+              {!isLoading && !isError && filtered.length === 0 && (
                 <tr><td colSpan={7} className="px-4 py-16 text-center text-[var(--color-stone-500)]">Geen leads met deze filters.</td></tr>
               )}
               {filtered.map((l) => (

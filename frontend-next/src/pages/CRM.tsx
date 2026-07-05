@@ -17,6 +17,7 @@ import { SECTOR_LABEL } from '@/lib/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { QueryStateGate } from '@/components/ui/query-state';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { cn } from '@/lib/cn';
 
@@ -57,7 +58,7 @@ export function CRMPage() {
 
   const { data: stats } = useQuery({
     queryKey: ['crm-stats'],
-    queryFn: () => api.get<CrmStats>('/crm/stats').catch((): CrmStats => ({})),
+    queryFn: () => api.get<CrmStats>('/crm/stats'),
     refetchInterval: 30_000,
   });
 
@@ -166,18 +167,24 @@ function StatCard({
 }
 
 function FocusView() {
-  const { data: tasks, isLoading } = useQuery({
+  const { data: tasks, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['tasks-open'],
-    queryFn: () => api.get<{ tasks: Task[] }>('/tasks?status=open').catch(() => ({ tasks: [] })),
+    queryFn: () => api.get<{ tasks: Task[] }>('/tasks?status=open'),
   });
   const { data: activity } = useQuery({
     queryKey: ['crm-timeline'],
     queryFn: () =>
-      api
-        .get<{ events: { id: string; event_type: string; title: string; body?: string; created_at: string; company_name?: string; lead_id?: string }[] }>('/crm/timeline/recent')
-        .catch(() => ({ events: [] })),
+      api.get<{ events: { id: string; event_type: string; title: string; body?: string; created_at: string; company_name?: string; lead_id?: string }[] }>('/crm/timeline/recent'),
     refetchInterval: 60_000,
   });
+
+  if (isError) {
+    return (
+      <QueryStateGate isLoading={false} isError error={error} onRetry={() => refetch()}>
+        {null}
+      </QueryStateGate>
+    );
+  }
 
   const list = tasks?.tasks || [];
   const now = new Date();
@@ -299,9 +306,9 @@ function TaskRow({ task }: { task: Task }) {
 }
 
 function KanbanView() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['crm-pipeline'],
-    queryFn: () => api.get<{ stages: Record<string, Lead[]> }>('/crm/pipeline').catch(() => ({ stages: {} })),
+    queryFn: () => api.get<{ stages: Record<string, Lead[]> }>('/crm/pipeline'),
   });
 
   const stagesData: Record<string, Lead[]> = data?.stages || {};
@@ -312,6 +319,14 @@ function KanbanView() {
       <div className="grid grid-cols-4 gap-3">
         {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton h-64" />)}
       </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <QueryStateGate isLoading={false} isError error={error} onRetry={() => refetch()}>
+        {null}
+      </QueryStateGate>
     );
   }
 

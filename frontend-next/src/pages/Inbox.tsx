@@ -27,9 +27,9 @@ interface DraftResponse {
 }
 
 export function InboxPage() {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['reply-inbox'],
-    queryFn: () => api.get<{ replies: Reply[] }>('/reply-inbox?limit=100').catch(() => ({ replies: [] })),
+    queryFn: () => api.get<{ replies: Reply[] }>('/reply-inbox?limit=100'),
     refetchInterval: 30_000,
   });
 
@@ -45,7 +45,17 @@ export function InboxPage() {
 
       {isLoading && <div className="skeleton h-64" />}
 
-      {!isLoading && (error || replies.length === 0) && (
+      {/* Fout ≠ lege inbox: een API-fout als "Geen replies nog" presenteren
+          verbergt config-issues. Aparte error-state met retry. */}
+      {!isLoading && isError && (
+        <Card className="p-10 text-center border-[var(--color-danger)]">
+          <p className="text-[var(--color-danger)] font-medium mb-1">Kon inbox niet laden</p>
+          <p className="text-xs text-[var(--color-stone-500)] mb-3">{error instanceof Error ? error.message : 'Onbekende fout'}</p>
+          <button onClick={() => refetch()} className="rounded bg-[var(--color-blush-500)] px-3 py-1.5 text-sm text-white hover:opacity-90">Opnieuw proberen</button>
+        </Card>
+      )}
+
+      {!isLoading && !isError && replies.length === 0 && (
         <Card className="p-16 text-center">
           <Mail className="h-8 w-8 mx-auto mb-3 text-[var(--color-stone-300)]" />
           <h3 className="font-display text-xl font-semibold mb-2">Geen replies nog</h3>
@@ -55,7 +65,7 @@ export function InboxPage() {
         </Card>
       )}
 
-      {!isLoading && replies.length > 0 && (
+      {!isLoading && !isError && replies.length > 0 && (
         <Card className="overflow-hidden">
           <div className="divide-y divide-[var(--color-ivory-200)]">
             {replies.map((r) => <ReplyRow key={r.id} reply={r} />)}
