@@ -674,6 +674,27 @@ async def send_review_email(
     return {"ok": True, **email_data}
 
 
+@app.get("/leads/{lead_id}/launch-readiness")
+async def lead_launch_readiness(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Per-lead launch readiness: ready / blocked / needs_review met redenen.
+
+    Composeert alle bestaande gates (compliance, email-sendability,
+    enrichment-completeness, score-drempels, cooldown) tot één uitlegbaar
+    verdict — zie utils/launch_readiness.py. Geen black-box launch meer:
+    de operator ziet vóór een send precies welke check blokkeert.
+    """
+    lead_res = db.table("leads").select("*").eq("id", lead_id).eq("workspace_id", workspace_id).maybe_single().execute()
+    if not lead_res.data:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    from utils.launch_readiness import assess_launch_readiness
+    return assess_launch_readiness(lead_res.data)
+
+
 @app.get("/leads/{lead_id}/thread")
 async def lead_email_thread(
     lead_id: str,

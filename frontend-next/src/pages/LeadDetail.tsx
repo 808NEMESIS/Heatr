@@ -163,6 +163,7 @@ export function LeadDetailPage() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-5">
+          <WhyThisLead lead={lead} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <Card className="p-5">
               <h3 className="font-display text-base font-semibold mb-4 flex items-center gap-2">
@@ -603,5 +604,122 @@ function ThreadMessage({ item }: { item: ThreadItem }) {
         )}
       </Card>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "Waarom deze lead?" — Capability 2: binnen 10 seconden beoordelen of een
+// lead klopt. Combineert bestaande lead-data (icp, archetype, hooks,
+// why_chosen, review-signalen) met de launch-readiness uit Capability 1.
+// ---------------------------------------------------------------------------
+
+interface ReadinessCheck { key: string; ok: boolean; severity: string; detail: string; }
+interface Readiness { verdict: 'ready' | 'blocked' | 'needs_review'; checks: ReadinessCheck[]; blockers: string[]; reviews: string[]; }
+
+const VERDICT_STYLE: Record<Readiness['verdict'], { label: string; cls: string }> = {
+  ready: { label: 'Klaar voor launch', cls: 'bg-[var(--color-success-bg)] text-[var(--color-success)] border-[var(--color-success)]' },
+  needs_review: { label: 'Review nodig', cls: 'bg-[var(--color-warning-bg)] text-[var(--color-warning)] border-[var(--color-warning)]' },
+  blocked: { label: 'Geblokkeerd', cls: 'bg-[var(--color-danger-bg)] text-[var(--color-danger)] border-[var(--color-danger)]' },
+};
+
+function WhyThisLead({ lead }: { lead: Lead }) {
+  const { data: readiness } = useQuery({
+    queryKey: ['lead-readiness', lead.id],
+    queryFn: () => api.get<Readiness>(`/leads/${lead.id}/launch-readiness`),
+  });
+
+  const icpPct = lead.icp_match != null ? Math.round(lead.icp_match * 100) : null;
+  const hooks = lead.personalization_hooks || [];
+  const pains = lead.review_pain_points || [];
+  const verdict = readiness ? VERDICT_STYLE[readiness.verdict] : null;
+
+  return (
+    <Card className="p-5 mb-5">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <h3 className="font-display text-base font-semibold">Waarom deze lead?</h3>
+        {verdict && (
+          <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${verdict.cls}`}>
+            {verdict.label}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 text-sm">
+        {/* Links: waarom gekozen */}
+        <div className="space-y-3">
+          {icpPct != null && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">ICP-match</span>
+              <div className="flex items-center gap-2 mt-1">
+                <div className="h-2 flex-1 rounded-full bg-[var(--color-ivory-200)] overflow-hidden">
+                  <div className="h-full rounded-full bg-[var(--color-blush-500)]" style={{ width: `${icpPct}%` }} />
+                </div>
+                <span className="tabular-nums font-medium">{icpPct}%</span>
+              </div>
+            </div>
+          )}
+          {lead.archetype && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Archetype</span>
+              <div className="mt-0.5 font-medium">{lead.archetype}</div>
+              {lead.archetype_reason && <div className="text-xs text-[var(--color-stone-500)] mt-0.5">{lead.archetype_reason}</div>}
+            </div>
+          )}
+          {lead.contact_why_chosen && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Contactpersoon-keuze</span>
+              <div className="text-xs text-[var(--color-stone-600)] mt-0.5">{lead.contact_why_chosen}</div>
+            </div>
+          )}
+          {hooks.length > 0 && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Personalisatie-signalen in de mail</span>
+              <ul className="mt-1 space-y-1">
+                {hooks.slice(0, 3).map((h, i) => (
+                  <li key={i} className="text-xs text-[var(--color-stone-600)] flex gap-1.5"><span className="text-[var(--color-blush-500)]">•</span>{h}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {pains.length > 0 && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Pijnpunten uit reviews</span>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {pains.map((p, i) => (
+                  <span key={i} className="rounded bg-[var(--color-warning-bg)] px-1.5 py-0.5 text-[10px] text-[var(--color-warning)]">{p}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Rechts: launch-readiness checks */}
+        <div>
+          <span className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Launch-readiness</span>
+          {!readiness ? (
+            <div className="skeleton h-24 mt-2 rounded" />
+          ) : (
+            <ul className="mt-2 space-y-1.5">
+              {readiness.checks.map((c) => (
+                <li key={c.key} className="flex items-start gap-2 text-xs">
+                  <span className={
+                    c.ok
+                      ? 'text-[var(--color-success)]'
+                      : c.severity === 'block'
+                        ? 'text-[var(--color-danger)]'
+                        : 'text-[var(--color-warning)]'
+                  }>
+                    {c.ok ? '✓' : c.severity === 'block' ? '✕' : '⚠'}
+                  </span>
+                  <span className={c.ok ? 'text-[var(--color-stone-500)]' : 'text-[var(--color-stone-700)] font-medium'}>
+                    {c.detail}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }

@@ -61,6 +61,8 @@ export interface Lead {
   personalization_hooks?: string[] | null;
   personalization_observations?: string[] | null;
   review_best_quote?: string | null;
+  review_pain_points?: string[] | null;
+  contact_why_chosen?: string | null;
   company_summary?: string | null;
   company_size_estimate?: string | null;
   has_instagram?: boolean | null;
