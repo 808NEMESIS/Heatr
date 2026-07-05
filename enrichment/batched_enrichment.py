@@ -219,18 +219,38 @@ async def _call_claude_with_cache(
         "cache_control": {"type": "ephemeral"},
     }]
 
-    # Make async call — use AsyncAnthropic if possible
-    try:
-        async_client = anthropic.AsyncAnthropic(api_key=anthropic_client.api_key)
-        response = await async_client.messages.create(
+    # Make async call — use AsyncAnthropic if possible. Rate-limits (429/503/
+    # 529) worden geretried met backoff via anthropic_call_with_retry; na
+    # uitputting propageert de error naar batched_enrich()'s except-blok dat
+    # 'm logt (geen silent failure meer). De sync-fallback hieronder blijft
+    # voor NIET-rate-limit issues (bv. event-loop-problemen) zoals voorheen.
+    from utils.anthropic_retry import anthropic_call_with_retry
+
+    async_client = anthropic.AsyncAnthropic(api_key=anthropic_client.api_key)
+
+    async def _do_call():
+        return await async_client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=max_tokens,
             temperature=0,
             system=system_blocks,
             messages=[{"role": "user", "content": user_prompt}],
         )
-    except Exception:
-        # Fallback: sync client in executor
+
+    try:
+        response = await anthropic_call_with_retry(
+            _do_call, lead_id=lead_id, context="batched_enrichment",
+        )
+    except anthropic.APIStatusError:
+        # Rate-limit/overload na max retries: sync-fallback zou dezelfde 429
+        # krijgen — zinloos + dubbel kostenrisico. Doorgeven aan caller-log.
+        raise
+    except Exception as exc:
+        # Fallback: sync client in executor — alleen voor niet-API-fouten.
+        logger.warning(
+            "batched_enrich: async-client faalde (%s: %s) — sync-fallback voor lead %s",
+            type(exc).__name__, exc, lead_id,
+        )
         import asyncio
         response = await asyncio.get_event_loop().run_in_executor(
             None,
