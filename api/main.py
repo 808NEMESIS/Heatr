@@ -564,7 +564,7 @@ async def enrich_leads(
     queued = 0
     for lead_id in body.lead_ids:
         try:
-            await queue_lead_for_enrichment(db=db, workspace_id=workspace_id, lead_id=lead_id)
+            await queue_lead_for_enrichment(supabase_client=db, workspace_id=workspace_id, lead_id=lead_id)
             queued += 1
         except Exception as e:
             logger.warning("Failed to queue lead %s: %s", lead_id, e)
