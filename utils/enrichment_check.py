@@ -29,6 +29,31 @@ from typing import Any
 # Velden die ALTIJD gevuld moeten zijn voor productie-launch
 HARD_REQUIRED_FIELDS = ("archetype", "score", "sector")
 
+# Statussen waarbij een lead NOOIT verstuurd mag worden — geen enkele bypass,
+# ook niet voor test-leads. Unsubscribe/forget is een compliance-belofte aan
+# de ontvanger; disqualified is een bewuste operator-beslissing.
+BLOCKED_STATUSES = ("unsubscribed", "forgotten", "disqualified")
+
+
+def compliance_check(lead: dict[str, Any]) -> tuple[bool, str | None]:
+    """GDPR + status compliance-gate. Return (allowed, reason).
+
+    Dit is een HARDE gate — in tegenstelling tot de completeness-check is er
+    geen is_test_lead-bypass. Een unsubscribed test-lead blijft geblokkeerd:
+    de unsubscribe-belofte geldt ook in smoke-tests. Smoke-test-leads moeten
+    daarom gdpr_safe=true + status buiten BLOCKED_STATUSES hebben (eigen
+    mailadres, dus zelf te zetten in de setup-SQL).
+
+    Gebruikt door: filter_launchable_leads (campaign launch + preview),
+    /leads/send-to-warmr en /leads/{id}/send-review-email.
+    """
+    if not lead.get("gdpr_safe"):
+        return False, f"gdpr_safe={lead.get('gdpr_safe')!r} — lead is niet GDPR-veilig"
+    status = lead.get("status")
+    if status in BLOCKED_STATUSES:
+        return False, f"status={status!r} — verzending permanent geblokkeerd"
+    return True, None
+
 # Velden die we WAARSCHUWEN over maar niet blokkeren
 SOFT_RECOMMENDED_FIELDS = (
     "personalized_opener",
@@ -68,9 +93,14 @@ def check_lead_completeness(lead: dict[str, Any]) -> dict[str, Any]:
     missing_required = [f for f in HARD_REQUIRED_FIELDS if not _is_filled(lead, f)]
     missing_recommended = [f for f in SOFT_RECOMMENDED_FIELDS if not _is_filled(lead, f)]
 
+    # Compliance eerst — deze block kent GEEN test-lead-bypass.
+    compliance_ok, compliance_reason = compliance_check(lead)
+
     is_complete = len(missing_required) == 0
     blocked_reason = None
-    if not is_complete and not is_test:
+    if not compliance_ok:
+        blocked_reason = f"GDPR/status-block: {compliance_reason}"
+    elif not is_complete and not is_test:
         blocked_reason = (
             f"Mist verplichte velden: {', '.join(missing_required)}. "
             f"Re-enqueue voor enrichment via /admin/re-enqueue-stale-leads."
@@ -81,6 +111,7 @@ def check_lead_completeness(lead: dict[str, Any]) -> dict[str, Any]:
         "company_name": lead.get("company_name"),
         "is_complete": is_complete,
         "is_test_lead": is_test,
+        "compliance_blocked": not compliance_ok,
         "missing_required": missing_required,
         "missing_recommended": missing_recommended,
         "blocked_reason": blocked_reason,
@@ -105,7 +136,11 @@ def filter_launchable_leads(
 
     for lead in leads:
         check = check_lead_completeness(lead)
-        if check["is_complete"] or check["is_test_lead"]:
+        # Compliance-block wint van ALLES — ook van de test-lead-bypass.
+        if check["compliance_blocked"]:
+            lead["_completeness"] = check
+            blocked.append(lead)
+        elif check["is_complete"] or check["is_test_lead"]:
             lead["_completeness"] = check
             launchable.append(lead)
             if check["missing_recommended"]:

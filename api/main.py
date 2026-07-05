@@ -582,9 +582,12 @@ async def send_leads_to_warmr(
     res = db.table("leads").select("*").in_("id", body.lead_ids).eq("workspace_id", workspace_id).execute()
     leads = res.data or []
 
+    # Compliance (gdpr_safe + status niet in BLOCKED_STATUSES) via dezelfde
+    # gate als campaign-launch en review-email — één bron van waarheid.
+    from utils.enrichment_check import compliance_check
     eligible = [
         l for l in leads
-        if l.get("gdpr_safe") and l.get("email_status") in ("verified", "catch_all") and (l.get("score") or 0) >= int(os.getenv("MIN_SCORE_FOR_WARMR", 65))
+        if compliance_check(l)[0] and l.get("email_status") in ("verified", "catch_all") and (l.get("score") or 0) >= int(os.getenv("MIN_SCORE_FOR_WARMR", 65))
     ]
 
     if body.dry_run:
@@ -651,6 +654,13 @@ async def send_review_email(
 
     if body.preview_only:
         return email_data
+
+    # GDPR + status gate vóór Warmr-push. Preview-mode (hierboven) bereikt
+    # deze code niet — review-preview blijft werken zonder push-permissie.
+    from utils.enrichment_check import compliance_check
+    compliant, compliance_reason = compliance_check(lead)
+    if not compliant:
+        raise HTTPException(status_code=403, detail=f"Lead niet sendable: {compliance_reason}")
 
     from integrations.warmr_client import WarmrClient
     client = WarmrClient()
