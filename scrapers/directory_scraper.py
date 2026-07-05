@@ -460,7 +460,7 @@ async def scrape_clinicfinder(
             for listing in listings[:_MAX_RESULTS_PER_DIRECTORY]:
                 listing["workspace_id"] = workspace_id
                 listing["source"] = "directory_clinicfinder"
-                listing["sector"] = "cosmetische_klinieken"
+                listing["sector"] = "cosmetische_behandelaars"
                 listing["country"] = "NL"
 
                 result = await _upsert_company_from_directory(

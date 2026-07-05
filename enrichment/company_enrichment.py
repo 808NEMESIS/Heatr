@@ -363,11 +363,12 @@ async def generate_personalized_opener(
 
     signal_text = signals[0]  # Use only one signal
 
+    # Alleen actieve + backwards-compat sectoren. makelaars/bouwbedrijven
+    # verwijderd per ICP-versmalling (c153454); chiropractoren toegevoegd.
     tone_guidance = {
-        "makelaars": "zakelijk, lokaal betrokken, persoonlijk — geen harde verkoop",
         "alternatieve_geneeskunde": "warm, persoonlijk, respectvol — geen harde verkoop",
         "cosmetische_behandelaars": "stijlvol, resultaatgericht, professioneel — geen harde verkoop",
-        "bouwbedrijven": "direct, vakkundig, no-nonsense — geen harde verkoop",
+        "chiropractoren": "vakkundig, patiëntgericht, nuchter — geen harde verkoop",
     }.get(sector_key, "professioneel en persoonlijk")
 
     # System-prompt vervangen 2026-05-07 (v3.1 templates-sessie):
