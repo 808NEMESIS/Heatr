@@ -614,12 +614,28 @@ async def disqualify_lead(
     workspace_id: str = Depends(get_workspace),
     db: Client = Depends(get_supabase),
 ) -> dict:
+    # status="disqualified" is wat de centrale compliance-gate
+    # (utils/enrichment_check.compliance_check) leest — zonder deze status
+    # bleef een "gediskwalificeerde" lead gewoon launchbaar (Sprint 1-audit,
+    # sectie 1: alleen crm_stage werd gezet).
     res = db.table("leads").update({
+        "status": "disqualified",
         "crm_stage": "verloren",
         "disqualification_reason": body.reason,
     }).eq("id", body.lead_id).eq("workspace_id", workspace_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Lead not found")
+
+    # Stop lopende sequences — anders krijgt de lead mail 2/3 nog via het
+    # dispatch-pad (zelfde patroon als reply_classifier's disqualify-flow).
+    try:
+        db.table("lead_campaign_history").update({
+            "status": "stopped",
+            "is_active": False,
+        }).eq("lead_id", body.lead_id).eq("workspace_id", workspace_id).eq("is_active", True).execute()
+    except Exception as e:
+        logger.warning("disqualify: kon sequences niet stoppen voor %s: %s", body.lead_id, e)
+
     _insert_timeline_event(db, workspace_id, body.lead_id, "deal_lost", f"Lead gediskwalificeerd: {body.reason}")
     return {"ok": True}
 
