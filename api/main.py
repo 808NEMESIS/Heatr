@@ -808,6 +808,180 @@ async def control_outbound_ledger(
         }
 
 
+# =============================================================================
+# CONTROL PLANE — operator-acties (Sprint 2, laag 2)
+#
+# Twee harde regels (I4 + I6):
+#   1. Idempotent, óf expliciet unsafe met confirm=true in de body.
+#   2. Elke actie schrijft zichzelf weg als timeline-event met principal.
+# Unsafe-acties zijn pas veilig doordat de dispatcher-idempotency-key
+# (seq-send:{record}:{step}:{epoch}) dubbele sends tegenhoudt; restart bumpt
+# bewust de epoch en is daarmee de ENIGE route naar een herzending.
+# =============================================================================
+
+def _get_campaign_record(record_id: str, workspace_id: str, db: Client) -> dict:
+    res = (
+        db.table("lead_campaign_history").select("*")
+        .eq("id", record_id).eq("workspace_id", workspace_id)
+        .maybe_single().execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Campaign-record niet gevonden")
+    return res.data
+
+
+@app.post("/control/leads/{lead_id}/retry-enrichment")
+async def control_retry_enrichment(
+    lead_id: str,
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Retry enrichment voor één lead. IDEMPOTENT: bestaande pending/running
+    jobs worden niet gedupliceerd (zelfde dedup als re-enqueue-stale-leads);
+    per-lead cost-cap blijft de kosten-vangrail."""
+    existing = (
+        db.table("enrichment_jobs").select("id")
+        .eq("lead_id", lead_id).eq("workspace_id", workspace_id)
+        .in_("status", ["pending", "running"]).limit(1).execute()
+    )
+    if existing.data:
+        return {"queued": False, "reason": "al een pending/running enrichment-job", "job_id": existing.data[0]["id"]}
+
+    from job_queue.enrichment_queue import queue_lead_for_enrichment
+    job_id = await queue_lead_for_enrichment(
+        lead_id=lead_id, workspace_id=workspace_id, supabase_client=db, priority=2,
+    )
+    principal = identify_principal(request)
+    _insert_timeline_event(
+        db, workspace_id, lead_id, "control_retry_enrichment",
+        "Enrichment-retry via Control Plane",
+        metadata={"by": principal.get("created_by"), "job_id": job_id},
+    )
+    return {"queued": bool(job_id), "job_id": job_id}
+
+
+@app.post("/control/campaign-records/{record_id}/pause")
+async def control_pause_record(
+    record_id: str,
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Pauzeer één sequence-record. Idempotent (paused blijft paused)."""
+    record = _get_campaign_record(record_id, workspace_id, db)
+    db.table("lead_campaign_history").update({"status": "paused"}).eq("id", record_id).eq("workspace_id", workspace_id).execute()
+    principal = identify_principal(request)
+    _insert_timeline_event(
+        db, workspace_id, record["lead_id"], "control_sequence_paused",
+        f"Sequence gepauzeerd (stap {record.get('step_index')})",
+        metadata={"by": principal.get("created_by"), "record_id": record_id},
+    )
+    return {"record_id": record_id, "status": "paused"}
+
+
+@app.post("/control/campaign-records/{record_id}/resume")
+async def control_resume_record(
+    record_id: str,
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Hervat een gepauzeerd sequence-record. Idempotent. next_send_at blijft
+    staan (of nu, als hij in het verleden lag) — geen stap wordt overgeslagen."""
+    record = _get_campaign_record(record_id, workspace_id, db)
+    db.table("lead_campaign_history").update({"status": "pending"}).eq("id", record_id).eq("workspace_id", workspace_id).execute()
+    principal = identify_principal(request)
+    _insert_timeline_event(
+        db, workspace_id, record["lead_id"], "control_sequence_resumed",
+        f"Sequence hervat (stap {record.get('step_index')})",
+        metadata={"by": principal.get("created_by"), "record_id": record_id},
+    )
+    return {"record_id": record_id, "status": "pending"}
+
+
+@app.post("/control/campaign-records/{record_id}/force-next")
+async def control_force_next(
+    record_id: str,
+    body: dict,
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """UNSAFE: forceer de eerstvolgende stap NU (overschrijft de wachttijd).
+
+    Vereist {"confirm": true}. Veiligheidsnet: de dispatcher-key
+    seq-send:{record}:{step}:{epoch} voorkomt dat een al-verzonden stap
+    nogmaals gaat — forceren kan de timing breken, nooit een dubbele send
+    veroorzaken."""
+    if not body.get("confirm"):
+        raise HTTPException(status_code=400, detail=(
+            "force-next is unsafe (overschrijft wachttijd). Stuur {\"confirm\": true} om te bevestigen."
+        ))
+    record = _get_campaign_record(record_id, workspace_id, db)
+    if not record.get("is_active"):
+        raise HTTPException(status_code=409, detail="Record is niet actief — niets te forceren.")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    db.table("lead_campaign_history").update({
+        "status": "pending", "next_send_at": now_iso,
+    }).eq("id", record_id).eq("workspace_id", workspace_id).execute()
+    principal = identify_principal(request)
+    _insert_timeline_event(
+        db, workspace_id, record["lead_id"], "control_force_next",
+        f"Stap {record.get('step_index')} geforceerd (wachttijd overschreven)",
+        metadata={"by": principal.get("created_by"), "record_id": record_id, "confirmed": True},
+    )
+    return {"record_id": record_id, "next_send_at": now_iso, "step_index": record.get("step_index")}
+
+
+@app.post("/control/campaign-records/{record_id}/restart")
+async def control_restart_record(
+    record_id: str,
+    body: dict,
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """UNSAFE: herstart de sequence vanaf stap X — kan een lead een TWEEDE
+    mail voor dezelfde stap opleveren.
+
+    Vereist {"confirm": true, "step_index": N}. Werkt ALLEEN doordat de
+    restart bewust restart_epoch bumpt: de dispatcher-key krijgt een nieuwe
+    epoch en staat de herzending toe, terwijl accidentele duplicaten
+    (zelfde epoch) geblokkeerd blijven. Compliance wordt op dispatch-tijd
+    opnieuw afgedwongen (SendingGuard → compliance_check) — een inmiddels
+    unsubscribed/disqualified lead komt er ook via restart niet door."""
+    if not body.get("confirm"):
+        raise HTTPException(status_code=400, detail=(
+            "restart is unsafe (kan een stap opnieuw versturen). "
+            "Stuur {\"confirm\": true, \"step_index\": N} om te bevestigen."
+        ))
+    step_index = body.get("step_index")
+    if not isinstance(step_index, int) or step_index < 0:
+        raise HTTPException(status_code=400, detail="step_index (int >= 0) is verplicht")
+
+    record = _get_campaign_record(record_id, workspace_id, db)
+    step_count = len(record.get("sequence_steps") or [])
+    if step_index >= step_count:
+        raise HTTPException(status_code=400, detail=f"step_index {step_index} buiten bereik (sequence heeft {step_count} stappen)")
+
+    new_epoch = int(record.get("restart_epoch") or 0) + 1
+    now_iso = datetime.now(timezone.utc).isoformat()
+    db.table("lead_campaign_history").update({
+        "status": "pending", "is_active": True,
+        "step_index": step_index, "next_send_at": now_iso,
+        "restart_epoch": new_epoch,
+    }).eq("id", record_id).eq("workspace_id", workspace_id).execute()
+    principal = identify_principal(request)
+    _insert_timeline_event(
+        db, workspace_id, record["lead_id"], "control_sequence_restart",
+        f"Sequence herstart vanaf stap {step_index} (epoch {new_epoch})",
+        metadata={"by": principal.get("created_by"), "record_id": record_id,
+                  "step_index": step_index, "restart_epoch": new_epoch, "confirmed": True},
+    )
+    return {"record_id": record_id, "step_index": step_index, "restart_epoch": new_epoch, "next_send_at": now_iso}
+
+
 @app.get("/leads/{lead_id}/thread")
 async def lead_email_thread(
     lead_id: str,

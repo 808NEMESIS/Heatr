@@ -159,6 +159,7 @@ export function LeadDetailPage() {
           <TabsTrigger value="website">Website</TabsTrigger>
           <TabsTrigger value="contacts">Contacts ({contacts?.contacts?.length || 0})</TabsTrigger>
           <TabsTrigger value="thread">Thread</TabsTrigger>
+          <TabsTrigger value="run">Run</TabsTrigger>
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
         </TabsList>
 
@@ -398,6 +399,10 @@ export function LeadDetailPage() {
 
         <TabsContent value="thread" className="mt-5">
           <ThreadView leadId={id!} />
+        </TabsContent>
+
+        <TabsContent value="run" className="mt-5">
+          <RunView leadId={id!} />
         </TabsContent>
 
         <TabsContent value="timeline" className="mt-5">
@@ -721,5 +726,212 @@ function WhyThisLead({ lead }: { lead: Lead }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Run-tab — Control Plane per lead (Sprint 2). Inspect: pipeline, jobs,
+// campagne-records, side-effects (outbound-ledger), cost, gaps. Control:
+// retry (idempotent), pause/resume (laag risico), force-next + restart
+// (unsafe → expliciete bevestiging; veilig door de dispatcher-epoch-key).
+// ---------------------------------------------------------------------------
+
+interface RunPipelineStep { step: string; reached: boolean; at: string | null; detail: string; }
+interface RunJob { id: string; status: string; current_step: number; retry_count: number; error_message: string | null; created_at: string; }
+interface RunCampaignRecord {
+  id: string; campaign_id: string; step_index: number; status: string;
+  is_active: boolean; next_send_at: string | null; sent_at: string | null;
+  block_reason: string | null; restart_epoch?: number; sequence_step_count: number;
+}
+interface RunSideEffect { id: string; idempotency_key: string; kind: string; status: string; actor: string; error: string | null; created_at: string; }
+interface RunState {
+  pipeline: RunPipelineStep[];
+  current_step: string;
+  jobs: RunJob[];
+  campaign_history: RunCampaignRecord[];
+  side_effects: RunSideEffect[];
+  blocked_sends: { reason: string; created_at?: string; blocked_at?: string }[];
+  cost: { total_eur: number; call_count: number; cache_hits: number; by_context: Record<string, number> };
+  gaps: string[];
+}
+
+function RunView({ leadId }: { leadId: string }) {
+  const qc = useQueryClient();
+  const { data: run, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['lead-run-state', leadId],
+    queryFn: () => api.get<RunState>(`/leads/${leadId}/run-state`),
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['lead-run-state', leadId] });
+
+  const retryEnrichment = useMutation({
+    mutationFn: () => api.post(`/control/leads/${leadId}/retry-enrichment`),
+    onSuccess: invalidate,
+  });
+  const recordAction = useMutation({
+    mutationFn: ({ recordId, action, body }: { recordId: string; action: string; body?: unknown }) =>
+      api.post(`/control/campaign-records/${recordId}/${action}`, body),
+    onSuccess: invalidate,
+  });
+
+  if (isLoading) return <div className="skeleton h-64" />;
+  if (isError || !run) {
+    return (
+      <Card className="p-8 text-center border-[var(--color-danger)]">
+        <p className="text-[var(--color-danger)] font-medium mb-2">Kon run-state niet laden</p>
+        <p className="text-xs text-[var(--color-stone-500)] mb-3">{error instanceof Error ? error.message : ''}</p>
+        <button onClick={() => refetch()} className="rounded bg-[var(--color-blush-500)] px-3 py-1.5 text-sm text-white">Opnieuw</button>
+      </Card>
+    );
+  }
+
+  const forceNext = (recordId: string, stepIndex: number) => {
+    if (!window.confirm(`Stap ${stepIndex} NU forceren? Dit overschrijft de wachttijd. De dispatcher voorkomt dubbele sends, maar de timing wijkt af van de sequence-planning.`)) return;
+    recordAction.mutate({ recordId, action: 'force-next', body: { confirm: true } });
+  };
+  const restartFrom = (recordId: string, maxStep: number) => {
+    const raw = window.prompt(`Herstart vanaf stap (0-${maxStep - 1})? LET OP: dit kan een al-verzonden stap OPNIEUW versturen naar de prospect.`);
+    if (raw == null) return;
+    const step = Number(raw);
+    if (!Number.isInteger(step) || step < 0 || step >= maxStep) { window.alert('Ongeldige stap.'); return; }
+    if (!window.confirm(`Bevestig: sequence herstarten vanaf stap ${step}. Een tweede mail voor deze stap is mogelijk.`)) return;
+    recordAction.mutate({ recordId, action: 'restart', body: { confirm: true, step_index: step } });
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Pipeline */}
+      <Card className="p-5">
+        <h3 className="font-display text-base font-semibold mb-4">Pipeline</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          {run.pipeline.map((p, i) => (
+            <div key={p.step} className="flex items-center gap-2">
+              {i > 0 && <span className="text-[var(--color-stone-300)]">→</span>}
+              <div
+                className={`rounded-md border px-3 py-1.5 text-xs ${
+                  p.reached
+                    ? 'border-[var(--color-success)] bg-[var(--color-success-bg)] text-[var(--color-success)]'
+                    : 'border-[var(--color-border)] text-[var(--color-stone-400)]'
+                }`}
+                title={p.detail}
+              >
+                <div className="font-semibold">{p.step}</div>
+                <div className="text-[10px]">{p.at ? fmtRelative(p.at) : p.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Campagne-records + control-acties */}
+      <Card className="p-5">
+        <h3 className="font-display text-base font-semibold mb-3">Sequences</h3>
+        {run.campaign_history.length === 0 ? (
+          <p className="text-sm text-[var(--color-stone-500)]">Geen campagne-koppelingen.</p>
+        ) : (
+          <div className="space-y-3">
+            {run.campaign_history.map((r) => (
+              <div key={r.id} className="rounded-md border border-[var(--color-border)] p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <Badge variant={r.status === 'pending' ? 'success' : r.status === 'paused' ? 'warning' : 'neutral'}>{r.status}</Badge>
+                    <span className="ml-2 text-xs text-[var(--color-stone-600)]">
+                      stap {r.step_index}/{r.sequence_step_count}
+                      {(r.restart_epoch ?? 0) > 0 && <span className="ml-1 text-[var(--color-warning)]">· epoch {r.restart_epoch}</span>}
+                      {r.next_send_at && <span className="ml-1">· volgende: {fmtRelative(r.next_send_at)}</span>}
+                    </span>
+                    {r.block_reason && <div className="text-xs text-[var(--color-danger)] mt-1">{r.block_reason}</div>}
+                  </div>
+                  <div className="flex gap-1.5">
+                    {r.is_active && r.status !== 'paused' && (
+                      <button onClick={() => recordAction.mutate({ recordId: r.id, action: 'pause' })} className="rounded border border-[var(--color-border)] px-2.5 py-1 text-xs hover:bg-[var(--color-ivory-100)]">Pauzeer</button>
+                    )}
+                    {r.status === 'paused' && (
+                      <button onClick={() => recordAction.mutate({ recordId: r.id, action: 'resume' })} className="rounded border border-[var(--color-border)] px-2.5 py-1 text-xs hover:bg-[var(--color-ivory-100)]">Hervat</button>
+                    )}
+                    {r.is_active && (
+                      <button onClick={() => forceNext(r.id, r.step_index)} className="rounded border border-[var(--color-warning)] px-2.5 py-1 text-xs text-[var(--color-warning)] hover:bg-[var(--color-warning-bg)]">Force next ⚠</button>
+                    )}
+                    <button onClick={() => restartFrom(r.id, r.sequence_step_count)} className="rounded border border-[var(--color-danger)] px-2.5 py-1 text-xs text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)]">Restart ⚠</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Jobs + retry */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-display text-base font-semibold">Enrichment-jobs</h3>
+          <button
+            onClick={() => retryEnrichment.mutate()}
+            disabled={retryEnrichment.isPending}
+            className="rounded bg-[var(--color-blush-500)] px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {retryEnrichment.isPending ? 'Bezig…' : 'Retry enrichment'}
+          </button>
+        </div>
+        {run.jobs.length === 0 ? (
+          <p className="text-sm text-[var(--color-stone-500)]">Geen jobs bekend.</p>
+        ) : (
+          <div className="space-y-1.5 text-xs">
+            {run.jobs.map((j) => (
+              <div key={j.id} className="flex flex-wrap items-center gap-2">
+                <Badge variant={j.status === 'completed' ? 'success' : j.status === 'failed' ? 'danger' : 'warning'}>{j.status}</Badge>
+                <span className="text-[var(--color-stone-500)]">{fmtRelative(j.created_at)} · retries: {j.retry_count}</span>
+                {j.error_message && <span className="text-[var(--color-danger)] truncate max-w-md" title={j.error_message}>{j.error_message}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Side-effects (outbound-ledger) */}
+      <Card className="p-5">
+        <h3 className="font-display text-base font-semibold mb-3">Side-effects (outbound-ledger)</h3>
+        {run.side_effects.length === 0 ? (
+          <p className="text-sm text-[var(--color-stone-500)]">Geen dispatcher-records voor deze lead (of migratie 020 nog niet gedraaid).</p>
+        ) : (
+          <div className="space-y-1.5 text-xs">
+            {run.side_effects.map((s) => (
+              <div key={s.id} className="flex flex-wrap items-center gap-2">
+                <Badge variant={s.status === 'completed' ? 'success' : s.status === 'skipped_duplicate' ? 'warning' : 'danger'}>{s.status}</Badge>
+                <span>{s.kind}</span>
+                <span className="text-[var(--color-stone-500)]">{fmtRelative(s.created_at)} · {s.actor}</span>
+                <span className="font-mono text-[var(--color-stone-400)] truncate max-w-xs" title={s.idempotency_key}>{s.idempotency_key}</span>
+                {s.error && <span className="text-[var(--color-danger)]">{s.error}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        {run.blocked_sends.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)] mb-1.5">Geblokkeerde sends (SendingGuard)</div>
+            {run.blocked_sends.map((b, i) => (
+              <div key={i} className="text-xs text-[var(--color-danger)]">{b.reason} <span className="text-[var(--color-stone-400)]">{fmtRelative(b.blocked_at || b.created_at || '')}</span></div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Cost + gaps */}
+      <Card className="p-5">
+        <h3 className="font-display text-base font-semibold mb-3">
+          Cost — €{run.cost.total_eur.toFixed(4)} <span className="text-xs font-normal text-[var(--color-stone-500)]">({run.cost.call_count} calls, {run.cost.cache_hits} cache-hits)</span>
+        </h3>
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(run.cost.by_context).map(([ctx, eur]) => (
+            <span key={ctx} className="rounded bg-[var(--color-ivory-100)] px-2 py-1 text-xs tabular-nums">{ctx}: €{eur.toFixed(4)}</span>
+          ))}
+        </div>
+        <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
+          {run.gaps.map((g, i) => (
+            <p key={i} className="text-[11px] text-[var(--color-stone-400)] italic">◌ {g}</p>
+          ))}
+        </div>
+      </Card>
+    </div>
   );
 }
