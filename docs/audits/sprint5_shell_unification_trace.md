@@ -126,3 +126,41 @@ frontends onder één origin (reverse-proxy of zelfde domein/ander pad); (2)
 Heatr-topbar krijgt een Heatr⇄Warmr-toggle (link of iframe); (3) voeg de
 unified-origin toe aan Warmr's `ALLOWED_ORIGINS`. Buiten dat blijft alles —
 Control Plane, dispatcher, invarianten, Warmr-contract — exact zoals het is.
+
+---
+
+## Sprint 5 (build) — Prod-hosting gate: resultaat
+
+Vóór de toggle gebouwd wordt eist A0 bevestiging dat same-origin haalbaar is in
+de gekozen hosting. Onderzoek 2026-07-06:
+
+**Er is nog geen gekozen prod-hosting.** Alles draait lokaal:
+- Heatr-frontend: geen prod-deploy (Vite dev `localhost:5173`). Geen Vercel/
+  Netlify/verenigd domein gevonden.
+- Heatr-backend: Railway (`railway.toml`), maar serveert de frontend niet.
+- Warmr: self-contained single-origin app — FastAPI op `:8000` serveert zijn
+  eigen static frontend via `app.mount("/", StaticFiles(...))`. README: "any
+  Linux VPS". Nu `localhost:8000` (`WARMR_BASE_URL` comment: "change in
+  production").
+- Warmr CORS nu: `ALLOWED_ORIGINS=localhost:5500,localhost:3000` (nog niet eens
+  Heatr's `:5173`).
+
+**Verdict: A0 is NIET geblokkeerd, maar de prod-origin is een open infra-keuze.**
+- Geen van beide apps dwingt een vaste, niet-verenigbare origin af. Warmr is een
+  draagbare single-origin app; Heatr's frontend is een statische SPA-build.
+- **Lokaal is same-origin nu haalbaar** (reverse-proxy of Vite-middleware: Heatr
+  op `/`, Warmr-static op `/warmr/*`, Heatr-API op `/api`).
+- **In prod is same-origin haalbaar via één reverse-proxy** (nginx/Caddy op één
+  domein: `/` → Heatr-frontend-build, `/warmr/*` → Warmr, `/api` → Heatr-backend,
+  plus een route naar Warmr's API) — maar dat vereist dat Sami een prod-hosting
+  kiest. Zolang dat niet gekozen is, is er geen concrete prod-origin om tegen te
+  bouwen.
+
+**Aanbevolen prod-vorm (wanneer gedeployed):** één reverse-proxy/domein dat beide
+frontends serveert; Warmr's API onder een pad of subdomein dat in Heatr's
+`ALLOWED_ORIGINS`/CORS past. Zolang de twee frontends **dezelfde origin** delen,
+werkt de Supabase-sessie-deling identiek aan lokaal.
+
+**Status:** gate open op Sami's prod-hosting-keuze. Lokaal bouwen + sessie-
+continuïteit bewijzen kan nu al (reversibel, geen backend-/Warmr-/prod-wijziging);
+prod-reverse-proxy is een deploy-vereiste, geen bouwtaak in deze sprint.
