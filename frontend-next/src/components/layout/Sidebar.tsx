@@ -10,6 +10,7 @@ import {
   Kanban,
   Upload,
   BarChart3,
+  Activity,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -34,6 +35,7 @@ const NAV = [
   { to: '/crm', icon: Workflow, label: 'CRM' },
   { to: '/crm/activity', icon: Kanban, label: 'CRM activity', badge: 'recontact' as const },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
+  { to: '/control', icon: Activity, label: 'Control' },
 ];
 
 export function Sidebar() {

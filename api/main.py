@@ -755,6 +755,59 @@ async def lead_launch_readiness(
     return assess_launch_readiness(lead_res.data)
 
 
+@app.get("/leads/{lead_id}/run-state")
+async def lead_run_state(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Control Plane Inspect-laag: volledige run-state van één lead.
+
+    Read-only compositie van pipeline-positie, readiness, jobs,
+    campagne-historie, side-effects (outbound-ledger), blocks, cost en
+    timeline — zie utils/run_state.py. `gaps` markeert eerlijk wat zonder
+    event-log niet toonbaar is (I7-fundament).
+    """
+    lead_res = db.table("leads").select("*").eq("id", lead_id).eq("workspace_id", workspace_id).maybe_single().execute()
+    if not lead_res.data:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    from utils.run_state import build_lead_run_state
+    return build_lead_run_state(lead_res.data, workspace_id, db)
+
+
+@app.get("/control/outbound")
+async def control_outbound_ledger(
+    limit: int = 50,
+    status: str | None = None,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Control Plane: het append-only outbound-ledger (heatr_outbound_log).
+
+    Elke side-effect-poging — completed, failed, blocked_compliance,
+    skipped_duplicate — via de dispatcher. Leeg + warning zolang
+    migratie 020 niet gedraaid is.
+    """
+    try:
+        q = (
+            db.table("outbound_log")
+            .select("id, idempotency_key, kind, status, actor, lead_id, error, created_at, metadata")
+            .eq("workspace_id", workspace_id)
+            .order("created_at", desc=True)
+            .limit(min(limit, 200))
+        )
+        if status:
+            q = q.eq("status", status)
+        res = q.execute()
+        return {"records": res.data or [], "count": len(res.data or [])}
+    except Exception as e:
+        return {
+            "records": [], "count": 0,
+            "warning": f"outbound_log niet leesbaar ({type(e).__name__}) — is migratie 020 gedraaid?",
+        }
+
+
 @app.get("/leads/{lead_id}/thread")
 async def lead_email_thread(
     lead_id: str,

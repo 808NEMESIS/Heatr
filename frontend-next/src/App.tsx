@@ -17,6 +17,7 @@ import { CampagneLaunchPage } from '@/pages/CampagneLaunch';
 import { LeadsImportPage } from '@/pages/LeadsImport';
 import { CRMActivityPage } from '@/pages/CRMActivity';
 import { AnalyticsPage } from '@/pages/Analytics';
+import { ControlPage } from '@/pages/Control';
 
 /** 401/403 worden al gemeld via de AuthErrorBanner (heatr:auth-error event)
  *  — die hier ook toasten zou dubbel alarm geven. */
@@ -57,6 +58,7 @@ export default function App() {
               <Route path="/crm" element={<CRMPage />} />
               <Route path="/crm/activity" element={<CRMActivityPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/control" element={<ControlPage />} />
             </Route>
           </Routes>
         </BrowserRouter>
