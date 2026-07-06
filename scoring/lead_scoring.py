@@ -195,10 +195,12 @@ async def score_lead(
         block_reasons.append(f"icp_match {icp_match:.2f} < {MIN_ICP_MATCH_FOR_WARMR}")
     if not lead.get("email") or email_status in ("not_found", "invalid"):
         block_reasons.append("no valid email")
-    if not lead.get("gdpr_safe"):
-        block_reasons.append("not gdpr_safe")
-    if lead.get("status") in ("forgotten", "unsubscribed", "disqualified"):
-        block_reasons.append(f"status={lead.get('status')}")
+    # Compliance (gdpr_safe + status) via de CENTRALE gate — geen eigen
+    # duplicaat-oordeel meer (Sprint 1-audit §2: dit was de drift-plek).
+    from utils.enrichment_check import compliance_check
+    compliant, compliance_reason = compliance_check(lead)
+    if not compliant:
+        block_reasons.append(compliance_reason or "compliance-block")
 
     result["push_eligible"] = len(block_reasons) == 0
     result["push_block_reasons"] = block_reasons

@@ -83,11 +83,21 @@ interface CompletenessCheck {
   warning_sample: { lead_id: string; company_name: string | null; missing_recommended: string[] }[];
 }
 
-const RISKY_EMAIL_STATUSES = new Set(['catchall', 'bounced', 'invalid', 'not_found', 'unsubscribed']);
+// Sendability-definitie komt van de backend (GET /config/sendability) —
+// geen eigen kopie meer (Sprint 1-audit §8: de UI-lijst week af van de
+// server-gate en gaf de operator een ander risicobeeld). I5.
+interface SendabilityConfig {
+  always_sendable: string[];
+  never_sendable: string[];
+  risky_statuses: string[];
+  allow_risky: boolean;
+}
 
-function isRiskyEmail(status: string | null | undefined): boolean {
+function isRiskyEmail(status: string | null | undefined, cfg?: SendabilityConfig): boolean {
   if (!status) return true; // missing = unknown = risky
-  return RISKY_EMAIL_STATUSES.has(status.toLowerCase());
+  if (!cfg) return false; // config nog niet geladen → geen vals alarm
+  const s = status.toLowerCase();
+  return cfg.never_sendable.includes(s) || cfg.risky_statuses.includes(s);
 }
 
 function ArchetypeBadge({ archetype, reason }: { archetype: string | null | undefined; reason?: string | null }) {
@@ -172,6 +182,14 @@ export function CampagneLaunchPage() {
       api.get<{ inboxes: Inbox[] }>('/warmr/inboxes').catch(() => ({ inboxes: [] })),
   });
 
+  // Server-side sendability-definitie — één bron van waarheid voor
+  // risico-badges (I5, geen eigen statuslijst-kopie in de UI).
+  const { data: sendability } = useQuery({
+    queryKey: ['config-sendability'],
+    queryFn: () => api.get<SendabilityConfig>('/config/sendability'),
+    staleTime: 5 * 60_000,
+  });
+
   const eligibleLeads = leadsData?.leads || [];
   const availableInboxes = inboxData?.inboxes || [];
   const [selectedInboxIds, setSelectedInboxIds] = useState<Set<string>>(new Set());
@@ -238,11 +256,12 @@ export function CampagneLaunchPage() {
   );
   const activePreview = previewLeads[activePreviewIdx];
 
-  // Count risky emails in current selection (catchall/bounced/unknown — high bounce risk)
+  // Count risky emails in current selection (server-definitie, zie
+  // /config/sendability — high bounce risk)
   const riskyInSelection = useMemo(() => {
     const selectedSet = selectedLeadIds;
-    return eligibleLeads.filter((l) => selectedSet.has(l.id) && isRiskyEmail(l.email_status));
-  }, [eligibleLeads, selectedLeadIds]);
+    return eligibleLeads.filter((l) => selectedSet.has(l.id) && isRiskyEmail(l.email_status, sendability));
+  }, [eligibleLeads, selectedLeadIds, sendability]);
 
   // Tone-mismatch: template heeft een `sector` veld; leads waar lead.sector
   // afwijkt van template.sector krijgen verkeerde toon. Voorbeeld:

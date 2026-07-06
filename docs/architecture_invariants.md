@@ -25,19 +25,23 @@ prospect-gerichte verzending introduceert) MOET `compliance_check`
 aanroepen vóór de push. Review-checklist: grep op nieuwe push-call-sites.
 
 ### I2 — Er is precies één readiness-beslissing
-**Status: GEDEELTELIJK** · Bewijs: secties 2 + 5
+**Status: AFGEDWONGEN** *(sinds Sprint 2 pre-conditie-commit)* ·
+Bewijs: secties 2 + 5 + Sprint 2-fixes
 
-`assess_launch_readiness` composeert de gates correct, en de compliance-kern
-is single-source. Maar drie flanken dupliceren oordeel-fragmenten:
-1. `scoring/lead_scoring.py:198-200` — eigen gdpr/status-tuple voor
-   `push_eligible`
-2. `api/main.py:590` — inline email/score-filter in send-to-warmr
-3. `CampagneLaunch.tsx:88` — eigen `RISKY_EMAIL_STATUSES` die afwijkt van
-   `email_sendability`
+De drie flank-duplicaten uit Sprint 1 zijn opgeruimd:
+1. `scoring/lead_scoring.py` consumeert nu `compliance_check` i.p.v. een
+   eigen gdpr/status-tuple ✅
+2. `api/main.py` send-to-warmr gebruikte al `compliance_check` (Sprint 0);
+   de resterende inline email/score-drempels lezen dezelfde env-vars als
+   readiness — geen tweede beslissing, wel tweemaal dezelfde lezing
+   (acceptabel; drempel-wijziging = env-wijziging, geen code-drift)
+3. `CampagneLaunch.tsx` leest de sendability-definitie van
+   `GET /config/sendability` — geen eigen statuslijst-kopie meer ✅
 
-**Nodig om af te dwingen:** (1)+(2) laten consumeren van
-`compliance_check`/`is_sendable`/readiness (klein refactor-ticket);
-(3) CampagneLaunch ombouwen naar het readiness-endpoint (Sprint 2 UI-werk).
+**Handhavingsregel:** nieuwe UI-badges of backend-filters die
+launchability-fragmenten tonen/gebruiken, consumeren `compliance_check`,
+`is_sendable`, `sendability_config()` of het readiness-endpoint — nooit
+een eigen lijst.
 
 ### I3 — Iedere outbound side-effect loopt via de dispatcher
 **Status: GEDEELTELIJK** · Bewijs: sectie 6
@@ -52,29 +56,34 @@ waar alle 4 paden doorheen moeten (Control Plane-sprint). Tot die tijd geldt
 de handhavingsregel uit I1 als surrogaat.
 
 ### I4 — Iedere operator-actie wordt als event gelogd
-**Status: GEDEELTELIJK** · Bewijs: sectie 7
+**Status: AFGEDWONGEN** *(sinds Sprint 2 pre-conditie-commit)* ·
+Bewijs: sectie 7 + Sprint 2-fixes
 
-Gelogd: disqualify, send-to-warmr (per lead), campaigns/launch (per lead),
-review-email, re-enqueue, stage-changes, task-mutaties.
-NIET gelogd als event: `bulk-status` (wel attributie-kolommen op de
-lead-row: override_by/at/reason) en `test-mode`-toggle (bewuste keuze,
-build-log 2026-05-05 — maar tegen deze invariant).
+Alle bekende operator-acties schrijven een `lead_timeline`-event:
+disqualify, send-to-warmr, campaigns/launch, review-email, re-enqueue,
+stage-changes, task-mutaties, en sinds Sprint 2 ook `bulk-status`
+(event `manual_status_override`, met principal-attributie in metadata)
+en `test-mode` (event `test_mode_toggled`).
 
-**Nodig om af te dwingen:** timeline-event toevoegen aan beide endpoints
-(~20 min) + review-regel: elke nieuwe POST/PATCH die lead-state muteert
-schrijft een `lead_timeline`-row.
+**Handhavingsregel:** elke nieuwe POST/PATCH die lead-state muteert of een
+side-effect triggert schrijft een `lead_timeline`-row (of, voor outbound,
+een `outbound_log`-record via de dispatcher).
 
 ### I5 — Geen verborgen businesslogica in de UI
-**Status: GEDEELTELIJK** · Bewijs: secties 5 + 8
+**Status: AFGEDWONGEN** *(sinds Sprint 2 pre-conditie-commit)* ·
+Bewijs: secties 5 + 8 + Sprint 2-fixes
 
-Geen enkel launch/compliance-oordeel wordt clientside geveld (bewezen).
-Wel twee weergave-duplicaties die drift veroorzaken:
-`RISKY_EMAIL_STATUSES` (ander risicobeeld dan de server hanteert) en 8
-resterende silent-catch-sites op display-data.
+Geen enkel launch/compliance-oordeel wordt clientside geveld (bewezen in
+Sprint 1), en de laatste definitie-drift is weg: de UI leest de
+sendability-statuslijsten van `GET /config/sendability` i.p.v. een eigen
+kopie. Restpunt (géén businesslogica, wel hygiëne): 8 silent-catch-sites
+op pure display-data (Analytics/CRMActivity/LeadDetail-tabs +
+3 bewust-stille layout-widgets).
 
-**Nodig om af te dwingen:** risico/eligibility-badges voeden vanuit
-`/leads/{id}/launch-readiness`; lint-regel of review-checklist tegen
-`.catch(() => ...)` in queryFn's.
+**Handhavingsregel:** UI toont oordelen (risky, ready, launchable)
+uitsluitend uit backend-endpoints; nieuwe `.catch(() => fallback)` in een
+queryFn is een blokkerende review tenzij het aantoonbaar decoratieve data
+betreft.
 
 ### I6 — Geen side-effect zonder idempotency-key
 **Status: NOG NIET** *(verwacht — Sprint 0 noemt idempotency nergens)* ·
@@ -107,12 +116,12 @@ als één schrijfpunt) en I6 (idempotente replay).
 | Invariant | Bewezen door | Status |
 |---|---|---|
 | I1 Eén compliance-beslissing | audit §1 + §6 | **afgedwongen** (b97cfd4 + b0410cb) |
-| I2 Eén readiness-beslissing | audit §2 + §5 | gedeeltelijk |
-| I3 Outbound via dispatcher | audit §6 | gedeeltelijk (gate gedeeld, verzendpunt niet) |
-| I4 Operator-acties als event | audit §7 | gedeeltelijk (bulk-status + test-mode missen) |
-| I5 Geen UI-businesslogica | audit §5 + §8 | gedeeltelijk (geen beslissingen; definitie-drift) |
-| I6 Idempotency-keys | audit §7 | **nog niet** — schuld naar Control Plane |
-| I7 Event-log-reproduceerbaarheid | audit §7 | **nog niet** — schuld naar Control Plane |
+| I2 Eén readiness-beslissing | audit §2 + §5 + Sprint 2 pre-conditie | **afgedwongen** |
+| I3 Outbound via dispatcher | audit §6 | gedeeltelijk (gate gedeeld, verzendpunt niet) — Sprint 2 in uitvoering |
+| I4 Operator-acties als event | audit §7 + Sprint 2 pre-conditie | **afgedwongen** |
+| I5 Geen UI-businesslogica | audit §5 + §8 + Sprint 2 pre-conditie | **afgedwongen** (restpunt: display-catch-hygiëne) |
+| I6 Idempotency-keys | audit §7 | **nog niet** — Sprint 2 in uitvoering |
+| I7 Event-log-reproduceerbaarheid | audit §7 | **nog niet** — Sprint 2 legt fundament |
 
 ## Toets-procedure voor volgende sprints
 

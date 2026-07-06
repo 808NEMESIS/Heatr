@@ -32,6 +32,24 @@ _NEVER_SENDABLE = {"not_found", "invalid", "bounced", "unsubscribed", "blocked"}
 _RISKY_STATUSES = {"risky", "catchall"}
 
 
+def sendability_config() -> dict:
+    """Publieke sendability-definitie voor UI-consumptie.
+
+    Sprint 1-audit §8 vond dat de frontend een EIGEN kopie van deze lijsten
+    had (RISKY_EMAIL_STATUSES in CampagneLaunch.tsx) die afweek van de
+    server-definitie — ander risicobeeld voor de operator dan de gate
+    hanteert. De frontend leest sindsdien deze config (GET
+    /config/sendability); er bestaat geen tweede definitie meer (I5).
+    """
+    allow_risky = os.getenv("HEATR_ALLOW_RISKY_EMAILS", "true").lower() == "true"
+    return {
+        "always_sendable": sorted(_ALWAYS_SENDABLE),
+        "never_sendable": sorted(_NEVER_SENDABLE),
+        "risky_statuses": sorted(_RISKY_STATUSES),
+        "allow_risky": allow_risky,
+    }
+
+
 def is_sendable(
     email: str | None,
     email_status: str | None,

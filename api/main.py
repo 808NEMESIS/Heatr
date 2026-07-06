@@ -753,6 +753,17 @@ async def toggle_test_mode(
         raise HTTPException(status_code=500, detail=f"toggle failed: {e}")
     if not res.data:
         raise HTTPException(status_code=404, detail="Lead not found")
+
+    # I4: test-mode-toggle logde voorheen niets (bewuste keuze in de top-4
+    # sprint, maar tegen de operator-event-invariant).
+    try:
+        _insert_timeline_event(
+            db, workspace_id, lead_id, "test_mode_toggled",
+            f"Test-mode {'AAN' if new_value else 'UIT'} gezet",
+        )
+    except Exception as e:
+        logger.warning("test-mode: timeline-event mislukt voor %s: %s", lead_id, e)
+
     return {"lead_id": lead_id, "is_test_lead": new_value}
 
 
@@ -2694,6 +2705,17 @@ async def list_sectors() -> dict:
     return {"sectors": _list_sectors()}
 
 
+@app.get("/config/sendability")
+async def get_sendability_config() -> dict:
+    """Sendability-statusdefinitie voor de UI — één bron van waarheid (I5).
+
+    De frontend gebruikt dit voor risico-badges i.p.v. een eigen kopie van
+    de statuslijsten (Sprint 1-audit §8: definitie-drift).
+    """
+    from utils.email_sendability import sendability_config
+    return sendability_config()
+
+
 # =============================================================================
 # WEBHOOKS — Warmr
 # =============================================================================
@@ -3881,6 +3903,19 @@ async def bulk_status_endpoint(
         updated = len(res.data or [])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"bulk update failed: {e}")
+
+    # I4: elke operator-actie als timeline-event — bulk-status schreef
+    # voorheen alleen attributie-kolommen op de lead-row, geen event.
+    for row in (res.data or []):
+        try:
+            _insert_timeline_event(
+                db, workspace_id, row["id"], "manual_status_override",
+                f"Status-override: {new_status or '(cleared)'}"
+                + (f" — {body.reason}" if body.reason else ""),
+                metadata={"by": principal.get("created_by"), "via": "bulk-status"},
+            )
+        except Exception as e:
+            logger.warning("bulk-status: timeline-event mislukt voor %s: %s", row.get("id"), e)
 
     return {"updated": updated, "status": new_status or "(cleared)", "reason": body.reason}
 
