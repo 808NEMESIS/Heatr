@@ -1,7 +1,7 @@
 # Architecture Invariants — de grondwet van Aerys OS
 
 **Status per 2026-07-06** (Sprint 1 verificatie-audit + Sprint 2 Control
-Plane v0). Elke toekomstige
+Plane v0 + Sprint 3 Render Ownership). Elke toekomstige
 sprint wordt tegen dit document getoetst: een PR die een *afgedwongen*
 invariant breekt is per definitie fout, ongeacht hoe nuttig de feature is.
 
@@ -144,6 +144,32 @@ overvragen we niet tot er een concrete replay-behoefte is.
 **Handhavingsregel:** de ledger is append-only — geen UPDATE/DELETE op
 `heatr_outbound_log`; correcties zijn nieuwe records.
 
+### I8 — Sequence-content wordt op precies één plek gerenderd
+**Status: AFGEDWONGEN in Heatr (kern); live-cutover open** *(Sprint 3)* ·
+Bewijs: `campaigns/sequence_engine.render_step` + `tests/test_sequence_gate.py`
++ `docs/audits/sprint3_render_ownership_trace.md`
+
+Beslissing: **Heatr rendert sequence-content, Warmr verstuurt letterlijk.**
+`render_step` is de enige sequence-renderer; hij is deterministisch (spintax
+via een `random.Random` geseed op `{lead_id}:{step_index}`), zodat één
+logische send byte-identieke body oplevert — herhaalbaar, ook bij restart.
+De gerenderde subject+body worden bij dispatch bevroren in
+`heatr_outbound_log` (`metadata.rendered`, `render_owner: "heatr"`) → wat
+verstuurd is, is reproduceerbaar (voedt I7).
+
+**Wat nog open staat (geen live-send-wijziging in Sprint 3):** het
+launch-pad rendert vandaag nog Warmr-side (Model A, autonome multi-step),
+en de review-email gooit zijn Heatr-render weg
+([api/main.py:720](../api/main.py#L720)). Beide écht inert maken hangt op een
+**onbevestigd Warmr-contract**: verstuurt Warmr `custom_subject`/`custom_body`
+letterlijk, of alleen via een `{{custom_*}}`-token? Tot dat bevestigd is legt
+de ledger Heatr's *intentie* vast, niet gegarandeerd wat Warmr assembleert.
+
+**Handhavingsregel:** nieuwe code die sequence-body produceert, doet dat via
+`render_step` (of een expliciete opvolger) — nooit een tweede inline-render.
+Sends leveren altijd een deterministische seed. Een tweede renderer voor
+sequence-content = blokkerende review.
+
 ---
 
 ## Overzicht
@@ -157,6 +183,7 @@ overvragen we niet tot er een concrete replay-behoefte is.
 | I5 Geen UI-businesslogica | audit §5 + §8 + Sprint 2 pre-conditie | **afgedwongen** (restpunt: display-catch-hygiëne) |
 | I6 Idempotency-keys | dispatcher + key-conventies (Sprint 2) | **afgedwongen** (operationeel zodra migratie 020 gedraaid is) |
 | I7 Event-log-reproduceerbaarheid | outbound-ledger + run-state (Sprint 2) | fundament gelegd — replay is bewuste schuld |
+| I8 Eén render-plek voor sequence-content | render_step + tests (Sprint 3) | **afgedwongen in Heatr**; live-cutover open op Warmr-contract |
 
 ## Toets-procedure voor volgende sprints
 
@@ -169,3 +196,7 @@ overvragen we niet tot er een concrete replay-behoefte is.
    operator-meldingen.
 4. I7-replay blijft gedocumenteerde schuld tot er een concrete
    replay-behoefte is — de ledger + run-state zijn het fundament.
+5. Een tweede renderer voor sequence-content (naast `render_step`), of een
+   send zonder deterministische seed = blokkerende review (I8). De
+   live-cutover (Warmr letterlijk laten versturen) blijft geblokkeerd tot het
+   Warmr-contract bevestigd is — zie sprint3_render_ownership_trace.md.

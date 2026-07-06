@@ -478,3 +478,76 @@ def test_render_step_substitutes_double_brace_then_spintax():
     assert "{{opener}}" not in out["body"]
     assert "{opener}" not in out["body"]
     assert "{first_name}" not in out["body"]
+
+
+# ---------------------------------------------------------------------------
+# Invariant I8 (Sprint 3) — render_step is de ENIGE, deterministische
+# sequence-renderer. "Eén logische send = exact dezelfde body."
+# ---------------------------------------------------------------------------
+
+_SPINTAX_STEP = {
+    # Genoeg spintax-groepen dat een niet-deterministische render vrijwel
+    # zeker zou afwijken tussen twee aanroepen.
+    "subject": "{Hoi|Hallo|Goedemiddag} {{first_name}}",
+    "body": (
+        "{Ik zag|Me viel op|Ik merkte} dat {{company}} "
+        "{een sterke|een mooie|een goede} online aanwezigheid heeft. "
+        "{Zullen we|Wil je|Laten we} {even bellen|kort schakelen|contact hebben}?"
+    ),
+    "delay_days": 0,
+}
+_LEAD_A = {"id": "lead-aaa", "company_name": "Kliniek A", "contact_first_name": "Anna"}
+_LEAD_B = {"id": "lead-bbb", "company_name": "Kliniek B", "contact_first_name": "Bram"}
+
+
+def test_render_step_is_deterministic_for_same_seed():
+    """Zelfde (step, lead, seed) → byte-identieke body over herhaalde renders.
+    Dit is de kern van I8: een re-render (bv. na restart) mag nooit een andere
+    tekst produceren dan wat bevroren/verstuurd is."""
+    from campaigns.sequence_engine import render_step
+
+    seed = f"{_LEAD_A['id']}:0"
+    first = render_step(_SPINTAX_STEP, _LEAD_A, seed=seed)
+    for _ in range(20):
+        again = render_step(_SPINTAX_STEP, _LEAD_A, seed=seed)
+        assert again == first, "geseede render is niet deterministisch"
+
+
+def test_render_step_single_source_all_paths_identical():
+    """Elk send-pad rendert via dezelfde functie met dezelfde seed → dezelfde
+    body. We simuleren de call-sites (dispatch, een hypothetische preview, een
+    re-render bij restart) en eisen byte-gelijkheid."""
+    from campaigns.sequence_engine import render_step
+
+    seed = f"{_LEAD_A['id']}:1"
+    path_dispatch = render_step(_SPINTAX_STEP, _LEAD_A, seed=seed)
+    path_preview = render_step(_SPINTAX_STEP, _LEAD_A, seed=seed)
+    path_restart = render_step(_SPINTAX_STEP, _LEAD_A, seed=seed)
+    assert path_dispatch == path_preview == path_restart
+
+
+def test_render_step_varies_across_leads():
+    """I8 vereist determinisme per logische send, NIET dat alle leads dezelfde
+    tekst krijgen — spintax-variatie cross-lead blijft (deliverability). Met
+    per-lead seeds moeten de picks (statistisch) kunnen verschillen."""
+    from campaigns.sequence_engine import render_step
+
+    a = render_step(_SPINTAX_STEP, _LEAD_A, seed=f"{_LEAD_A['id']}:0")
+    b = render_step(_SPINTAX_STEP, _LEAD_B, seed=f"{_LEAD_B['id']}:0")
+    # Namen verschillen sowieso; de spintax-picks mógen verschillen. We eisen
+    # niet dat ze verschillen (kan toevallig samenvallen), wél dat beide een
+    # geldige, volledig-geresolveerde body opleveren.
+    for out in (a, b):
+        assert "{" not in out["body"] and "}" not in out["body"]
+        assert "|" not in out["body"]
+
+
+def test_resolve_spintax_seeded_rng_is_stable():
+    """resolve_spintax met een expliciete Random(seed) is reproduceerbaar."""
+    import random as _random
+    from campaigns.sequence_engine import resolve_spintax
+
+    text = "{a|b|c|d|e} {f|g|h|i|j} {k|l|m|n|o}"
+    out1 = resolve_spintax(text, _random.Random("x"))
+    out2 = resolve_spintax(text, _random.Random("x"))
+    assert out1 == out2

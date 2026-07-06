@@ -221,14 +221,24 @@ def auto_fix_sequence_config(steps: list[dict]) -> list[dict]:
 # Variable injection + spintax
 # ==============================================================================
 
-def resolve_spintax(text: str) -> str:
+def resolve_spintax(text: str, rng: random.Random | None = None) -> str:
     """
     Resolve {option1|option2|option3} spintax in text.
-    Randomly picks one option per group.
+    Picks one option per group.
+
+    Args:
+        rng: optionele deterministische generator. Zonder rng valt het terug
+            op de module-`random` (niet-deterministisch). Sends leveren ALTIJD
+            een geseede rng (zie render_step) zodat één logische send (lead +
+            stap) reproduceerbaar dezelfde body oplevert — de kern van
+            invariant I8. Cross-lead blijft de tekst variëren (andere seed per
+            lead) voor deliverability.
     """
+    chooser = rng or random
+
     def pick(match: re.Match) -> str:
         options = match.group(1).split("|")
-        return random.choice(options).strip()
+        return chooser.choice(options).strip()
 
     return re.sub(r"\{([^{}]+)\}", pick, text)
 
@@ -306,18 +316,28 @@ def inject_variables(text: str, lead: dict) -> str:
     return text
 
 
-def render_step(step: dict, lead: dict) -> dict:
+def render_step(step: dict, lead: dict, *, seed: str | None = None) -> dict:
     """
     Render a single sequence step for a specific lead.
-    Volgorde: variable-injection EERST (`{{name}}` → value), spintax DAARNA
-    (`{a|b}` → random a of b). Andersom zou de regex `{[^{}]+}` van spintax
-    de inhoud van `{{opener}}` opsnoepen voordat injection erbij kan.
+
+    Dit is de ENIGE plek waar sequence-content wordt gerenderd (invariant I8,
+    Sprint 3). Volgorde: variable-injection EERST (`{{name}}` → value), spintax
+    DAARNA (`{a|b}` → keuze). Andersom zou de regex `{[^{}]+}` van spintax de
+    inhoud van `{{opener}}` opsnoepen voordat injection erbij kan.
+
+    Args:
+        seed: deterministische spintax-seed. Sends geven `{lead_id}:{step_index}`
+            mee (zie process_due_send) zodat dezelfde logische send altijd exact
+            dezelfde body oplevert — nodig om de body één keer te bevriezen in
+            het outbound-ledger (I7) en om "één send = één body" te bewijzen.
+            Zonder seed (previews/tests-zonder-eis) blijft het niet-deterministisch.
 
     Returns:
         { "subject": str, "body": str, "delay_days": int }
     """
-    subject = resolve_spintax(inject_variables(step.get("subject") or "", lead))
-    body    = resolve_spintax(inject_variables(step.get("body")    or "", lead))
+    rng = random.Random(seed) if seed is not None else None
+    subject = resolve_spintax(inject_variables(step.get("subject") or "", lead), rng)
+    body    = resolve_spintax(inject_variables(step.get("body")    or "", lead), rng)
     return {
         "subject":    subject,
         "body":       body,
@@ -406,7 +426,14 @@ async def process_due_send(
         await _complete_sequence(record_id, lead_id, workspace_id, supabase_client)
         return {"sent": False, "reason": "sequence_complete", "lead_id": lead_id}
 
-    step = render_step(sequence_steps[step_index], lead)
+    # Deterministische seed per (lead, stap): dezelfde logische send rendert
+    # altijd dezelfde body — voorwaarde om 'm één keer te bevriezen in het
+    # ledger (I7) en om invariant I8 te bewijzen. restart_epoch zit BEWUST niet
+    # in de seed: een restart moet dezelfde content herzenden, niet nieuwe.
+    step = render_step(
+        sequence_steps[step_index], lead,
+        seed=f"{lead_id}:{step_index}",
+    )
 
     # Push to Warmr — via de dispatcher (I3/I6/I7). Dit pad draait autonoom
     # (n8n elke 15 min); de idempotency-key record:step:epoch garandeert dat
@@ -432,7 +459,15 @@ async def process_due_send(
             ),
             supabase_client=supabase_client,
             workspace_id=workspace_id,
-            metadata={"record_id": record_id, "step_index": step_index},
+            # De gerenderde subject+body worden bevroren in heatr_outbound_log:
+            # wat de deur uitging is achteraf exact reproduceerbaar (I7), zonder
+            # afhankelijk te zijn van een re-render tegen mogelijk-gewijzigde
+            # templates. Dit is Heatr's render als bron van waarheid (I8).
+            metadata={
+                "record_id": record_id, "step_index": step_index,
+                "rendered": {"subject": step["subject"], "body": step["body"]},
+                "render_owner": "heatr",
+            },
         )
         if disp.skipped_duplicate:
             # Stap al verstuurd (bv. dubbele n8n-tick): NIET nog eens pushen,
