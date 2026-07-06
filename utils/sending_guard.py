@@ -59,21 +59,20 @@ class SendingGuard:
         db,
     ) -> tuple[bool, str]:
 
-        # 1. GDPR check
+        # 1-3. Compliance (GDPR + status) — via de CENTRALE gate zodat het
+        # dispatch-pad (mail 2/3) exact hetzelfde oordeel velt als launch,
+        # preview, send-to-warmr en review-email. Sprint 1-audit vond dat de
+        # eigen checks hier "disqualified" misten: een lead die ná launch
+        # gediskwalificeerd werd, kreeg vervolg-mails gewoon door.
         lead = await self._get_lead(lead_id, workspace_id, db)
         if not lead:
             return await self._block(lead_id, inbox_id, workspace_id, "lead_not_found", "Lead niet gevonden", db)
 
-        if not lead.get("gdpr_safe", False):
-            return await self._block(lead_id, inbox_id, workspace_id, "gdpr_unsafe", "Lead is niet GDPR-veilig", db)
-
-        # 2. Unsubscribed
-        if lead.get("status") == "unsubscribed":
-            return await self._block(lead_id, inbox_id, workspace_id, "unsubscribed", "Lead heeft uitgeschreven", db)
-
-        # 3. Forgotten
-        if lead.get("status") == "forgotten":
-            return await self._block(lead_id, inbox_id, workspace_id, "forgotten", "Lead verwijderd via GDPR", db)
+        from utils.enrichment_check import compliance_check
+        compliant, compliance_reason = compliance_check(lead)
+        if not compliant:
+            return await self._block(lead_id, inbox_id, workspace_id, "compliance",
+                                     compliance_reason or "compliance-block", db)
 
         # 4. Next contact cooldown
         next_contact = lead.get("next_contact_after")
