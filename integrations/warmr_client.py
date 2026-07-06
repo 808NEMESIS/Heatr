@@ -181,6 +181,8 @@ class WarmrClient:
         lead: dict,
         campaign_id: str,
         preferred_inbox_id: str | None = None,
+        custom_subject: str | None = None,
+        custom_body: str | None = None,
     ) -> dict:
         """Push a single lead to Warmr for outreach.
 
@@ -188,6 +190,14 @@ class WarmrClient:
             lead: Full lead dict from Supabase leads table.
             campaign_id: Warmr campaign UUID to assign the lead to.
             preferred_inbox_id: Preferred sending inbox UUID or None.
+            custom_subject / custom_body: per-lead gerenderde content
+                (sequence-dispatch-pad). Landen in payload.custom_fields
+                zodat Warmr-side template-substitutie erbij kan. NB: Warmr
+                rendert primair de frozen campaign-sequence; deze velden
+                zijn beschikbaar als {{custom_subject}}/{{custom_body}}.
+                Sprint 2-vondst: process_due_send gaf deze kwargs al jaren
+                mee terwijl push_lead ze niet accepteerde — elke
+                dispatch-send crashte silent op TypeError.
 
         Returns:
             Warmr's response dict (includes Warmr lead ID).
@@ -196,6 +206,12 @@ class WarmrClient:
             WarmrAPIError: On API error or duplicate lead rejection.
         """
         payload = self._build_lead_payload(lead, campaign_id, preferred_inbox_id)
+        if custom_subject or custom_body:
+            payload.setdefault("custom_fields", {})
+            if custom_subject:
+                payload["custom_fields"]["custom_subject"] = custom_subject
+            if custom_body:
+                payload["custom_fields"]["custom_body"] = custom_body
         result = await self._request("POST", "/leads", json=payload)
 
         # Store Warmr's lead UUID back in Heatr for future correlation

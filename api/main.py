@@ -574,6 +574,7 @@ async def enrich_leads(
 @app.post("/leads/send-to-warmr")
 async def send_leads_to_warmr(
     body: SendToWarmrRequest,
+    request: Request,
     workspace_id: str = Depends(get_workspace),
     db: Client = Depends(get_supabase),
 ) -> dict:
@@ -592,6 +593,8 @@ async def send_leads_to_warmr(
 
     if body.dry_run:
         return {"eligible": len(eligible), "dry_run": True}
+    if not eligible:
+        return {"pushed": 0, "failed": 0, "duplicates": 0, "eligible": 0}
 
     client = WarmrClient()
     # Use first available inbox as campaign placeholder
@@ -600,7 +603,28 @@ async def send_leads_to_warmr(
         raise HTTPException(status_code=503, detail="No Warmr inboxes available")
 
     campaign_id = inboxes[0].get("campaign_id") or inboxes[0].get("id")
-    result = await client.push_leads_bulk(eligible, campaign_id=campaign_id)
+
+    # Outbound via de dispatcher (I3/I6/I7): idempotency-key over de exacte
+    # selectie — dezelfde leads nogmaals naar dezelfde campagne = duplicate.
+    from utils.outbound_dispatcher import dispatch_outbound, ids_hash
+    principal = identify_principal(request)
+    disp = await dispatch_outbound(
+        kind="warmr_bulk_push",
+        idempotency_key=f"warmr-bulk:{campaign_id}:{ids_hash([l['id'] for l in eligible])}",
+        actor=principal.get("created_by", "unknown"),
+        leads=eligible,
+        send=lambda: client.push_leads_bulk(eligible, campaign_id=campaign_id),
+        supabase_client=db,
+        workspace_id=workspace_id,
+        metadata={"endpoint": "/leads/send-to-warmr"},
+    )
+    if disp.skipped_duplicate:
+        return {
+            "pushed": 0, "skipped_duplicate": True,
+            "previous_push_at": (disp.previous or {}).get("created_at"),
+            "detail": "Exact dezelfde selectie is al naar deze campagne gepusht.",
+        }
+    result = disp.result
 
     for lead in eligible:
         _insert_timeline_event(db, workspace_id, lead["id"], "email_sent", f"Lead verstuurd naar Warmr (campagne {campaign_id})")
@@ -684,7 +708,27 @@ async def send_review_email(
     if not inboxes:
         raise HTTPException(status_code=503, detail="No Warmr inbox available")
 
-    await client.push_lead(lead, campaign_id=inboxes[0]["id"], preferred_inbox_id=inboxes[0]["id"])
+    # Via de dispatcher (I3/I6/I7). Key per lead: één review-email per lead —
+    # een tweede klik wordt een nette 409 i.p.v. een dubbele Warmr-push
+    # (Sprint 1-audit §7: dit endpoint had geen enkele idempotency).
+    from utils.outbound_dispatcher import dispatch_outbound
+    disp = await dispatch_outbound(
+        kind="warmr_push",
+        idempotency_key=f"review-email:{lead_id}",
+        actor="operator",
+        lead=lead,
+        send=lambda: client.push_lead(lead, campaign_id=inboxes[0]["id"], preferred_inbox_id=inboxes[0]["id"]),
+        supabase_client=db,
+        workspace_id=workspace_id,
+        metadata={"endpoint": "/leads/{id}/send-review-email"},
+    )
+    if disp.skipped_duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Review-email is al verstuurd voor deze lead "
+                   f"({(disp.previous or {}).get('created_at', 'eerder')}). "
+                   f"Herzenden vereist een bewuste restart via de Control Plane.",
+        )
     _insert_timeline_event(db, workspace_id, lead_id, "review_email_sent", "Review email verstuurd via Warmr")
 
     return {"ok": True, **email_data}
@@ -1238,6 +1282,7 @@ async def launch_campaign(
 
     # Per niet-leeg bucket: maak Warmr-campaign + push leads
     client = WarmrClient()
+    principal = identify_principal(request)  # vóór de loop — dispatcher-actor
     sub_results: list[dict] = []
     sub_campaign_ids: list[str] = []
     audit_lead_ids: list[str] = []
@@ -1249,15 +1294,54 @@ async def launch_campaign(
         # Naam per bucket: prefix met brug-key zodat dashboard ze als één run kan groeperen
         bucket_label = bucket_key if bucket_key != custom_bucket_key else "custom"
         camp_name = f"{body.name} · {bucket_label}" if len(buckets) > 1 else body.name
-        camp_id = await client.create_campaign(
-            name=camp_name,
-            sequence_steps=b["fixed_sequence"],
-            settings={"inbox_ids": body.inbox_ids, "template_id": b["template_id"]},
+
+        # Beide side-effects via de dispatcher (I3/I6/I7). Create-key over
+        # naam+template+selectie: dubbel launchen van exact dezelfde intentie
+        # maakt geen tweede campagne; push-key over campagne+selectie.
+        from utils.outbound_dispatcher import dispatch_outbound, ids_hash
+        bucket_ids_hash = ids_hash([l["id"] for l in bucket_leads if l.get("id")])
+        create_disp = await dispatch_outbound(
+            kind="warmr_campaign_create",
+            idempotency_key=f"campaign-create:{camp_name}:{b['template_id']}:{bucket_ids_hash}",
+            actor=principal.get("created_by", "unknown"),
+            leads=bucket_leads,
+            send=lambda: client.create_campaign(
+                name=camp_name,
+                sequence_steps=b["fixed_sequence"],
+                settings={"inbox_ids": body.inbox_ids, "template_id": b["template_id"]},
+            ),
+            supabase_client=db,
+            workspace_id=workspace_id,
+            metadata={"endpoint": "/campaigns/launch", "bucket": bucket_label},
         )
+        if create_disp.executed:
+            camp_id = create_disp.result
+        else:
+            # Duplicate: hergebruik de campagne-id uit het eerdere ledger-record
+            camp_id = (create_disp.previous or {}).get("result")
+        if not isinstance(camp_id, str) or not camp_id:
+            raise HTTPException(status_code=409, detail=(
+                f"Campagne '{camp_name}' is al eerder met exact deze selectie gelanceerd "
+                f"({(create_disp.previous or {}).get('created_at', 'eerder')}); "
+                "campagne-id kon niet uit het ledger worden hersteld. Kies een andere naam."
+            ))
         sub_campaign_ids.append(camp_id)
         audit_sequences[bucket_label] = b["fixed_sequence"]
 
-        push_result = await client.push_leads_bulk(bucket_leads, campaign_id=camp_id)
+        push_disp = await dispatch_outbound(
+            kind="warmr_bulk_push",
+            idempotency_key=f"campaign-push:{camp_id}:{bucket_ids_hash}",
+            actor=principal.get("created_by", "unknown"),
+            leads=bucket_leads,
+            send=lambda: client.push_leads_bulk(bucket_leads, campaign_id=camp_id),
+            supabase_client=db,
+            workspace_id=workspace_id,
+            metadata={"endpoint": "/campaigns/launch", "bucket": bucket_label},
+        )
+        push_result = push_disp.result if push_disp.executed else {
+            "pushed": 0, "failed": 0, "duplicates": len(bucket_leads),
+            "skipped_duplicate": True,
+        }
         sub_results.append({
             "bucket": bucket_label,
             "template_id": b["template_id"],
@@ -4219,13 +4303,34 @@ async def generate_briefing(
                     <p><a href="{os.getenv('HEATR_BASE_URL', 'http://localhost:8000')}/dashboard.html">Open Heatr →</a></p>
                 """,
             }
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(
-                    "https://api.resend.com/emails",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {resend_key}"},
-                )
-                briefing["email_sent"] = r.status_code < 400
+            # Operator-egress via de dispatcher (I3/I7). Natuurlijke
+            # dag-key: één briefing per workspace per dag — een dubbele
+            # trigger (n8n-retry, handmatige re-run) mailt niet dubbel.
+            from utils.outbound_dispatcher import dispatch_outbound
+
+            async def _send_briefing():
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.post(
+                        "https://api.resend.com/emails",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {resend_key}"},
+                    )
+                    return {"status_code": r.status_code, "ok": r.status_code < 400}
+
+            disp = await dispatch_outbound(
+                kind="operator_email",
+                idempotency_key=f"briefing:{workspace_id}:{briefing['date']}",
+                actor="scheduler:briefing",
+                send=_send_briefing,
+                supabase_client=db,
+                workspace_id=workspace_id,
+                metadata={"endpoint": "/briefing/generate", "to": operator_email},
+            )
+            if disp.skipped_duplicate:
+                briefing["email_sent"] = False
+                briefing["skipped_duplicate"] = True
+            else:
+                briefing["email_sent"] = bool((disp.result or {}).get("ok"))
         except Exception as e:
             logger.warning("Briefing email failed: %s", e)
             briefing["email_sent"] = False

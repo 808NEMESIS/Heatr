@@ -65,11 +65,17 @@ async def send_alert(
 
     # Email for critical alerts
     if severity == "critical":
-        await _send_critical_email(alert_type, message, workspace_id)
+        await _send_critical_email(alert_type, message, workspace_id, supabase_client)
 
 
-async def _send_critical_email(alert_type: str, message: str, workspace_id: str) -> None:
-    """Send email notification via Resend for critical alerts."""
+async def _send_critical_email(alert_type: str, message: str, workspace_id: str, supabase_client=None) -> None:
+    """Send email notification via Resend for critical alerts.
+
+    Egress loopt via de outbound-dispatcher met enforce_idempotency=False:
+    het record komt in de ledger (I7) maar herhaalde kritieke alerts worden
+    NIET gededupt — suppressie van een echte storing is gevaarlijker dan
+    een dubbele melding.
+    """
     operator_email = os.getenv("OPERATOR_EMAIL")
     resend_key = os.getenv("RESEND_API_KEY")
 
@@ -98,16 +104,33 @@ async def _send_critical_email(alert_type: str, message: str, workspace_id: str)
                 </a></p>
             """,
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(
-                "https://api.resend.com/emails",
-                json=payload,
-                headers={"Authorization": f"Bearer {resend_key}"},
+        async def _do_send():
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(
+                    "https://api.resend.com/emails",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {resend_key}"},
+                )
+                if r.status_code >= 400:
+                    logger.error("Resend email failed: %s %s", r.status_code, r.text[:200])
+                else:
+                    logger.info("Critical alert email sent to %s", operator_email)
+                return {"status_code": r.status_code}
+
+        if supabase_client is not None:
+            from utils.outbound_dispatcher import dispatch_outbound
+            await dispatch_outbound(
+                kind="operator_email",
+                idempotency_key=f"alert:{workspace_id}:{alert_type}",
+                actor="system:alert-manager",
+                send=_do_send,
+                supabase_client=supabase_client,
+                workspace_id=workspace_id,
+                enforce_idempotency=False,  # record-only — nooit alerts onderdrukken
+                metadata={"alert_type": alert_type},
             )
-            if r.status_code >= 400:
-                logger.error("Resend email failed: %s %s", r.status_code, r.text[:200])
-            else:
-                logger.info("Critical alert email sent to %s", operator_email)
+        else:
+            await _do_send()
     except Exception as e:
         logger.error("Critical alert email failed: %s", e)
 

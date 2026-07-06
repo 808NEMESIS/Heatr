@@ -408,17 +408,45 @@ async def process_due_send(
 
     step = render_step(sequence_steps[step_index], lead)
 
-    # Push to Warmr
+    # Push to Warmr — via de dispatcher (I3/I6/I7). Dit pad draait autonoom
+    # (n8n elke 15 min); de idempotency-key record:step:epoch garandeert dat
+    # dezelfde stap nooit twee keer verstuurd wordt (dubbele n8n-tick,
+    # overlappende workers), terwijl een bewuste operator-restart de
+    # restart_epoch bumpt en daarmee een nieuwe key krijgt.
+    from utils.outbound_dispatcher import DispatchBlocked, dispatch_outbound
     try:
         wc = warmr_client or WarmrClient()
         campaign_id = send_record.get("campaign_id")
-        await wc.push_lead(
-            lead,
-            campaign_id=campaign_id,
-            preferred_inbox_id=inbox_id,
-            custom_subject=step["subject"],
-            custom_body=step["body"],
+        restart_epoch = int(send_record.get("restart_epoch") or 0)
+        disp = await dispatch_outbound(
+            kind="warmr_push",
+            idempotency_key=f"seq-send:{record_id}:step:{step_index}:epoch:{restart_epoch}",
+            actor="scheduler:sequence-dispatch",
+            lead=lead,
+            send=lambda: wc.push_lead(
+                lead,
+                campaign_id=campaign_id,
+                preferred_inbox_id=inbox_id,
+                custom_subject=step["subject"],
+                custom_body=step["body"],
+            ),
+            supabase_client=supabase_client,
+            workspace_id=workspace_id,
+            metadata={"record_id": record_id, "step_index": step_index},
         )
+        if disp.skipped_duplicate:
+            # Stap al verstuurd (bv. dubbele n8n-tick): NIET nog eens pushen,
+            # wél doorschuiven zodat de sequence niet blijft hangen op een
+            # al-verzonden stap.
+            logger.warning(
+                "Sequence-send geskipt als duplicate (record=%s step=%d) — "
+                "stap was al verstuurd op %s", record_id, step_index,
+                (disp.previous or {}).get("created_at"),
+            )
+    except DispatchBlocked as e:
+        logger.error("Sequence-send compliance-blocked voor lead %s: %s", lead_id, e)
+        _mark_send_blocked(record_id, str(e), supabase_client)
+        return {"sent": False, "reason": f"compliance_blocked: {e}", "lead_id": lead_id}
     except Exception as e:
         logger.error("Warmr push failed for lead %s: %s", lead_id, e)
         _mark_send_error(record_id, str(e), supabase_client)
