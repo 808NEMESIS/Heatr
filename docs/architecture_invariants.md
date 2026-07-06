@@ -1,6 +1,7 @@
 # Architecture Invariants — de grondwet van Aerys OS
 
-**Status per 2026-07-06** (Sprint 1 verificatie-audit). Elke toekomstige
+**Status per 2026-07-06** (Sprint 1 verificatie-audit + Sprint 2 Control
+Plane v0). Elke toekomstige
 sprint wordt tegen dit document getoetst: een PR die een *afgedwongen*
 invariant breekt is per definitie fout, ongeacht hoe nuttig de feature is.
 
@@ -44,16 +45,27 @@ launchability-fragmenten tonen/gebruiken, consumeren `compliance_check`,
 een eigen lijst.
 
 ### I3 — Iedere outbound side-effect loopt via de dispatcher
-**Status: GEDEELTELIJK** · Bewijs: sectie 6
+**Status: AFGEDWONGEN** *(sinds Sprint 2, commit `77bbe56`)* ·
+Bewijs: `utils/outbound_dispatcher.py` + `tests/test_outbound_dispatcher.py`
 
-Er is vandaag géén centrale dispatcher — er zijn 4 plekken die zelf
-`WarmrClient` instantiëren en pushen. Ze delen nu wél dezelfde
-compliance-gate (I1), maar niet één verzendpunt: idempotency, rate-limiting
-en event-logging zijn per pad geregeld i.p.v. op één plek.
+Alle prospect-gerichte egress-paden lopen door
+`utils.outbound_dispatcher.dispatch_outbound`: send-to-warmr (single +
+bulk), review-email, campaigns/launch (campaign-create + push),
+sequence-dispatch (n8n-pad, mail 2/3), morning-briefing en critical-alerts
+(record-only). De dispatcher doet drie dingen op één plek:
+compliance-vangnet (`DispatchBlocked` bij I1-schending), idempotency-check
+(I6) en een append-only record in `heatr_outbound_log` (migratie 020) —
+óók voor geblokkeerde, geskipte en gefaalde pogingen.
 
-**Nodig om af te dwingen:** een `dispatch_outbound(lead, kind, ...)`-laag
-waar alle 4 paden doorheen moeten (Control Plane-sprint). Tot die tijd geldt
-de handhavingsregel uit I1 als surrogaat.
+Fail-open by design: als de ledger-tabel ontbreekt (migratie 020 nog niet
+gedraaid) gaat de send dóór met een luide error-log — sends bricken is
+erger dan tijdelijk zonder dedup draaien.
+
+**Handhavingsregel:** elke nieuwe call-site van
+`WarmrClient.push_lead`/`push_leads_bulk`/`create_campaign`, of enige
+nieuwe prospect-gerichte verzending, gaat door `dispatch_outbound` met een
+deterministische idempotency-key. Directe WarmrClient-pushes buiten de
+dispatcher = blokkerende review.
 
 ### I4 — Iedere operator-actie wordt als event gelogd
 **Status: AFGEDWONGEN** *(sinds Sprint 2 pre-conditie-commit)* ·
@@ -86,28 +98,51 @@ queryFn is een blokkerende review tenzij het aantoonbaar decoratieve data
 betreft.
 
 ### I6 — Geen side-effect zonder idempotency-key
-**Status: NOG NIET** *(verwacht — Sprint 0 noemt idempotency nergens)* ·
-Bewijs: sectie 7
+**Status: AFGEDWONGEN** *(sinds Sprint 2, commit `77bbe56`; operationeel
+zodra migratie 020 gedraaid is)* · Bewijs: `utils/outbound_dispatcher.py`
 
-Enige bestaande idempotency: `/leads/import` (import_run_id, migratie 019)
-en Warmr-side bulk-dedup (`duplicates`-teller). Push-acties
-(send-review-email, send-to-warmr, launch, dispatch) hebben géén
-Heatr-side idempotency-key: dubbel klikken = dubbele side-effect-poging.
+Elke dispatch heeft een deterministische key; een tweede poging met
+dezelfde key wordt geskipt (`skipped_duplicate`) zonder send. Conventies:
 
-**Invariant-schuld → Control Plane-sprint.** Hoort bij de operator-acties
-(retry, force-next, restart-from-step) die daar gebouwd worden; een
-idempotency-laag zonder dispatcher (I3) zou dubbel werk zijn.
+| Pad | Key |
+|---|---|
+| send-to-warmr bulk | `warmr-bulk:{campaign}:{ids_hash}` |
+| review-email | `review-email:{lead_id}` |
+| campaign-create | `campaign-create:{naam}:{template}:{ids_hash}` |
+| campaign-push | `campaign-push:{camp_id}:{ids_hash}` |
+| sequence-send (n8n) | `seq-send:{record_id}:step:{step_index}:epoch:{restart_epoch}` |
+| morning-briefing | `briefing:{ws}:{date}` |
+| critical-alerts | record-only (`enforce_idempotency=False` — suppressie is gevaarlijker dan een dubbele melding) |
+
+De `restart_epoch` (kolom op `lead_campaign_history`, migratie 020) lost de
+spanning idempotency ↔ bewuste herzending op: een accidentele duplicate
+heeft dezelfde key en wordt geblokkeerd; een operator-restart bumpt de
+epoch → nieuwe key → herzendbaar. Restart is daarmee de ENIGE route naar
+een tweede send van dezelfde stap.
+
+**Handhavingsregel:** nieuwe dispatch-kinds krijgen een deterministische
+key (geen timestamps/randoms in de key); `enforce_idempotency=False` is
+alleen toegestaan voor operator-gerichte meldingen, nooit voor
+prospect-gerichte sends.
 
 ### I7 — Iedere workflow is volledig reproduceerbaar uit de event-log
-**Status: NOG NIET** *(verwacht)* · Bewijs: sectie 7
+**Status: FUNDAMENT GELEGD** *(Sprint 2)* ·
+Bewijs: `heatr_outbound_log` (migratie 020) + `utils/run_state.py`
 
-`lead_timeline` + `blocked_sends` + `decision_log`-achtige structuren
-bestaan, maar dekken niet alle mutaties (I4-gaten), bevatten geen
-payload-snapshots voor sends (wel `sequence_snapshot` op campagnes —
-migratie 013), en er is geen replay-mechanisme.
+Wat er nu is: één append-only ledger voor álle outbound side-effects
+(inclusief geblokkeerd/geskipt/gefaald, met actor, key, result en
+metadata), plus de Inspect-laag (`GET /leads/{id}/run-state`) die het
+run-beeld per lead componeert uit bestaande data. Zie
+`docs/audits/sprint2_runstate_inventory.md` voor de volledige bronnen-map.
 
-**Invariant-schuld → Control Plane-sprint.** Vereist eerst I3 (dispatcher
-als één schrijfpunt) en I6 (idempotente replay).
+Wat bewust schuld blijft (gemarkeerd als `gaps` in de run-state-payload):
+per-attempt retry-history (anthropic-retries loggen alleen naar de
+logger), step-timestamps binnen een enrichment-run, en een
+replay-mechanisme. Volledige replay vereist payload-snapshots per event —
+overvragen we niet tot er een concrete replay-behoefte is.
+
+**Handhavingsregel:** de ledger is append-only — geen UPDATE/DELETE op
+`heatr_outbound_log`; correcties zijn nieuwe records.
 
 ---
 
@@ -117,16 +152,20 @@ als één schrijfpunt) en I6 (idempotente replay).
 |---|---|---|
 | I1 Eén compliance-beslissing | audit §1 + §6 | **afgedwongen** (b97cfd4 + b0410cb) |
 | I2 Eén readiness-beslissing | audit §2 + §5 + Sprint 2 pre-conditie | **afgedwongen** |
-| I3 Outbound via dispatcher | audit §6 | gedeeltelijk (gate gedeeld, verzendpunt niet) — Sprint 2 in uitvoering |
+| I3 Outbound via dispatcher | dispatcher + tests (Sprint 2) | **afgedwongen** (77bbe56) |
 | I4 Operator-acties als event | audit §7 + Sprint 2 pre-conditie | **afgedwongen** |
 | I5 Geen UI-businesslogica | audit §5 + §8 + Sprint 2 pre-conditie | **afgedwongen** (restpunt: display-catch-hygiëne) |
-| I6 Idempotency-keys | audit §7 | **nog niet** — Sprint 2 in uitvoering |
-| I7 Event-log-reproduceerbaarheid | audit §7 | **nog niet** — Sprint 2 legt fundament |
+| I6 Idempotency-keys | dispatcher + key-conventies (Sprint 2) | **afgedwongen** (operationeel zodra migratie 020 gedraaid is) |
+| I7 Event-log-reproduceerbaarheid | outbound-ledger + run-state (Sprint 2) | fundament gelegd — replay is bewuste schuld |
 
 ## Toets-procedure voor volgende sprints
 
 1. Elke PR die verzending, lead-state-mutatie of operator-acties raakt:
-   toets expliciet tegen I1-I5 (de afgedwongen/bijna-afgedwongen set).
-2. Nieuwe push-call-sites zonder `compliance_check` = blokkerende review.
-3. I6/I7 worden pas afgedwongen zodra de Control Plane de dispatcher (I3)
-   levert — tot die tijd zijn ze gedocumenteerde schuld, geen regel.
+   toets expliciet tegen I1-I6 (de afgedwongen set).
+2. Nieuwe push-call-sites buiten `dispatch_outbound` om, of zonder
+   `compliance_check` = blokkerende review.
+3. Nieuwe dispatch-kinds zonder deterministische idempotency-key =
+   blokkerende review; `enforce_idempotency=False` alleen voor
+   operator-meldingen.
+4. I7-replay blijft gedocumenteerde schuld tot er een concrete
+   replay-behoefte is — de ledger + run-state zijn het fundament.
