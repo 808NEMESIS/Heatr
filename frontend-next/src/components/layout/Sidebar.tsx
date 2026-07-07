@@ -56,7 +56,7 @@ export function Sidebar() {
   return (
     <aside className="hidden lg:flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-white">
       <div className="flex items-center gap-2 px-5 py-5 border-b border-[var(--color-border)]">
-        <img src="/heatr-logo.png" alt="Heatr" className="h-8 w-auto" />
+        <img src={`${import.meta.env.BASE_URL}heatr-logo.png`} alt="Heatr" className="h-8 w-auto" />
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5">

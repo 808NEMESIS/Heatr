@@ -1,16 +1,16 @@
 /**
  * SystemToggle — operator-shell switch Heatr ⇄ Warmr (A0, Sprint 5).
  *
- * Heatr-kant is de huidige app; Warmr-kant is een LINK-OUT (volledige
- * navigatie, geen iframe) naar Warmr's bestaande app onder dezelfde origin
- * (`/warmr/` — Vite-proxy in dev, reverse-proxy in prod). Same-origin ⇒ de
- * Supabase-sessie in localStorage is gedeeld, dus één login geldt voor beide.
+ * Heatr-kant is de huidige app (draait onder /heatr/*); Warmr-kant is een
+ * LINK-OUT (volledige navigatie, geen iframe) naar Warmr op de origin-root
+ * (`/`) — dezelfde origin, dus de Supabase-sessie in localStorage is gedeeld
+ * en één login geldt voor beide. Warmr op root betekent dat zijn absolute
+ * paden (login/logout-redirects) vanzelf kloppen.
  *
- * Bewust een plain <a> (geen react-router <Link>): `/warmr/` is geen
- * react-route maar een aparte app op dezelfde origin, dus we willen een echte
- * page-navigatie.
+ * Bewust een plain <a> (geen react-router <Link>): `/` is Warmr's aparte app
+ * op dezelfde origin, dus we willen een echte page-navigatie buiten de router.
  */
-const WARMR_PATH = import.meta.env.VITE_WARMR_PATH || '/warmr/';
+const WARMR_PATH = import.meta.env.VITE_WARMR_PATH || '/';
 
 export function SystemToggle() {
   return (

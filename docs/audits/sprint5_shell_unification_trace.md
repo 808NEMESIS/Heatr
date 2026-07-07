@@ -232,3 +232,40 @@ Status: `<SystemToggle>` + sessie-lezen + secret + CORS staan; de Vite
 absolute-redirect-randen). De keuze tussen flip (1) en subpath-met-randen (2)
 is aan Sami — het verandert de risico-afweging, precies wat de sprint-guard
 markeerde.
+
+### Resolutie: flip gekozen (Optie 1) — bewezen
+
+Sami koos de flip. Doorgevoerd (alleen Heatr-frontend + env, Warmr onaangeraakt):
+- `vite.config.ts`: `base: '/heatr/'` + proxy-catch-all `^(?!/heatr|/api)` → Warmr
+  (:8000); `/api` → Heatr-backend (:8001). Vite serveert app+HMR+modules onder
+  `/heatr/*`, al het andere (`/`, `*.html`, `style.css`, `app.js`, `config.js`)
+  gaat naar Warmr op de origin-root.
+- `App.tsx`: `BrowserRouter basename` volgt Vite's base (`/heatr`).
+- `SystemToggle`: Warmr-link → `/` (origin-root).
+- Base-aware asset-refs: `index.html` favicon (`%BASE_URL%`), Sidebar-logo
+  (`import.meta.env.BASE_URL`).
+
+**Schakel 2 bewezen** (verse Vite-instance, om de draaiende dev-server niet te
+verstoren):
+- `/heatr/` → Heatr SPA, assets onder `/heatr/@vite` · `/heatr/src` (base actief)
+- `/` → **307 → `/index.html` op DEZELFDE origin** (Warmr's root-redirect
+  ontsnapt niet meer)
+- `/index.html` → `<title>Warmr — Inloggen</title>` (de vroeger-kapotte
+  redirect-target lost nu correct op naar Warmr)
+- `/style.css` → `text/css` (echte Warmr-CSS), `/config.js` → `WARMR_CONFIG`
+
+Daarmee zijn alle 4 schakels van de sessie-continuïteitsketen groen: Warmr-login
+schrijft de sessie (1) → same-origin serving (2, flip) → Heatr leest de sessie
+(3, 4/4) → backend accepteert de JWT (4, 3/3). De snag (Warmr's absolute paden)
+is volledig opgelost doordat Warmr nu echt op zijn aangenomen root draait.
+
+### Prod-deploy (reverse-proxy, wanneer gedeployed)
+Eén origin/domein: `/` → Warmr (static+API of alleen static + `/api/v1` → Warmr-
+backend), `/heatr/*` → Heatr's `dist` (build met `base=/heatr/`), `/api` →
+Heatr-backend. Voeg de prod-origin toe aan Warmr's `ALLOWED_ORIGINS`. Same-origin
+⇒ sessie-deling identiek aan dev.
+
+### Bekende A0-beperking (geen Warmr-wijziging toegestaan)
+Warmr's app heeft geen "terug naar Heatr"-knop (kan Warmr niet wijzigen). Terug
+van Warmr → Heatr gaat via browser-back of de `/heatr`-bookmark. De toggle is
+eenrichting (Heatr → Warmr) tot Warmr ooit een eigen terugverwijzing krijgt.

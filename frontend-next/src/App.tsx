@@ -43,7 +43,9 @@ export default function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
+        {/* basename volgt Vite's base (/heatr/) — Heatr leeft same-origin
+            onder /heatr/*, Warmr op de origin-root. */}
+        <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Routes>
             <Route element={<Shell />}>
               <Route index element={<DashboardPage />} />
