@@ -164,3 +164,71 @@ werkt de Supabase-sessie-deling identiek aan lokaal.
 **Status:** gate open op Sami's prod-hosting-keuze. Lokaal bouwen + sessie-
 continuïteit bewijzen kan nu al (reversibel, geen backend-/Warmr-/prod-wijziging);
 prod-reverse-proxy is een deploy-vereiste, geen bouwtaak in deze sprint.
+
+---
+
+## Sprint 5 (build) — A0 gebouwd: sessie-keten bewezen, serving-layout geblokkeerd
+
+Sami's keuzes: auth = "Warmr-login + Heatr leest sessie"; hosting = "eerst prod
+checken" (gedaan: niet geblokkeerd, lokaal bouwen). Go gegeven.
+
+### Bewezen: de sessie-continuïteitsketen (schakel 3 + 4)
+
+De A0-belofte "één login, beide kanten" is een keten van 4 schakels. Bewijs:
+
+1. **Warmr-login schrijft de sessie** — Warmr's `app.js` gebruikt supabase-js;
+   `_supabase.auth` bewaart de sessie in `localStorage` van de **serving-origin**
+   (`sb-<ref>-auth-token`). Ongewijzigd Warmr-gedrag.
+2. **Same-origin** — beide onder één origin ⇒ gedeelde `localStorage`. (Zie snag
+   hieronder — dit is de geblokkeerde schakel.)
+3. **Heatr leest de sessie** — `src/lib/auth.ts` (`resolveAuthToken`) haalt de
+   JWT uit de gedeelde `localStorage`. Bewezen: `docs/probes/a0_session_continuity_probe.mjs`
+   → **4/4** (v2-formaat, legacy `currentSession`, ref-scan-fallback, geen-sessie→null).
+4. **Heatr-backend accepteert de JWT** — `_jwt_workspace` decodet HS256 tegen
+   `SUPABASE_JWT_SECRET`. Bewezen: `docs/probes/a0_backend_accepts_jwt.py` →
+   **3/3** (geldige Supabase-JWT → workspace, `app_metadata.workspace_id` wint,
+   verkeerd-gesigned → geweigerd). Vereiste env-fix: Heatr's `SUPABASE_JWT_SECRET`
+   stond leeg; gezet op hetzelfde project-secret dat Warmr al gebruikt
+   (identiek geverifieerd via hash). Env-config, geen backend-logica.
+
+Gebouwd (richting-onafhankelijk, blijft geldig): `<SystemToggle>` in `Shell.tsx`
+(link-out, geen iframe), `api.ts` stuurt nu de echte JWT, Warmr `ALLOWED_ORIGINS`
++= `localhost:5173`.
+
+### Snag (schakel 2): Warmr gaat uit van de origin-root
+
+De simpele `/warmr/*`-subpath-proxy (Vite) werkt voor assets en relatieve
+inter-page-links (die zijn allemaal relatief — goed), maar Warmr heeft
+**absolute** paden die uit de `/warmr`-namespace breken en op Heatr's SPA
+belanden:
+
+- Server: `GET :8000/` → **307 absoluut** naar `:8000/index.html`.
+- `app.js:37` `requireAuth()` → **geen sessie ⇒ `location.href='/index.html'`**
+  (draait op elke beveiligde Warmr-pagina zonder sessie — breekt de
+  eerste-login-flow).
+- `app.js:46` `logout()` → `location.href='/index.html'`.
+- `app.js:441` notificatie-klik → `location.href='/unified-inbox.html'`.
+
+Deze drie regels zitten in Warmr's static app — **de sprint verbiedt Warmr te
+wijzigen**. Dus clean subpath-serving kan niet zonder óf Warmr aanpassen
+(verboden) óf fragiele reverse-proxy-body-rewriting.
+
+### Beslissing die dit vereist (serving-layout)
+
+- **Optie 1 (aanbevolen): flip — Warmr op origin-root `/`, Heatr onder `/heatr/*`.**
+  Warmr blijft 100% ongewijzigd op zijn aangenomen root (alle absolute `/…`
+  kloppen dan). Heatr (de aanpasbare SPA) verhuist naar een subpath (Vite `base`
+  + react-router `basename`). Same-origin sessie-deling blijft. Kost: Heatr
+  base-path reconfig + toggle-inversie. Lost de snag volledig op.
+- **Optie 2: subpath `/warmr/*` mét gedocumenteerde kapotte randen**
+  (eerste-login / logout / auth-fail bouncen naar Heatr's SPA). Goedkoopst, maar
+  compromitteert juist de auth-flow waar A0 om draait.
+- **Optie 3: prod reverse-proxy met Location-rewrite + body-`sub_filter`** om
+  `/warmr` in de absolute paden te injecteren. Fragiel, wijzigt Warmr-in-transit,
+  werkt niet in de Vite-dev-proxy.
+
+Status: `<SystemToggle>` + sessie-lezen + secret + CORS staan; de Vite
+`/warmr`-proxy is **provisioneel** (werkt voor de happy path, breekt op de
+absolute-redirect-randen). De keuze tussen flip (1) en subpath-met-randen (2)
+is aan Sami — het verandert de risico-afweging, precies wat de sprint-guard
+markeerde.

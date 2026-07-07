@@ -1,9 +1,11 @@
 /**
  * API wrapper voor Heatr FastAPI backend.
  *
- * Dev-mode: stuurt altijd "Bearer dev-token" — backend accepteert elke valid-looking token.
- * Later te vervangen door echte Supabase JWT via useAuth().
+ * Auth: stuurt de gedeelde Supabase-JWT mee zodra er een sessie is (A0
+ * same-origin shell — één login via Warmr), anders `dev-token` als
+ * legacy-fallback. Zie utils resolveAuthToken in ./auth.
  */
+import { resolveAuthToken } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
@@ -19,10 +21,7 @@ export async function apiFetch<T = unknown>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token =
-    typeof window !== 'undefined'
-      ? sessionStorage.getItem('heatr_token') || 'dev-token'
-      : 'dev-token';
+  const token = resolveAuthToken();
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
