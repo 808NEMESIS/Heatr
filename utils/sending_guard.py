@@ -88,6 +88,16 @@ class SendingGuard:
             return await self._block(lead_id, inbox_id, workspace_id, "already_in_campaign",
                                      "Lead is al in een actieve campagne", db)
 
+        # 5b. 90-dagen-cooldown na een afgeronde/gestopte sequence. Recovery-fix:
+        # dit ontbrak in het live pad — een lead die een sequence afmaakte kon
+        # direct opnieuw worden aangeschreven. `next_contact_after` (stap 4) dekt
+        # alleen reply/recontact-events, niet een natuurlijke completion.
+        from utils.deduplicator import campaign_cooldown_block
+        cooldown = await campaign_cooldown_block(lead_id, db)
+        if cooldown:
+            return await self._block(lead_id, inbox_id, workspace_id, "cooldown_90d",
+                                     f"90-dagen-cooldown actief ({cooldown})", db)
+
         # 6. Inbox reputation
         inbox = await self._get_inbox(inbox_id, db)
         if inbox:

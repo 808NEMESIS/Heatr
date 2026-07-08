@@ -23,6 +23,21 @@ from typing import Any
 # Days a completed campaign must age before the same lead can be contacted again.
 CAMPAIGN_COOLDOWN_DAYS: int = 90
 
+# Canonieke campagne-status-vocabulaire van heatr_lead_campaign_history.
+# GEVERIFIEERD tegen de echte writers (campaigns/sequence_engine.py +
+# api/main.py): een enrollment start op status "pending" met is_active=True;
+# elke terminale overgang (sequence_complete / stopped / unsubscribed / bounced /
+# error / blocked) zet is_active=False. De string "active" en "completed" worden
+# NERGENS geschreven — daarom is `is_active` (niet status) het betrouwbare,
+# drift-vrije signaal voor zowel de active-campaign-check als de cooldown.
+#
+# Terminale statussen — hier alleen als documentatie/legacy-fallback; de queries
+# hieronder filteren op is_active om nieuwe status-strings automatisch te dekken.
+TERMINAL_CAMPAIGN_STATUSES: tuple[str, ...] = (
+    "sequence_complete", "stopped", "bounced", "unsubscribed",
+    "replied", "no_response", "blocked", "error", "completed",
+)
+
 
 def _now_utc() -> datetime:
     """Return current UTC datetime (timezone-aware)."""
@@ -101,9 +116,11 @@ async def is_lead_in_active_campaign(
 ) -> bool:
     """Check whether a lead is currently enrolled in an active Warmr campaign.
 
-    Queries lead_campaign_history for rows with status='active'. An active
-    campaign means Warmr is currently sending sequences to this lead — pushing
-    them again would create duplicate outreach.
+    Queries lead_campaign_history for rows with is_active=True. Een enrollment
+    is actief zolang de sequence loopt (status "pending"/"paused"); alle
+    terminale overgangen zetten is_active=False. We filteren daarom op is_active
+    en NIET op status="active" — die string wordt door geen enkele writer gezet
+    (recovery-fix: voorheen matchte dit nooit → dubbele outreach mogelijk).
 
     Args:
         lead_id: UUID string of the lead to check.
@@ -119,12 +136,62 @@ async def is_lead_in_active_campaign(
         supabase_client.table("lead_campaign_history")
         .select("id")
         .eq("lead_id", lead_id)
-        .eq("status", "active")
+        .eq("is_active", True)
         .limit(1)
         .execute()
     )
 
     return bool(response.data)
+
+
+async def campaign_cooldown_block(
+    lead_id: str,
+    supabase_client: Any,
+) -> str | None:
+    """90-dagen-cooldown na een beëindigde campagne-enrollment.
+
+    Return een reden-string (`cooldown_N_days_remaining`) als de lead binnen
+    CAMPAIGN_COOLDOWN_DAYS een sequence heeft afgerond/gestopt, anders None.
+
+    Eén gedeelde implementatie zodat SendingGuard én de enrollment-endpoints
+    (campaign-launch, send-to-warmr) exact dezelfde cooldown afdwingen — geen
+    drift. We filteren op is_active=False (elke beëindigde enrollment) i.p.v.
+    een status-enumeratie: de oude lijst ["completed","stopped","bounced"]
+    miste "sequence_complete" (de #1 terminale staat). `sent_at` is alleen
+    gezet als er echt een mail uitging, dus rijen zonder sent_at (bv. vóór de
+    eerste send geblokkeerd) triggeren geen cooldown. We inspecteren meerdere
+    rijen zodat één onparseerbare/lege timestamp een oudere in-window rij niet
+    maskeert.
+    """
+    if not lead_id:
+        return None
+
+    cutoff = _now_utc() - timedelta(days=CAMPAIGN_COOLDOWN_DAYS)
+    history_response = (
+        supabase_client.table("lead_campaign_history")
+        .select("id, sent_at, status")
+        .eq("lead_id", lead_id)
+        .eq("is_active", False)
+        .order("sent_at", desc=True)
+        .limit(10)
+        .execute()
+    )
+
+    for row in history_response.data or []:
+        sent_at_str = row.get("sent_at") or ""
+        if not sent_at_str:
+            continue
+        try:
+            sent_at = datetime.fromisoformat(sent_at_str)
+        except ValueError:
+            continue
+        if sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=timezone.utc)
+        if sent_at > cutoff:
+            days_remaining = (sent_at + timedelta(days=CAMPAIGN_COOLDOWN_DAYS) - _now_utc()).days
+            return f"cooldown_{days_remaining}_days_remaining"
+
+    return None
 
 
 async def should_allow_warmr_push(
@@ -184,36 +251,10 @@ async def should_allow_warmr_push(
     if in_active:
         return (False, "already_in_active_campaign")
 
-    # --- Check 5: 90-day cooldown after completed campaigns ------------------
-    cutoff = _now_utc() - timedelta(days=CAMPAIGN_COOLDOWN_DAYS)
-
-    history_response = (
-        supabase_client.table("lead_campaign_history")
-        .select("id, sent_at, status")
-        .eq("lead_id", lead_id)
-        .in_("status", ["completed", "stopped", "bounced"])
-        .order("sent_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-
-    if history_response.data:
-        last_campaign = history_response.data[0]
-        sent_at_str = last_campaign.get("sent_at", "")
-        if sent_at_str:
-            try:
-                sent_at = datetime.fromisoformat(sent_at_str)
-                if sent_at.tzinfo is None:
-                    sent_at = sent_at.replace(tzinfo=timezone.utc)
-                if sent_at > cutoff:
-                    days_remaining = (sent_at + timedelta(days=CAMPAIGN_COOLDOWN_DAYS) - _now_utc()).days
-                    return (
-                        False,
-                        f"cooldown_{days_remaining}_days_remaining",
-                    )
-            except ValueError:
-                # Unparseable date — allow push, log warning
-                pass
+    # --- Check 5: 90-day cooldown after ended campaigns ----------------------
+    cooldown = await campaign_cooldown_block(lead_id, supabase_client)
+    if cooldown:
+        return (False, cooldown)
 
     return (True, "ok")
 

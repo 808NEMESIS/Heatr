@@ -126,11 +126,22 @@ def test_legacy_off_by_default(monkeypatch):
     assert _legacy_dev_token(req) is None
 
 
-def test_legacy_on_accepts_any_bearer(monkeypatch):
+def test_legacy_on_accepts_literal_dev_token(monkeypatch):
     monkeypatch.setenv("LEGACY_DEV_TOKEN_ALLOWED", "true")
     from api.main import _legacy_dev_token
     req = _make_request({"Authorization": "Bearer dev-token"})
     assert _legacy_dev_token(req) == "aerys"
+
+
+def test_legacy_on_rejects_arbitrary_bearer(monkeypatch):
+    """Recovery security-fix: met de flag AAN mag alléén het letterlijke
+    'dev-token' door — geen willekeurige Bearer-string meer (voorheen een
+    volledige auth-bypass)."""
+    monkeypatch.setenv("LEGACY_DEV_TOKEN_ALLOWED", "true")
+    from api.main import _legacy_dev_token
+    for bogus in ("hunter2xx", "letmein", "Bearer", "dev-token2", "xxxxxxxx"):
+        req = _make_request({"Authorization": f"Bearer {bogus}"})
+        assert _legacy_dev_token(req) is None, f"{bogus!r} zou geweigerd moeten worden"
 
 
 # ---------------------------------------------------------------------------

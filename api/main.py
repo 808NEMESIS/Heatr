@@ -74,10 +74,21 @@ app = FastAPI(
 _cors_origins_raw = os.getenv("HEATR_ALLOWED_ORIGINS", "").strip()
 _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()] or ["*"]
 
+# GUARD (recovery-fix): `allow_origins=["*"]` mét `allow_credentials=True` is een
+# ongeldige én gevaarlijke combinatie (browsers weigeren 'm, maar de headers
+# stonden wagenwijd open). Bij een wildcard zetten we credentials daarom UIT;
+# alleen een expliciete origin-allowlist mag credentials voeren.
+_cors_wildcard = "*" in _cors_origins
+if _cors_wildcard:
+    logger.warning(
+        "CORS staat op wildcard '*' (HEATR_ALLOWED_ORIGINS niet gezet) — "
+        "credentials uitgeschakeld. Zet HEATR_ALLOWED_ORIGINS in productie."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_credentials=not _cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -158,7 +169,10 @@ def _legacy_dev_token(request: Request) -> str | None:
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:].strip()
-        if token and len(token) >= 5:  # any non-empty string passes
+        # GUARD (recovery-fix): accepteer alléén het letterlijke `dev-token`,
+        # niet "elke string >= 5 tekens". Voorheen was de legacy-flag een
+        # volledige auth-bypass voor willekeurige Bearer-waarden.
+        if _secrets.compare_digest(token, "dev-token"):
             return DEFAULT_WORKSPACE
     return None
 
@@ -606,8 +620,20 @@ async def send_leads_to_warmr(
         if compliance_check(l)[0] and l.get("email_status") in ("verified", "catch_all") and (l.get("score") or 0) >= int(os.getenv("MIN_SCORE_FOR_WARMR", 65))
     ]
 
+    # 90-dagen-cooldown afdwingen (recovery-fix): filter leads die binnen 90
+    # dagen een sequence afrondden/stopten — dezelfde gedeelde gate als
+    # SendingGuard, zodat re-enrollment geen dubbele outreach oplevert.
+    from utils.deduplicator import campaign_cooldown_block
+    _kept, _cooled = [], 0
+    for _l in eligible:
+        if await campaign_cooldown_block(_l["id"], db):
+            _cooled += 1
+            continue
+        _kept.append(_l)
+    eligible = _kept
+
     if body.dry_run:
-        return {"eligible": len(eligible), "dry_run": True}
+        return {"eligible": len(eligible), "cooldown_blocked": _cooled, "dry_run": True}
     if not eligible:
         return {"pushed": 0, "failed": 0, "duplicates": 0, "eligible": 0}
 
@@ -1473,6 +1499,33 @@ async def launch_campaign(
             len(blocked_leads), len(leads),
         )
     leads = launchable_leads
+
+    # 90-dagen-cooldown afdwingen vóór (re-)enrollment (recovery-fix). Dezelfde
+    # gedeelde gate als SendingGuard: een lead die binnen 90 dagen een sequence
+    # afrondde/stopte wordt geweigerd → geen dubbele koud-outreach.
+    from utils.deduplicator import campaign_cooldown_block
+    _cooldown_blocked: list[dict] = []
+    _launchable: list[dict] = []
+    for _l in leads:
+        if await campaign_cooldown_block(_l["id"], db):
+            _cooldown_blocked.append(_l)
+        else:
+            _launchable.append(_l)
+    if _cooldown_blocked:
+        logger.warning(
+            "campaigns/launch: %d/%d leads geweigerd door 90-dagen-cooldown",
+            len(_cooldown_blocked), len(leads),
+        )
+    leads = _launchable
+    if not leads:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "Alle leads vallen binnen de 90-dagen-cooldown na een eerdere campagne",
+                "cooldown_blocked": len(_cooldown_blocked),
+                "hint": "Wacht tot de cooldown afloopt of kies andere leads.",
+            },
+        )
 
     # v3.1 routing: per lead → resolve template (auto pick_brug of forced/custom).
     # Bucket leads per resolved-template_id zodat we per bucket één Warmr-campaign
@@ -3056,10 +3109,16 @@ async def warmr_webhook(
     sig = request.headers.get("X-Warmr-Signature", "")
     body_bytes = await request.body()
 
-    if secret:
-        expected = hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, sig):
-            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    # FAIL-CLOSED (recovery-fix): dit endpoint muteert lead-status en stopt
+    # sequences. Voorheen werd de HMAC-check overgeslagen als het secret leeg
+    # was → iedereen kon events posten. Zonder geconfigureerd secret weigeren
+    # we nu (luid), en een ongeldige handtekening geeft 401.
+    if not secret:
+        logger.error("webhooks/warmr geweigerd: WARMR_WEBHOOK_SECRET niet geconfigureerd (fail-closed).")
+        raise HTTPException(status_code=503, detail="Webhook secret not configured")
+    expected = hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     payload = await request.json()
     event_type = payload.get("event")
