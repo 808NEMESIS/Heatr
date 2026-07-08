@@ -17,6 +17,16 @@ from datetime import date, datetime, timezone, timedelta
 from typing import Any
 from uuid import UUID
 
+# Laad .env bij startup zodat env-wijzigingen bij een herstart altijd meekomen.
+# Vóór alle os.getenv-lezingen. Geen .env (bv. in prod, env via platform) →
+# load_dotenv is een stille no-op. override=False: echte env-vars winnen.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
+except ImportError:  # dotenv is een dep (requirements.txt); defensief voor kale runs
+    pass
+
 import jwt as _jwt
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
