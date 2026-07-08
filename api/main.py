@@ -69,9 +69,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS-origins uit env (HEATR_ALLOWED_ORIGINS, komma-gescheiden). Default "*"
+# voor dev; in prod zet je de unified-origin zodat het niet wagenwijd openstaat.
+_cors_origins_raw = os.getenv("HEATR_ALLOWED_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()] or ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # tighten in production
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,0 +1,48 @@
+# Caddyfile — A0 operator-shell, één origin voor Heatr + Warmr (prod).
+#
+# Doel: beide apps onder ÉÉN domein zodat de Supabase-sessie same-origin
+# gedeeld wordt (localStorage) → één login voor beide. Warmr staat op de
+# root (het gaat uit van '/'), Heatr onder /heatr/*.
+#
+# Vervang app.aerys.nl door je eigen domein. Achterliggende diensten:
+#   - Heatr-backend  (uvicorn)         :8001
+#   - Warmr-backend+static (uvicorn)   :8000   (serveert Warmr's frontend op /)
+#   - Heatr-frontend = statische build (dist, gebouwd met base=/heatr/)
+
+app.aerys.nl {
+	encode gzip
+
+	# ── Heatr frontend (statische SPA onder /heatr/*) ──────────────────────
+	# Build: `npm run build` (base=/heatr/) → serveer dist/. SPA-fallback naar
+	# /heatr/index.html zodat client-routes (/heatr/leads, /heatr/control) werken.
+	handle_path /heatr/* {
+		root * /srv/heatr/dist
+		try_files {path} /index.html
+		file_server
+	}
+
+	# ── Heatr backend API ─────────────────────────────────────────────────
+	# Heatr's frontend roept /api/* aan (zie VITE_API_BASE, default /api).
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy localhost:8001
+	}
+
+	# ── Warmr backend API (optioneel, voor volledig same-origin) ──────────
+	# Alleen nodig als je Warmr's frontend same-origin wilt laten praten:
+	# zet dan in Warmr's config.js  apiBase: '/warmr-api'  (i.p.v. absolute
+	# :8000). Laat je Warmr's API op zijn eigen origin, dan kan dit blok weg
+	# en regelt CORS de rest (ALLOWED_ORIGINS = dit domein).
+	handle /warmr-api/* {
+		uri strip_prefix /warmr-api
+		reverse_proxy localhost:8000
+	}
+
+	# ── Warmr op de origin-root (frontend + eigen paden) ──────────────────
+	# Alles wat hierboven niet matcht (/, *.html, style.css, app.js, config.js)
+	# gaat naar Warmr. Warmr's absolute redirects (/index.html) kloppen omdat
+	# Warmr echt op root draait.
+	handle {
+		reverse_proxy localhost:8000
+	}
+}
