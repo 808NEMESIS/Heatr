@@ -18,6 +18,7 @@ import { LeadsImportPage } from '@/pages/LeadsImport';
 import { CRMActivityPage } from '@/pages/CRMActivity';
 import { AnalyticsPage } from '@/pages/Analytics';
 import { ControlPage } from '@/pages/Control';
+import { AuthGate } from '@/components/AuthGate';
 
 /** 401/403 worden al gemeld via de AuthErrorBanner (heatr:auth-error event)
  *  — die hier ook toasten zou dubbel alarm geven. */
@@ -43,8 +44,10 @@ export default function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        {/* basename volgt Vite's base (/heatr/) — Heatr leeft same-origin
-            onder /heatr/*, Warmr op de origin-root. */}
+        {/* AuthGate: geen render zonder geldige Supabase-sessie (login-anywhere).
+            basename volgt Vite's base (/heatr/) — Heatr leeft same-origin onder
+            /heatr/*, Warmr op de origin-root. */}
+        <AuthGate>
         <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Routes>
             <Route element={<Shell />}>
@@ -64,6 +67,7 @@ export default function App() {
             </Route>
           </Routes>
         </BrowserRouter>
+        </AuthGate>
         <Toaster />
       </QueryClientProvider>
     </ErrorBoundary>
