@@ -77,6 +77,15 @@ RATE_LIMITS: dict[str, dict[str, float]] = {
         "max_tokens": 2,
         "refill_rate": 0.083333,    # 5 req/min
     },
+    "smtp_verify": {
+        # SMTP/MX e-mailverificatie (email_verifier). RECOVERY-FIX: deze key
+        # ontbrak → wait_for_token() raiste ValueError → elke e-mail werd
+        # 'not_checked'/'not_found' (100% dode verificatie). Globale bucket
+        # (niet per-domein; per-domein-bescherming loopt via de catch-all-cache).
+        # Ruim genoeg om de pipeline niet te knijpen, gematigd tegen hammering.
+        "max_tokens": 10,
+        "refill_rate": 0.166667,    # tokens/second = 10/min = 600/hr
+    },
 }
 
 

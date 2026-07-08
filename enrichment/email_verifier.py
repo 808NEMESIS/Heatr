@@ -78,11 +78,16 @@ async def verify_email(
     domain = email.split("@")[1]
     timeout = int(os.getenv("EMAIL_VERIFY_TIMEOUT", "10"))
 
-    # --- Rate limit: max 3 SMTP checks per domain per hour -------------------
+    # --- Rate limit: globale SMTP-verificatie-bucket -------------------------
+    # De 'smtp_verify'-key bestaat nu in RATE_LIMITS (recovery-fix). Een
+    # exceptie hier is dus GEEN ontbrekende-key meer maar echte rate-limit-
+    # uitputting (RuntimeError na 120s) of een DB-fout — log luid met de
+    # werkelijke oorzaak i.p.v. alles stil als 'rate_limited' te maskeren.
     try:
         await wait_for_token("smtp_verify", supabase_client)
-    except Exception:
-        logger.warning("SMTP rate limit hit for domain %s", domain)
+    except Exception as e:
+        logger.error("SMTP verify rate-limit/wait faalde voor domein %s: %s: %s",
+                     domain, type(e).__name__, e)
         return ("not_checked", "rate_limited")
 
     # --- Step 1: MX record check ---------------------------------------------
