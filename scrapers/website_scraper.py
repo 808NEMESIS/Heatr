@@ -632,6 +632,7 @@ async def _store_enrichment_result(
     record = {
         "workspace_id": workspace_id,
         "lead_id": lead_id,
+        "step": source,               # NOT NULL — recovery-fix: ontbrak → 23502
         "enrichment_step": step,
         "source": source,
         "email_candidate": emails_found[0] if emails_found else None,

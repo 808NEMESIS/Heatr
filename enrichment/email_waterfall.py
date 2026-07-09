@@ -502,6 +502,7 @@ async def _log_waterfall_step(
         supabase_client.table("enrichment_data").insert({
             "workspace_id": workspace_id,
             "lead_id": lead_id,
+            "step": source,               # NOT NULL — recovery-fix: ontbrak → 23502
             "enrichment_step": step,
             "source": source,
             "succeeded": bool(outcome and outcome.get("email")),

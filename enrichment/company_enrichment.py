@@ -252,6 +252,7 @@ async def enrich_company(
         supabase_client.table("enrichment_data").insert({
             "workspace_id": workspace_id,
             "lead_id": lead_id,
+            "step": "claude_enrichment",   # NOT NULL — recovery-fix: ontbrak → 23502
             "enrichment_step": 0,
             "source": "claude_enrichment",
             "succeeded": bool(result["company_summary"] or result["industry"]),
