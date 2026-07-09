@@ -255,9 +255,16 @@ def _mark_failure(
 
 
 def _get_anthropic_client() -> Any:
-    """Instantiate Anthropic client from env. Never cached — workers are short-lived."""
+    """Instantiate Anthropic client from env. Never cached — workers are short-lived.
+
+    RECOVERY-FIX: moet AsyncAnthropic zijn. De consumers (sector_checker,
+    visual_analyzer) doen `await client.messages.create(...)`; een sync
+    anthropic.Anthropic gaf een TypeError → gevangen → sector_score=0 én een
+    geblokkeerde event-loop. De enrichment-queue gebruikte al bewust
+    AsyncAnthropic; deze dedicated-queue-factory was niet meegefixt.
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
     import anthropic
-    return anthropic.Anthropic(api_key=api_key)
+    return anthropic.AsyncAnthropic(api_key=api_key)

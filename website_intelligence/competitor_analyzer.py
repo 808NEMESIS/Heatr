@@ -157,10 +157,13 @@ async def _find_competitors(
     """Search Google Maps for competitors in the same sector + city."""
     from config.sectors import get_sector
 
+    # RECOVERY-FIX: key heet `lead_keywords`, niet `search_queries` (bestaat
+    # niet → KeyError, die de oude except (ValueError/IndexError) NIET ving).
     try:
         config = get_sector(sector)
-        query = config["search_queries"][0].replace("{city}", city)
-    except (ValueError, IndexError):
+        keywords = config.get("lead_keywords") or []
+        query = keywords[0].replace("{city}", city) if keywords else f"{sector} {city}"
+    except Exception:
         query = f"{sector} {city}"
 
     search_url = f"https://www.google.com/maps/search/{quote_plus(query)}"

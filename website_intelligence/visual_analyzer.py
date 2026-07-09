@@ -176,23 +176,38 @@ async def analyze_visual(
 
 
 async def _take_screenshot(domain: str) -> str | None:
-    """Take a full-page screenshot via Playwright. Returns base64 string or None."""
-    try:
-        from utils.playwright_helpers import new_browser_context
+    """Take a full-page screenshot via Playwright. Returns base64 string or None.
 
-        async with new_browser_context() as (browser, context):
+    RECOVERY-FIX: `new_browser_context` is GEEN context-manager en vereist een
+    `playwright`-arg (playwright_helpers.py:169). De oude
+    `async with new_browser_context() as (browser, context)` gooide direct een
+    TypeError → screenshot faalde altijd → Laag 2 (Vision, 25pt) was dood. Nu
+    de correcte factory-pattern met async_playwright + cleanup, gelijk aan de
+    scrapers.
+    """
+    import asyncio
+    from playwright.async_api import async_playwright
+    from utils.playwright_helpers import new_browser_context
+
+    browser = None
+    try:
+        async with async_playwright() as playwright:
+            browser, context = await new_browser_context(playwright)
             page = await context.new_page()
             await page.set_viewport_size({"width": 1280, "height": 720})
             await page.goto(f"https://{domain}", wait_until="networkidle", timeout=20_000)
-
-            import asyncio
             await asyncio.sleep(2)
-
             screenshot = await page.screenshot(full_page=True, type="png")
             return base64.b64encode(screenshot).decode("utf-8")
     except Exception as e:
         logger.warning("Screenshot failed for %s: %s", domain, e)
         return None
+    finally:
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
 
 def _calculate_visual_score(overall_1_to_10: int) -> int:

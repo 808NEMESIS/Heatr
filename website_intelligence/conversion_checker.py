@@ -142,11 +142,21 @@ async def check_conversion(
         result["details"].append({"check": "chatbot", "passed": False})
 
     # --- Contact form (3 pts, max 5 fields) ---
-    form_count = html_lower.count("<form")
-    if form_count > 0:
+    # RECOVERY-FIX: tel velden PER <form>, niet pagina-breed. Voorheen telde dit
+    # alle inputs op de pagina (zoekbalk + nieuwsbrief + filters) → het echte
+    # contactformulier werd onterecht als ">5 velden" gestraft. We kiezen het
+    # meest waarschijnlijke contactformulier (bevat email/textarea), anders het
+    # kleinste form (vermijdt straf op een groot zoek/filter-form).
+    forms = re.findall(r"<form\b[^>]*>.*?</form>", html_lower, re.DOTALL)
+    if forms:
         result["has_contact_form"] = True
-        # Count input fields in the page
-        input_count = len(re.findall(r"<(?:input|select|textarea)", html_lower))
+
+        def _field_count(form_html: str) -> int:
+            return len(re.findall(r"<(?:input|select|textarea)", form_html))
+
+        contact_forms = [f for f in forms if ('type="email"' in f or "<textarea" in f)]
+        chosen = max(contact_forms, key=_field_count) if contact_forms else min(forms, key=_field_count)
+        input_count = _field_count(chosen)
         result["form_field_count"] = input_count
         if input_count <= 5:
             score += 3
