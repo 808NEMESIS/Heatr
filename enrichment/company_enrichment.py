@@ -49,6 +49,39 @@ _INDUSTRY_LISTS: dict[str, list[str]] = {
 }
 
 _OPENER_LANGUAGE_NL = "nl"
+_HAIKU_MODEL = "claude-haiku-4-5-20251001"
+
+
+async def _account_claude(response: Any, context: str, cost_ctx: dict | None) -> None:
+    """RECOVERY-FIX (Patch 5b): registreer de kosten van één Claude-call.
+
+    company_enrichment's 3 Haiku-calls (industry/summary/opener) omzeilden vóór
+    deze fix ALLE kostentracking (geen guarded_call, geen accumulator, geen
+    log_api_cost) → onzichtbaar voor de per-lead-cap, de dag/maand-guard én
+    /analytics/enrichment-cost. Deze helper doet de post-call boekhouding
+    identiek aan de andere modules. Geen cost_ctx → no-op (bv. losse aanroep).
+    """
+    if not cost_ctx:
+        return
+    try:
+        from config.pricing import get_price_eur
+        from utils.claude_cache import log_api_cost
+
+        usage = getattr(response, "usage", None)
+        in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+        out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+        cost_eur = get_price_eur(_HAIKU_MODEL, in_tok, out_tok)
+        await log_api_cost(
+            model=_HAIKU_MODEL, input_tokens=in_tok, output_tokens=out_tok,
+            cost_eur=cost_eur, workspace_id=cost_ctx.get("workspace_id"),
+            supabase_client=cost_ctx.get("supabase_client"), context=context,
+            lead_id=cost_ctx.get("lead_id"),
+        )
+        acc = cost_ctx.get("accumulator")
+        if acc is not None:
+            acc.charge(cost_eur, context)
+    except Exception as e:
+        logger.debug("company_enrichment cost-accounting faalde (%s): %s", context, e)
 
 
 # =============================================================================
@@ -60,6 +93,7 @@ async def enrich_company(
     workspace_id: str,
     supabase_client: Any,
     anthropic_client: Any,
+    accumulator: Any = None,
 ) -> dict:
     """Run full company enrichment for a lead: industry, summary, opener, size.
 
@@ -119,10 +153,33 @@ async def enrich_company(
     kvk_employee_range = lead.get("kvk_employee_count_range")  # safe: always None if column missing
     domain = lead.get("domain", "")
 
+    # --- Cost-gate + accounting-context (recovery Patch 5b) ------------------
+    # Alle Claude-calls hieronder lopen nu door de kostenbewaking: guarded_call
+    # als budget-poort, en _account_claude logt/charged elke call. Wordt de
+    # budget-poort gesloten (dag/maand-cap of per-lead-ceiling), dan slaan we de
+    # Claude-delen over en vallen we terug op lokale industry-inferentie.
+    cost_ctx = {
+        "workspace_id": workspace_id,
+        "lead_id": lead_id,
+        "supabase_client": supabase_client,
+        "accumulator": accumulator,
+    }
+    from utils.cost_guard import guarded_call
+    claude_allowed, gate_reason = await guarded_call(
+        workspace_id=workspace_id,
+        lead_id=lead_id,
+        context="company_enrichment",
+        estimated_cost_eur=0.001,   # ~3 Haiku-calls (industry+summary+opener)
+        supabase_client=supabase_client,
+        accumulator=accumulator,
+    )
+    if not claude_allowed:
+        logger.info("company_enrichment: Claude gated voor %s — %s", lead_id, gate_reason)
+
     # --- Industry inference --------------------------------------------------
     industry = _infer_industry_local(kvk_sbi, google_category, sector_key)
 
-    if not industry:
+    if not industry and claude_allowed:
         # Claude fallback — only if local inference fails
         website_text = await _fetch_website_text_from_enrichment(lead_id, supabase_client)
         if website_text or google_category:
@@ -131,6 +188,7 @@ async def enrich_company(
                 google_category=google_category,
                 sector_key=sector_key,
                 anthropic_client=anthropic_client,
+                cost_ctx=cost_ctx,
             )
 
     result["industry"] = industry or ""
@@ -151,13 +209,14 @@ async def enrich_company(
     website_text = await _fetch_website_text_from_enrichment(lead_id, supabase_client)
 
     # --- Claude summary + opener (best effort) -------------------------------
-    if company_name:
+    if company_name and claude_allowed:
         result["company_summary"] = await generate_company_summary(
             company_name=company_name,
             industry=result["industry"],
             city=city,
             website_text=website_text,
             anthropic_client=anthropic_client,
+            cost_ctx=cost_ctx,
         )
 
         result["personalized_opener"] = await generate_personalized_opener(
@@ -171,6 +230,7 @@ async def enrich_company(
             google_review_count=review_count,
             sector_key=sector_key,
             language=_OPENER_LANGUAGE_NL,
+            cost_ctx=cost_ctx,
             anthropic_client=anthropic_client,
         )
 
@@ -214,6 +274,7 @@ async def infer_industry_claude(
     google_category: str,
     sector_key: str,
     anthropic_client: Any,
+    cost_ctx: dict | None = None,
 ) -> str:
     """Use Claude Haiku to infer the industry from website text + category.
 
@@ -255,6 +316,7 @@ async def infer_industry_claude(
             max_tokens=30,
             messages=[{"role": "user", "content": prompt}],
         )
+        await _account_claude(response, "company_enrichment:industry", cost_ctx)
         raw = response.content[0].text.strip()
         # Validate against the allowed list (case-insensitive match)
         for item in industry_list:
@@ -276,6 +338,7 @@ async def generate_company_summary(
     city: str,
     website_text: str,
     anthropic_client: Any,
+    cost_ctx: dict | None = None,
 ) -> str:
     """Generate a short Dutch company summary using Claude Haiku.
 
@@ -312,6 +375,7 @@ async def generate_company_summary(
             max_tokens=80,
             messages=[{"role": "user", "content": prompt}],
         )
+        await _account_claude(response, "company_enrichment:summary", cost_ctx)
         return response.content[0].text.strip()
     except Exception as e:
         logger.warning("Claude summary generation failed: %s", e)
@@ -330,6 +394,7 @@ async def generate_personalized_opener(
     sector_key: str,
     language: str,
     anthropic_client: Any,
+    cost_ctx: dict | None = None,
 ) -> str:
     """Generate a personalised email opener using Claude Haiku.
 
@@ -436,6 +501,7 @@ async def generate_personalized_opener(
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
+        await _account_claude(response, "company_enrichment:opener", cost_ctx)
         return response.content[0].text.strip()
     except Exception as e:
         logger.warning("Claude opener generation failed: %s", e)

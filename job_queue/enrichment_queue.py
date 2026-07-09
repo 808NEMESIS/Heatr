@@ -521,6 +521,7 @@ async def _run_step(
             workspace_id=workspace_id,
             supabase_client=supabase_client,
             anthropic_client=anthropic_client,
+            accumulator=accumulator,  # recovery Patch 5b: kosten nu bewaakt/gelogd
         )
 
     elif step_name == "website_intelligence":
