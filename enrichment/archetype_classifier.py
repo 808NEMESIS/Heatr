@@ -157,14 +157,14 @@ async def classify_archetype(
     try:
         cached = (
             supabase_client.table("claude_cache")
-            .select("response_text")
+            .select("response")   # RECOVERY-FIX: 'response', niet 'response_text'
             .eq("cache_key", cache_key)
             .maybe_single()
             .execute()
         )
-        if cached and cached.data and cached.data.get("response_text"):
+        if cached and cached.data and cached.data.get("response"):
             try:
-                parsed = json.loads(cached.data["response_text"])
+                parsed = json.loads(cached.data["response"])
                 if isinstance(parsed, dict) and parsed.get("archetype"):
                     return parsed
             except (json.JSONDecodeError, ValueError):
@@ -256,15 +256,19 @@ async def classify_archetype(
     if accumulator is not None:
         accumulator.charge(cost_eur, "archetype_classify")
 
-    # Cache
+    # Cache. RECOVERY-FIX: kolom 'response' (niet 'response_text') + verplichte
+    # 'expires_at' (NOT NULL, geen default) → oude upsert faalde altijd → cache dood.
     try:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         supabase_client.table("claude_cache").upsert({
             "cache_key": cache_key,
+            "context": "archetype_classifier",
             "model": _HAIKU_MODEL,
-            "prompt_hash": cache_key,
-            "response_text": json.dumps(result),
+            "prompt_hash": cache_key[:16],
+            "response": json.dumps(result),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "expires_at": (_dt.now(_tz.utc) + _td(days=30)).isoformat(),
         }, on_conflict="cache_key").execute()
     except Exception as e:
         logger.debug("archetype_classify cache store failed: %s", e)

@@ -136,14 +136,14 @@ async def classify_treatment_focus(
     try:
         cached_res = (
             supabase_client.table("claude_cache")
-            .select("response_text")
-            .eq("cache_key", cache_key)
+            .select("response")   # RECOVERY-FIX: kolom heet 'response', niet
+            .eq("cache_key", cache_key)   # 'response_text' → 400 → cache dood
             .maybe_single()
             .execute()
         )
-        if cached_res.data and cached_res.data.get("response_text"):
+        if cached_res.data and cached_res.data.get("response"):
             try:
-                parsed = json.loads(cached_res.data["response_text"])
+                parsed = json.loads(cached_res.data["response"])
                 items = parsed.get("treatments") if isinstance(parsed, dict) else None
                 if isinstance(items, list):
                     return _sanity_check([str(x) for x in items])
@@ -217,15 +217,20 @@ async def classify_treatment_focus(
     if accumulator is not None:
         accumulator.charge(cost_eur, "treatment_classifier")
 
-    # Cache raw response for re-runs
+    # Cache raw response for re-runs. RECOVERY-FIX: kolom is 'response' (niet
+    # 'response_text') én 'expires_at' is NOT NULL zonder default → de oude
+    # upsert faalde altijd (400/NOT NULL) → cache dood → 100% Claude-kosten.
     try:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         supabase_client.table("claude_cache").upsert({
             "cache_key": cache_key,
+            "context": "treatment_classifier",
             "model": _HAIKU_MODEL,
-            "prompt_hash": cache_key,  # same hash used both ways
-            "response_text": raw,
+            "prompt_hash": cache_key[:16],
+            "response": raw,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "expires_at": (_dt.now(_tz.utc) + _td(days=30)).isoformat(),
         }, on_conflict="cache_key").execute()
     except Exception as e:
         logger.debug("treatment_classifier: cache store failed: %s", e)
