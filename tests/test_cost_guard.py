@@ -74,11 +74,13 @@ class TestDailyBudget:
         assert not ok and spent == 0.60
 
     @pytest.mark.asyncio
-    async def test_db_error_fails_open(self):
+    async def test_db_error_fails_closed(self):
+        # Recovery-fix (Patch 5): een leesfout mag het plafond NIET uitschakelen.
+        # Voorheen fail-open (assert ok); nu fail-closed — blokkeren.
         db = MagicMock()
         db.table.side_effect = RuntimeError("down")
-        ok, _, _ = await check_daily_budget("aerys", db)
-        assert ok  # fail open — don't block real work on infra hiccup
+        ok, spent, cap = await check_daily_budget("aerys", db)
+        assert not ok and spent == cap
 
 
 class TestGuardedCall:

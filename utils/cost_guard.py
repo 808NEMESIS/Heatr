@@ -180,12 +180,14 @@ async def check_monthly_budget(
         rows = res.data or []
         spent = sum(float(r.get("cost_eur") or 0) for r in rows)
     except Exception as e:
-        logger.error("cost_guard: monthly check failed — failing open: %s", e)
+        # FAIL-CLOSED (recovery-fix): blokkeer bij een leesfout i.p.v. blind
+        # door te spenden. Herkenbaar aan block_reason="cost_guard_db_error".
+        logger.error("cost_guard: monthly check faalde — FAIL-CLOSED (blokkeer): %s", e)
         return {
-            "month_eur": 0.0, "monthly_budget_eur": cap, "monthly_base_eur": base_cap,
+            "month_eur": cap, "monthly_budget_eur": cap, "monthly_base_eur": base_cap,
             "monthly_override_eur": cap_override, "override_info": override_info,
-            "pct_used": 0.0, "tier_50_hit": False, "tier_100_hit": False,
-            "approved_over_50": True, "allowed": True, "block_reason": None,
+            "pct_used": 100.0, "tier_50_hit": True, "tier_100_hit": True,
+            "approved_over_50": False, "allowed": False, "block_reason": "cost_guard_db_error",
         }
 
     pct = (spent / cap * 100.0) if cap > 0 else 0
@@ -265,9 +267,11 @@ async def check_daily_budget(
         rows = res.data or []
         spent = sum(float(r.get("cost_eur") or 0) for r in rows)
     except Exception as e:
-        # Fail open: if we can't read the log, don't block. Log loud.
-        logger.error("cost_guard: daily budget check failed — failing open: %s", e)
-        return True, 0.0, cap
+        # FAIL-CLOSED (recovery-fix): kunnen we de cost-log niet lezen, dan
+        # BLOKKEREN we i.p.v. blind door te spenden — een DB-hik mag het
+        # kostenplafond niet uitschakelen. Herkenbaar aan spent==cap.
+        logger.error("cost_guard: daily budget check faalde — FAIL-CLOSED (blokkeer): %s", e)
+        return False, cap, cap
 
     allowed = spent < cap
     if not allowed:
