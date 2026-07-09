@@ -3125,22 +3125,27 @@ async def warmr_webhook(
     heatr_lead_id = payload.get("custom_fields", {}).get("heatr_lead_id")
     workspace_id = payload.get("custom_fields", {}).get("workspace_id", DEFAULT_WORKSPACE)
 
+    audit_logged = True
     if heatr_lead_id:
-        # Log all events to reply_inbox for audit
+        # Log all events to reply_inbox for audit.
+        # RECOVERY-FIX (Patch 7): kolommen conform het echte schema
+        # (heatr_reply_inbox, migratie 004/011): `body` i.p.v. `body_text`,
+        # GEEN `event_type`/`from_name` (bestaan niet) → voorheen faalde de
+        # insert stil met PGRST204 en ging de hele inbound-reply-audittrail
+        # verloren, terwijl de webhook tóch {"ok": true} teruggaf.
         try:
             db.table("reply_inbox").insert({
                 "workspace_id": workspace_id,
                 "lead_id": heatr_lead_id,
-                "event_type": event_type,
                 "from_email": payload.get("from_email"),
-                "from_name": payload.get("from_name"),
-                "subject": payload.get("subject"),
-                "body_text": payload.get("body_text"),
+                "subject": payload.get("subject") or event_type,
+                "body": payload.get("body_text") or payload.get("body"),
                 "body_html": payload.get("body_html"),
                 "received_at": _now_iso(),
             }).execute()
         except Exception as exc:
-            logger.warning("Failed to insert reply_inbox for lead %s: %s", heatr_lead_id, exc)
+            audit_logged = False
+            logger.error("webhooks/warmr: reply_inbox-insert MISLUKT voor lead %s: %s", heatr_lead_id, exc)
 
         # v1.0 spec: ELKE reply / bounce / unsubscribe stopt de hele sequence direct.
         # Re-entry op recontact-cooldown via lead.next_contact_after.
@@ -3219,17 +3224,22 @@ async def warmr_webhook(
             }
             mapped_status = status_map.get(event_type)
             if mapped_status:
-                db.table("lead_campaign_history").upsert({
-                    "workspace_id": workspace_id,
-                    "lead_id": heatr_lead_id,
+                # RECOVERY-FIX (Patch 7): UPDATE i.p.v. upsert(on_conflict="lead_id").
+                # lead_campaign_history is per lead×campagne — er is (terecht) geen
+                # unique op lead_id, dus de oude ON CONFLICT faalde op DB-niveau, en
+                # `event_type`/`updated_at` bestaan niet als kolom. We markeren nu de
+                # campagne-rijen van de lead met de echte `status`-kolom, zodat de
+                # feedback-loop bruikbare terminale statussen ziet.
+                db.table("lead_campaign_history").update({
                     "status": mapped_status,
-                    "event_type": event_type,
-                    "updated_at": _now_iso(),
-                }, on_conflict="lead_id").execute()
+                }).eq("lead_id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
         except Exception as exc:
-            logger.debug("Failed to upsert lead_campaign_history: %s", exc)
+            audit_logged = False
+            logger.error("webhooks/warmr: lead_campaign_history-update MISLUKT voor lead %s: %s", heatr_lead_id, exc)
 
-    return {"ok": True}
+    # EERLIJKE response (recovery-fix): geen {"ok": true} als de audit-inserts
+    # faalden. Zo blijft een stille PGRST204 niet langer als succes gerapporteerd.
+    return {"ok": audit_logged, "audit_logged": audit_logged}
 
 
 # =============================================================================
