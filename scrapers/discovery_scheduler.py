@@ -129,9 +129,17 @@ async def run_due_schedules(
         )
 
         try:
-            # Use first query from sector config as the scraping query
+            # Use first query from sector config as the scraping query.
+            # RECOVERY-FIX: de key heet `lead_keywords`, niet `search_queries`
+            # (die bestaat niet in SectorConfig) → elke due schedule crashte met
+            # KeyError → alle geplande discovery was dood. Guard tegen leeg.
             sector_config = get_sector(sector)
-            query = sector_config["search_queries"][0].replace("{city}", city)
+            keywords = sector_config.get("lead_keywords") or []
+            if not keywords:
+                logger.warning("Schedule %s: sector %s heeft geen lead_keywords — overslaan", sched_id, sector)
+                results["errors"].append({"schedule_id": sched_id, "error": "no_lead_keywords"})
+                continue
+            query = keywords[0].replace("{city}", city)
 
             # Enqueue the scrape (dedup is handled by scraping_queue with delta_mode)
             job_id = await create_scraping_job(

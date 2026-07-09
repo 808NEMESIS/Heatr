@@ -3906,6 +3906,34 @@ async def website_intelligence_process_next(
     return result or {"processed": False, "reason": "queue_empty"}
 
 
+@app.post("/queue/reap-stuck")
+async def queue_reap_stuck(
+    stuck_minutes: int = 30,
+    _ws: str = Depends(require_service_key),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Recovery Patch 3: requeue/dead-letter jobs die te lang op 'running' staan.
+
+    Systeembreed onderhoud (geen workspace-scope) — vandaar require_service_key.
+    Bedoeld voor een n8n-cron (bv. elke 10 min). Elke reap met stuck>0 is óók
+    een worker-liveness-signaal (een gezonde worker laat niets lang op running).
+    """
+    from utils.queue_reaper import requeue_stuck_jobs
+    summary = await requeue_stuck_jobs(db, stuck_minutes=stuck_minutes)
+    total_stuck = sum(v.get("stuck", 0) for v in summary.values())
+    if total_stuck:
+        try:
+            from utils.alert_manager import send_alert
+            await send_alert(
+                "stuck_jobs_reaped",
+                f"{total_stuck} stuck job(s) hersteld: {summary}",
+                "warning", DEFAULT_WORKSPACE, db,
+            )
+        except Exception as exc:
+            logger.warning("reaper: alert kon niet verstuurd worden: %s", exc)
+    return {"reaped": summary, "total_stuck": total_stuck}
+
+
 # =============================================================================
 # DISCOVERY SCHEDULES (automatic recurring scrapes)
 # =============================================================================
