@@ -22,6 +22,9 @@ def _run(coro):
 
 class _BoomDB:
     """Elke read faalt — simuleert een Supabase-leesfout."""
+    def rpc(self, *a, **k):
+        return self
+
     def table(self, *a, **k):
         return self
 

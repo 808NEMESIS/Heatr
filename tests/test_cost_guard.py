@@ -21,16 +21,20 @@ def _clear_env(monkeypatch):
 
 
 def _db_with_today_spend(total_eur: float):
-    """Mock Supabase client whose api_cost_log select().execute().data
-    returns rows summing to `total_eur`."""
+    """Mock Supabase client: de heatr_cost_sum-RPC (fase 4 PR 15) geeft
+    `total_eur` terug; table-chains blijven voor record_block/override."""
     chain = MagicMock()
     chain.select.return_value = chain
     chain.eq.return_value = chain
     chain.gte.return_value = chain
     chain.insert.return_value = chain
-    chain.execute.return_value = MagicMock(data=[{"cost_eur": total_eur}] if total_eur else [])
+    chain.maybe_single.return_value = chain
+    chain.execute.return_value = MagicMock(data=[])
     db = MagicMock()
     db.table.return_value = chain
+    rpc_chain = MagicMock()
+    rpc_chain.execute.return_value = MagicMock(data=total_eur)
+    db.rpc.return_value = rpc_chain
     return db
 
 
@@ -78,7 +82,7 @@ class TestDailyBudget:
         # Recovery-fix (Patch 5): een leesfout mag het plafond NIET uitschakelen.
         # Voorheen fail-open (assert ok); nu fail-closed — blokkeren.
         db = MagicMock()
-        db.table.side_effect = RuntimeError("down")
+        db.rpc.side_effect = RuntimeError("down")  # fase 4: som loopt via RPC
         ok, spent, cap = await check_daily_budget("aerys", db)
         assert not ok and spent == cap
 
@@ -97,3 +101,57 @@ class TestGuardedCall:
         )
         assert not ok
         assert "ceiling_exceeded" in reason
+
+
+class TestPlatformBudget:
+    """Fase 4 PR 16 — globaal plafond over alle workspaces (audit v2 P2-5)."""
+
+    @pytest.mark.asyncio
+    async def test_disabled_when_unset(self, monkeypatch):
+        monkeypatch.delenv("PLATFORM_DAILY_BUDGET_EUR", raising=False)
+        monkeypatch.delenv("PLATFORM_MONTHLY_BUDGET_EUR", raising=False)
+        from utils.cost_guard import check_platform_budget
+        db = MagicMock()
+        db.rpc.side_effect = RuntimeError("mag niet bevraagd worden")
+        ok, reason = await check_platform_budget(db)
+        assert ok is True  # 0/unset = uitgeschakeld, geen query
+
+    @pytest.mark.asyncio
+    async def test_blocks_at_100_percent(self, monkeypatch):
+        monkeypatch.setenv("PLATFORM_DAILY_BUDGET_EUR", "10")
+        from utils.cost_guard import check_platform_budget
+        db = _db_with_today_spend(12.0)  # platform-som via rpc
+        ok, reason = await check_platform_budget(db)
+        assert ok is False
+        assert "platform_dagbudget_exceeded" in reason
+
+    @pytest.mark.asyncio
+    async def test_allows_below_cap(self, monkeypatch):
+        monkeypatch.setenv("PLATFORM_DAILY_BUDGET_EUR", "10")
+        monkeypatch.setenv("PLATFORM_MONTHLY_BUDGET_EUR", "100")
+        from utils.cost_guard import check_platform_budget
+        db = _db_with_today_spend(2.0)
+        ok, _ = await check_platform_budget(db)
+        assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_fails_closed_on_rpc_error(self, monkeypatch):
+        monkeypatch.setenv("PLATFORM_DAILY_BUDGET_EUR", "10")
+        from utils.cost_guard import check_platform_budget
+        db = MagicMock()
+        db.rpc.side_effect = RuntimeError("down")
+        ok, reason = await check_platform_budget(db)
+        assert ok is False
+        assert "fail-closed" in reason
+
+    @pytest.mark.asyncio
+    async def test_guarded_call_blocks_on_platform_budget(self, monkeypatch):
+        monkeypatch.setenv("PLATFORM_DAILY_BUDGET_EUR", "10")
+        monkeypatch.setenv("ENRICHMENT_DAILY_BUDGET_EUR", "999")
+        db = _db_with_today_spend(50.0)  # platform-som 50 > 10
+        ok, reason = await guarded_call(
+            workspace_id="aerys", lead_id="l1", context="test",
+            estimated_cost_eur=0.001, supabase_client=db,
+        )
+        assert ok is False
+        assert "platform" in reason

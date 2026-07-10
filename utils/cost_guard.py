@@ -110,6 +110,69 @@ class LeadCostAccumulator:
             )
 
 
+
+def _cost_sum(supabase_client: Any, workspace_id: str | None, since_iso: str) -> float:
+    """Kosten-som via de heatr_cost_sum-RPC (migratie 027) — één geïndexeerd
+    aggregaat i.p.v. de oude full-scan-plus-Python-som die bij elke AI-call
+    alle maandrijen ophaalde (audit v2 P1-2, O(n²) over een batch).
+
+    workspace_id=None → platformbrede som (globaal budget, PR 16).
+    Raises bij DB/RPC-fout — alle callers zijn fail-closed.
+    """
+    res = supabase_client.rpc(
+        "heatr_cost_sum", {"p_workspace": workspace_id, "p_since": since_iso}
+    ).execute()
+    data = res.data
+    if isinstance(data, list):
+        data = data[0] if data else 0
+    return float(data or 0)
+
+
+def _platform_budget_eur(period: str) -> float:
+    """PLATFORM_DAILY_BUDGET_EUR / PLATFORM_MONTHLY_BUDGET_EUR — 0/unset =
+    uitgeschakeld (bewust: single-tenant heeft het workspace-budget al; zet
+    dit AAN vóór er een tweede tenant komt — audit v2 P2-5)."""
+    var = "PLATFORM_DAILY_BUDGET_EUR" if period == "day" else "PLATFORM_MONTHLY_BUDGET_EUR"
+    try:
+        return float(os.getenv(var, "0") or 0)
+    except ValueError:
+        return 0.0
+
+
+async def check_platform_budget(supabase_client: Any) -> tuple[bool, str]:
+    """Globaal plafond over ALLE workspaces (fase 4 PR 16).
+
+    1.000 tenants x EUR 20 workspace-cap = EUR 20k/maand zonder deze rem.
+    Waarschuwt op 70/85/95%, harde stop op 100%. FAIL-CLOSED bij leesfout.
+    """
+    now = datetime.now(timezone.utc)
+    checks = (
+        ("dag", _platform_budget_eur("day"),
+         now.date().isoformat() + "T00:00:00+00:00"),
+        ("maand", _platform_budget_eur("month"),
+         now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()),
+    )
+    for label, cap, since in checks:
+        if cap <= 0:
+            continue  # niet geconfigureerd = uitgeschakeld
+        try:
+            spent = _cost_sum(supabase_client, None, since)
+        except Exception as e:
+            logger.error("cost_guard: platform-%sbudget-check faalde — FAIL-CLOSED: %s", label, e)
+            return False, f"platform_budget_check_failed_{label} (fail-closed)"
+        pct = spent / cap * 100.0
+        if spent >= cap:
+            logger.error("cost_guard: PLATFORM-%sBUDGET OVERSCHREDEN — spent=%.2f cap=%.2f",
+                         label.upper(), spent, cap)
+            return False, f"platform_{label}budget_exceeded: spent={spent:.2f} cap={cap:.2f}"
+        for tier in (95, 85, 70):
+            if pct >= tier:
+                logger.warning("cost_guard: platform-%sbudget op %.0f%% (spent=%.2f cap=%.2f)",
+                               label, pct, spent, cap)
+                break
+    return True, ""
+
+
 async def check_monthly_budget(
     workspace_id: str,
     supabase_client: Any,
@@ -170,15 +233,8 @@ async def check_monthly_budget(
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
     try:
-        res = (
-            supabase_client.table("api_cost_log")
-            .select("cost_eur")
-            .eq("workspace_id", workspace_id)
-            .gte("created_at", month_start)
-            .execute()
-        )
-        rows = res.data or []
-        spent = sum(float(r.get("cost_eur") or 0) for r in rows)
+        # Fase 4 PR 15: geïndexeerd SQL-aggregaat i.p.v. full-scan (P1-2).
+        spent = _cost_sum(supabase_client, workspace_id, month_start)
     except Exception as e:
         # FAIL-CLOSED (recovery-fix): blokkeer bij een leesfout i.p.v. blind
         # door te spenden. Herkenbaar aan block_reason="cost_guard_db_error".
@@ -257,15 +313,8 @@ async def check_daily_budget(
 
     try:
         today = datetime.now(timezone.utc).date().isoformat()
-        res = (
-            supabase_client.table("api_cost_log")
-            .select("cost_eur")
-            .eq("workspace_id", workspace_id)
-            .gte("created_at", f"{today}T00:00:00+00:00")
-            .execute()
-        )
-        rows = res.data or []
-        spent = sum(float(r.get("cost_eur") or 0) for r in rows)
+        # Fase 4 PR 15: geïndexeerd SQL-aggregaat i.p.v. full-scan (P1-2).
+        spent = _cost_sum(supabase_client, workspace_id, f"{today}T00:00:00+00:00")
     except Exception as e:
         # FAIL-CLOSED (recovery-fix): kunnen we de cost-log niet lezen, dan
         # BLOKKEREN we i.p.v. blind door te spenden — een DB-hik mag het
@@ -332,14 +381,21 @@ async def guarded_call(
             await record_block(workspace_id, lead_id, context, reason, supabase_client)
             return False, reason
 
-    # 2. Daily budget (DB read)
+    # 2. Platformbreed plafond (fase 4 PR 16) — over alle workspaces heen;
+    #    uitgeschakeld zolang PLATFORM_*_BUDGET_EUR niet gezet is.
+    ok, reason = await check_platform_budget(supabase_client)
+    if not ok:
+        await record_block(workspace_id, lead_id, context, reason, supabase_client)
+        return False, reason
+
+    # 3. Daily budget (DB read)
     ok, spent, cap = await check_daily_budget(workspace_id, supabase_client)
     if not ok:
         reason = f"daily_budget_exceeded: spent={spent:.4f} cap={cap:.4f}"
         await record_block(workspace_id, lead_id, context, reason, supabase_client)
         return False, reason
 
-    # 3. Monthly budget — vereist user approval bij 50%, hard stop bij 100%
+    # 4. Monthly budget — vereist user approval bij 50%, hard stop bij 100%
     m = await check_monthly_budget(workspace_id, supabase_client)
     if not m["allowed"]:
         await record_block(workspace_id, lead_id, context, m["block_reason"] or "monthly_blocked", supabase_client)
