@@ -667,6 +667,14 @@ async def send_leads_to_warmr(
         }
     result = disp.result
 
+    # ADR-001 (fase 3 PR 9): tracking-enrollment per gepushte lead — zelfde
+    # bookkeeping als /campaigns/launch, zodat dedup/cooldown ook dit pad zien.
+    from campaigns.enrollment import record_warmr_enrollments
+    await record_warmr_enrollments(
+        db, workspace_id=workspace_id, leads=eligible,
+        campaign_id=campaign_id, service_type="adhoc_push", sequence_steps=[],
+    )
+
     for lead in eligible:
         _insert_timeline_event(db, workspace_id, lead["id"], "email_sent", f"Lead verstuurd naar Warmr (campagne {campaign_id})")
 
@@ -1532,6 +1540,43 @@ async def launch_campaign(
             },
         )
 
+    # Actieve-campagne-block (fase 3 PR 9, audit v2 F1/F2): een lead die al
+    # in een lopende enrollment zit (is_active=true) mag niet nogmaals
+    # gelanceerd worden — óók niet onder een andere campagnenaam. Batch-query
+    # i.p.v. per-lead; werkt op de tracking-rijen uit record_warmr_enrollments.
+    try:
+        _active_res = (
+            db.table("lead_campaign_history").select("lead_id")
+            .eq("workspace_id", workspace_id)
+            .in_("lead_id", [l["id"] for l in leads])
+            .eq("is_active", True)
+            .execute()
+        )
+        _active_ids = {r["lead_id"] for r in (_active_res.data or [])}
+    except Exception as e:
+        # Fail-closed (Besluit 3): dedup-data onbereikbaar = niet launchen.
+        logger.error("campaigns/launch: active-campagne-check faalde — fail-closed: %s", e)
+        raise HTTPException(status_code=503, detail=(
+            "Actieve-campagne-check onbeschikbaar (lead_campaign_history niet "
+            "leesbaar) — launch geblokkeerd. Is migratie 025 gedraaid?"
+        ))
+    if _active_ids:
+        _in_campaign = [l for l in leads if l["id"] in _active_ids]
+        leads = [l for l in leads if l["id"] not in _active_ids]
+        logger.warning(
+            "campaigns/launch: %d lead(s) geweigerd — al in een actieve campagne: %s",
+            len(_in_campaign), sorted(_active_ids)[:10],
+        )
+    if not leads:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "Alle leads zitten al in een actieve campagne",
+                "in_active_campaign": len(_active_ids),
+                "hint": "Wacht tot de lopende sequence is afgerond (webhook sluit de enrollment) of stop die expliciet.",
+            },
+        )
+
     # v3.1 routing: per lead → resolve template (auto pick_brug of forced/custom).
     # Bucket leads per resolved-template_id zodat we per bucket één Warmr-campaign
     # kunnen aanmaken met de juiste sequence-template.
@@ -1642,11 +1687,22 @@ async def launch_campaign(
             "pushed": 0, "failed": 0, "duplicates": len(bucket_leads),
             "skipped_duplicate": True,
         }
+        # ADR-001 (fase 3 PR 9): tracking-only enrollment per gepushte lead.
+        # send_owner='warmr' + status='active' — voedt dedup/cooldown/guards,
+        # wordt door get_due_sends genegeerd (Warmr dript zelf). Idempotent
+        # (uq_lch_enrollment), dus ook veilig bij een dispatcher-duplicate-skip.
+        from campaigns.enrollment import record_warmr_enrollments
+        enroll_result = await record_warmr_enrollments(
+            db, workspace_id=workspace_id, leads=bucket_leads,
+            campaign_id=camp_id, template_id=b["template_id"],
+            service_type=bucket_label, sequence_steps=b["fixed_sequence"],
+        )
         sub_results.append({
             "bucket": bucket_label,
             "template_id": b["template_id"],
             "campaign_id": camp_id,
             "lead_count": len(bucket_leads),
+            "enrollments": enroll_result,
             **push_result,
         })
         audit_lead_ids.extend([l.get("id") for l in bucket_leads if l.get("id")])
@@ -3288,15 +3344,23 @@ async def warmr_webhook(
             }
             mapped_status = status_map.get(event_type)
             if mapped_status:
-                # RECOVERY-FIX (Patch 7): UPDATE i.p.v. upsert(on_conflict="lead_id").
-                # lead_campaign_history is per lead×campagne — er is (terecht) geen
-                # unique op lead_id, dus de oude ON CONFLICT faalde op DB-niveau, en
-                # `event_type`/`updated_at` bestaan niet als kolom. We markeren nu de
-                # campagne-rijen van de lead met de echte `status`-kolom, zodat de
-                # feedback-loop bruikbare terminale statussen ziet.
-                db.table("lead_campaign_history").update({
-                    "status": mapped_status,
-                }).eq("lead_id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
+                # Fase 3 PR 9 (ADR-001): enrollment-closure via één helper met
+                # (a) terminal-guard — een laat campaign.completed overschrijft
+                # nooit een eerdere replied/unsubscribed/bounced (scenario 4);
+                # (b) campaign_id-scoping als de payload die levert — een
+                # no_response van campagne X vervuilt campagne Y niet meer;
+                # (c) is_active=False + sent_at-backfill → F7-fix: de rij
+                # verlaat de actieve set en wordt het 90d-cooldown-anker.
+                from campaigns.enrollment import close_campaign_enrollments
+                closed = close_campaign_enrollments(
+                    db, workspace_id=workspace_id, lead_id=heatr_lead_id,
+                    mapped_status=mapped_status,
+                    campaign_id=(payload.get("campaign_id")
+                                 or payload.get("custom_fields", {}).get("campaign_id")),
+                    completed=(event_type == "campaign.completed"),
+                )
+                logger.info("webhooks/warmr: %d enrollment(s) afgesloten (lead=%s → %s)",
+                            closed, heatr_lead_id, mapped_status)
         except Exception as exc:
             audit_logged = False
             logger.error("webhooks/warmr: lead_campaign_history-update MISLUKT voor lead %s: %s", heatr_lead_id, exc)

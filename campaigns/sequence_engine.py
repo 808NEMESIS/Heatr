@@ -364,6 +364,11 @@ async def get_due_sends(workspace_id: str, supabase_client, limit: int = 50) -> 
                     "contact_first_name, domain, personalized_opener, snoozed_until, "
                     "next_contact_after, crm_stage)")
             .eq("workspace_id", workspace_id)
+            # ADR-001 (fase 3): HARDE grens tegen dubbele drip. Warmr-owned
+            # tracking-rijen (send_owner='warmr', geschreven door launch)
+            # mogen NOOIT door dit pad verstuurd worden — Warmr dript zelf.
+            # Alleen expliciete heatr-owned rijen zijn dispatch-kandidaat.
+            .eq("send_owner", "heatr")
             .eq("status", "pending")
             .eq("is_active", True)
             .lte("next_send_at", now)

@@ -43,6 +43,12 @@ class _Chain:
     def eq(self, *a, **k):
         return self
 
+    def in_(self, *a, **k):
+        return self
+
+    def is_(self, *a, **k):
+        return self
+
     def order(self, *a, **k):
         return self
 
