@@ -274,7 +274,42 @@ async def run_enrichment_for_lead(
         workspace_id=workspace_id or "aerys",
     )
 
+    # Fase 4 PR 17 (audit v2 P1-3/scenario 9): resumable enrichment.
+    # - steps_completed: eerder voltooide stappen worden geskipt — een crash
+    #   op stap 14/15 herhaalt bij retry niet alle Claude-stappen;
+    # - spent_eur-carryover: het per-lead-plafond overleeft een restart —
+    #   voorheen resette de in-memory accumulator naar 0 en kreeg een
+    #   crashende job het budget per retry opnieuw.
+    steps_done: list[str] = [str(x) for x in (job.get("steps_completed") or [])]
+    prior_spent = float(job.get("spent_eur") or 0)
+    if prior_spent > 0:
+        accumulator.charge(prior_spent, "restart_carryover")
+        logger.info(
+            "Enrichment resume: lead=%s — %d stap(pen) al voltooid, EUR %.4f "
+            "eerder besteed (telt mee voor het plafond)",
+            lead_id, len(steps_done), prior_spent,
+        )
+
+    def _persist_progress() -> None:
+        """Voortgang naar de job-rij — fail-soft met luide log (de stap zelf
+        is al gedaan; een gemiste persist kost hooguit één dubbele stap bij
+        een latere crash, nooit een gemiste)."""
+        try:
+            supabase_client.table("enrichment_jobs").update({
+                "steps_completed": steps_done,
+                "spent_eur": accumulator.spent_eur,
+            }).eq("id", job_id).execute()
+        except Exception as e:
+            logger.error(
+                "Enrichment: voortgang-persist faalde (job=%s, %d stappen): %s — "
+                "is migratie 027/028 gedraaid?", job_id, len(steps_done), e,
+            )
+
     for step_name in enrichment_types:
+        if step_name in steps_done:
+            logger.info("Enrichment step %s geskipt voor lead %s — al voltooid "
+                        "in eerdere run (resume)", step_name, lead_id)
+            continue
         if accumulator.blocked:
             logger.warning(
                 "Enrichment for lead %s blocked by per-lead cost-cap (%s) — "
@@ -287,6 +322,7 @@ async def run_enrichment_for_lead(
                 }).eq("id", lead_id).execute()
             except Exception as e:
                 logger.debug("Failed to mark lead enrichment_blocked_reason: %s", e)
+            _persist_progress()  # PR 17: besteding vastleggen vóór de break
             break
 
         try:
@@ -301,6 +337,10 @@ async def run_enrichment_for_lead(
                 warmr_client=warmr_client,
                 accumulator=accumulator,
             )
+
+            # Fase 4 PR 17: stap voltooid → voortgang persistent maken.
+            steps_done.append(step_name)
+            _persist_progress()
 
             # Priority boost: after waterfall, if valid email → make urgent
             if step_name == "email_waterfall":
