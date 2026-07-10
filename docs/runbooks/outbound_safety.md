@@ -1,17 +1,33 @@
-# Runbook — Outbound Safety Foundation (Werkpakket A)
+# Runbook — Outbound Safety Foundation (Werkpakket A + fase 2)
 
-**Datum:** 2026-07-10 · **Scope:** dispatcher-reservering, ledger, kill-switch
-**Code:** `utils/outbound_dispatcher.py` · **Migratie:** `migrations/022_outbound_ledger_unique.sql`
+**Datum:** 2026-07-10 · **Scope:** dispatcher-reservering, ledger, kill-switch, suppression/GDPR
+**Code:** `utils/outbound_dispatcher.py`, `utils/suppression.py`, `utils/gdpr_manager.py`
+**Migraties:** `022_outbound_ledger_unique.sql`, `023_email_status_check_fix.sql`, `024_suppressions.sql`
 
 ---
 
 ## 1. Deploy-volgorde (VERPLICHT)
 
-1. **Eerst** migratie 022 in de Supabase SQL-editor draaien (sectie A t/m E; A moet 0 rijen geven).
-2. **Daarna** de code deployen (commits `a4623af` + `869de08`).
+1. **Eerst** in de Supabase SQL-editor, in deze volgorde:
+   - migratie **022** (ledger-UNIQUE; sectie A moet 0 rijen geven),
+   - migratie **023** (email_status-CHECK-fix — de huidige CHECK wijst de bounce/unsub-webhook-writes af),
+   - migratie **024** (suppressions-tabel — de dispatcher is er fail-closed op).
+2. **Daarna** de code deployen (commits `a4623af` + `869de08` + `e8fe878` + `8767c5a` + `8b6128a`).
 3. **Env-check vóór restart:** staat `ENABLE_CAMPAIGN_SENDS=true` in de productie-`.env`? Dan blijft alles versturen zoals nu (de nieuwe `ENABLE_PROSPECT_SENDS` valt daarop terug). Staat hij op `false`, dan blokkeert de dispatcher vanaf deploy **álle** prospect-sends — dat is de bedoelde master-switch-semantiek, maar verifieer dat dit gewenst is.
 
-Andersom deployen (code vóór migratie) is fail-closed maar disruptief: elke prospect-send krijgt `DispatchLedgerUnavailable` tot de index bestaat… wat nog steeds veiliger is dan het oude fail-open.
+Andersom deployen (code vóór migraties) is fail-closed maar disruptief: elke prospect-send krijgt `DispatchLedgerUnavailable` tot de tabellen bestaan… wat nog steeds veiliger is dan het oude fail-open.
+
+### Fase 2 — wat er extra bij kwam (2026-07-10)
+- `bounced` is een geblokkeerde status; bounce/unsubscribe-webhooks zetten nu óók `leads.status` (de kolom die `compliance_check` leest).
+- `is_test_lead` bypasst suppressie-statussen niet meer.
+- `forget_lead` gebruikt een per-lead-unieke placeholder (`verwijderd+{uuid}@anoniem.invalid`), retourneert eerlijk `ok/errors`, en `/gdpr/forget` geeft 500 `forget_incomplete` bij een gedeeltelijke erasure (retry is idempotent).
+- **`heatr_suppressions`** = platformbrede lijst (cross-workspace, op genormaliseerd adres). Writers: warmr-webhook, reply-classifier, gdpr-forget. Reader: de dispatcher, vóór elke prospect-send, **fail-closed**.
+- Suppressie **revoken** (alleen operator, bewuste actie):
+  ```sql
+  UPDATE heatr_suppressions SET revoked_at = now()
+  WHERE normalized_email = '<adres>' AND revoked_at IS NULL;
+  ```
+  Nooit rijen deleten (append-only). Let op: revoke heft alleen de platformlijst op; de per-lead `status`/`email_status` blijft staan en blokkeert mogelijk nog via `compliance_check`.
 
 ## 2. Wat is er veranderd (operator-samenvatting)
 
