@@ -12,8 +12,9 @@
    - migratie **022** (ledger-UNIQUE; sectie A moet 0 rijen geven),
    - migratie **023** (email_status-CHECK-fix — de huidige CHECK wijst de bounce/unsub-webhook-writes af),
    - migratie **024** (suppressions-tabel — de dispatcher is er fail-closed op),
-   - migratie **025** (tracking-enrollments: send_owner-kolom + UNIQUE — launch is er fail-closed op).
-2. **Daarna** de code deployen (commits `a4623af` + `869de08` + `e8fe878` + `8767c5a` + `8b6128a` + `897ad74` + `6557393`).
+   - migratie **025** (tracking-enrollments: send_owner-kolom + UNIQUE — launch is er fail-closed op),
+   - migratie **026** (webhook-eventledger — inbound is er fail-soft op, maar zonder tabel geen dedup).
+2. **Daarna** de code deployen (commits `a4623af` t/m `abbc794` — WP-A + fase 2 + fase 3).
 3. **Env-check vóór restart:** staat `ENABLE_CAMPAIGN_SENDS=true` in de productie-`.env`? Dan blijft alles versturen zoals nu (de nieuwe `ENABLE_PROSPECT_SENDS` valt daarop terug). Staat hij op `false`, dan blokkeert de dispatcher vanaf deploy **álle** prospect-sends — dat is de bedoelde master-switch-semantiek, maar verifieer dat dit gewenst is.
 
 Andersom deployen (code vóór migraties) is fail-closed maar disruptief: elke prospect-send krijgt `DispatchLedgerUnavailable` tot de tabellen bestaan… wat nog steeds veiliger is dan het oude fail-open.
@@ -35,6 +36,18 @@ Andersom deployen (code vóór migraties) is fail-closed maar disruptief: elke p
 - **Launch blokkeert nu echt dubbele campagnes:** leads met een `is_active=true`-enrollment worden geweigerd (óók onder een andere campagnenaam), en na afronding geldt de 90-dagen-cooldown (anker = `sent_at`, gezet bij closure). Fail-closed: is `lead_campaign_history` niet leesbaar, dan weigert launch (503).
 - **Webhook sluit enrollments:** reply/bounce/unsubscribe/`campaign.completed` → `is_active=false` + terminale status, gescoped op `campaign_id` (indien in payload) en met terminal-guard (een `no_response` overschrijft nooit `replied`). 
 - **Incident "lead onterecht geblokkeerd als in-actieve-campagne":** check `SELECT * FROM heatr_lead_campaign_history WHERE lead_id='<id>' AND is_active=true;` — hoort na `campaign.completed` leeg te zijn. Blijft een rij hangen (webhook gemist), sluit handmatig: `UPDATE heatr_lead_campaign_history SET is_active=false, status='no_response', stopped_at=now(), sent_at=COALESCE(sent_at, now()) WHERE id='<rij>';`
+
+### Fase 3 — webhook-eventledger + herbedrade SendingGuard (PR 10/11)
+- **Elke inbound Warmr-event** krijgt een rij in `heatr_webhook_events` (dedup op `event_id`; zonder Warmr-event_id synthetiseert Heatr er één over de payload). Redelivery → `{"ok": true, "duplicate": true}`, geen dubbele side-effects.
+- **Dead-letter-reconciliatie (wekelijks checken):**
+  ```sql
+  SELECT event_type, error, created_at FROM heatr_webhook_events
+  WHERE processing_status IN ('dead_letter','error')
+  ORDER BY created_at DESC LIMIT 50;
+  ```
+  `dead_letter` = event voor een onbekende lead (na warmr_lead_id-fallback). Onderzoek de bron; een gefixte lead-koppeling + handmatige replay van de payload verwerkt hem alsnog (de event_id botst dan — verwijder desnoods bewust die ene rij, gedocumenteerde uitzondering op append-only).
+- **SendingGuard is nu fail-closed:** guard-data onbereikbaar (lch/suppressions niet leesbaar) = prospect-send geblokkeerd met een "Interne fout in SendingGuard"-reden. Dat is bedoeld gedrag — herstel de data-laag, omzeil de guard niet.
+- **Bounce-breaker** telt `heatr_suppressions` type `hard_bounce` (vandaag, per workspace) tegen de pushes van vandaag; drempel `MAX_BOUNCE_RATE` (default 3%, min. 10 sends). De **domein-cap is bewust uitgeschakeld** tot Warmr capacity-events levert — er is geen kolom die hem eerlijk kan voeden.
 
 ## 2. Wat is er veranderd (operator-samenvatting)
 
