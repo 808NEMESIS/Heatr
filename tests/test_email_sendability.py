@@ -100,22 +100,39 @@ def test_filter_splits_correctly():
 # Test-mode bypass (feature: is_test_lead)
 # ---------------------------------------------------------------------------
 
-def test_test_lead_bypasses_bounced_status():
-    """Test-leads moeten zelfs bij 'bounced' status door de gate."""
+def test_test_lead_does_NOT_bypass_bounced_status():
+    """OMGEKEERD in fase 2 (audit v2 P0-2): suppressie wint van de
+    test-bypass. Een bounce is een deliverability-feit — geen testvlag
+    mag daaroverheen."""
     ok, reason = is_sendable("a@b.nl", "bounced", is_test_lead=True)
-    assert ok is True
-    assert reason == "test_lead_bypass"
+    assert ok is False
+    assert reason == "status:bounced"
 
 
-def test_test_lead_bypasses_unsubscribed_status():
+def test_test_lead_does_NOT_bypass_unsubscribed_status():
+    """OMGEKEERD in fase 2: unsubscribe is een belofte aan de ontvanger —
+    geldt ook voor test-gemarkeerde leads."""
     ok, reason = is_sendable("a@b.nl", "unsubscribed", is_test_lead=True)
-    assert ok is True
-    assert "test_lead_bypass" in reason
+    assert ok is False
+    assert reason == "status:unsubscribed"
+
+
+def test_test_lead_does_NOT_bypass_blocked_status():
+    ok, reason = is_sendable("a@b.nl", "blocked", is_test_lead=True)
+    assert ok is False
 
 
 def test_test_lead_bypasses_not_found_status():
+    """Verificatie-statussen (not_found/risky/pending) mag de test-bypass
+    WEL passeren — dat is het doel van smoke-tests op een eigen adres."""
     ok, reason = is_sendable("a@b.nl", "not_found", is_test_lead=True)
     assert ok is True
+
+
+def test_test_lead_bypasses_pending_status():
+    ok, reason = is_sendable("a@b.nl", "pending", is_test_lead=True)
+    assert ok is True
+    assert reason == "test_lead_bypass"
 
 
 def test_test_lead_still_requires_email():
@@ -136,11 +153,14 @@ def test_test_lead_default_false_does_not_bypass():
 
 
 def test_filter_honors_test_lead_flag():
+    """Fase 2: de vlag bypasst verificatie-statussen, maar suppressie
+    (bounced) blokkeert óók test-leads."""
     leads = [
-        {"id": "1", "email": "a@b.nl", "email_status": "bounced"},
-        {"id": "2", "email": "b@b.nl", "email_status": "bounced", "is_test_lead": True},
+        {"id": "1", "email": "a@b.nl", "email_status": "not_found"},
+        {"id": "2", "email": "b@b.nl", "email_status": "not_found", "is_test_lead": True},
+        {"id": "3", "email": "c@b.nl", "email_status": "bounced", "is_test_lead": True},
     ]
     sendable, unsendable = filter_sendable_leads(leads)
     assert {l["id"] for l in sendable} == {"2"}
-    assert {l["id"] for l in unsendable} == {"1"}
+    assert {l["id"] for l in unsendable} == {"1", "3"}
     assert sendable[0]["_sendability_reason"] == "test_lead_bypass"

@@ -31,8 +31,11 @@ HARD_REQUIRED_FIELDS = ("archetype", "score", "sector")
 
 # Statussen waarbij een lead NOOIT verstuurd mag worden — geen enkele bypass,
 # ook niet voor test-leads. Unsubscribe/forget is een compliance-belofte aan
-# de ontvanger; disqualified is een bewuste operator-beslissing.
-BLOCKED_STATUSES = ("unsubscribed", "forgotten", "disqualified")
+# de ontvanger; disqualified is een bewuste operator-beslissing; bounced is
+# een deliverability-feit (audit v2 P0-2 / fase 2-hotfix: ontbrak hier,
+# waardoor een hard-bounced lead via /campaigns/launch launchbaar bleef —
+# dat pad heeft géén email_status-gate).
+BLOCKED_STATUSES = ("unsubscribed", "forgotten", "disqualified", "bounced")
 
 
 def compliance_check(lead: dict[str, Any]) -> tuple[bool, str | None]:

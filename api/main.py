@@ -3174,7 +3174,15 @@ async def warmr_webhook(
             )
 
         elif event_type in ("bounced", "lead.bounced"):
-            db.table("leads").update({"email_status": "bounced"}).eq("id", heatr_lead_id).execute()
+            # Fase 2-hotfix (audit v2 P0-2): óók leads.status zetten — de
+            # centrale compliance_check leest ALLEEN status, dus alleen
+            # email_status schrijven liet een gebouncede lead launchbaar
+            # (/campaigns/launch heeft geen email_status-gate). Workspace-
+            # scoping toegevoegd op deze mutatie (audit v2 P1-1).
+            db.table("leads").update({
+                "email_status": "bounced",
+                "status": "bounced",
+            }).eq("id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "bounced",
@@ -3182,10 +3190,14 @@ async def warmr_webhook(
             )
 
         elif event_type in ("unsubscribed", "lead.unsubscribed"):
+            # Fase 2-hotfix: status='unsubscribed' is de kolom die
+            # compliance_check blokkeert — email_status/crm_stage alleen
+            # was het suppression-lek uit audit v2 P0-2.
             db.table("leads").update({
                 "email_status": "unsubscribed",
+                "status": "unsubscribed",
                 "crm_stage": "afgesloten",
-            }).eq("id", heatr_lead_id).execute()
+            }).eq("id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "unsubscribed",

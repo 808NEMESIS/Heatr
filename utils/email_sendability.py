@@ -28,6 +28,12 @@ _ALWAYS_SENDABLE = {"verified", "valid"}
 # Statussen die ALTIJD geweigerd worden (legaal of practical)
 _NEVER_SENDABLE = {"not_found", "invalid", "bounced", "unsubscribed", "blocked"}
 
+# Suppressie-subset: deze winnen van ELKE bypass, ook is_test_lead. Een
+# unsubscribe/bounce is een belofte aan de ontvanger resp. een
+# deliverability-feit — geen gate die een testvlag mag omzeilen
+# (fase 2-hotfix, audit v2 P0-2: de test-lead-bypass negeerde suppressie).
+_SUPPRESSED_STATUSES = {"bounced", "unsubscribed", "blocked"}
+
 # Statussen die afhankelijk van flag zijn
 _RISKY_STATUSES = {"risky", "catchall"}
 
@@ -66,10 +72,11 @@ def is_sendable(
                     None = lees env-var HEATR_ALLOW_RISKY_EMAILS (default true).
         allow_role_emails: info@/contact@/etc als sendable (default true,
                           want voor MKB-zorg vaak enige optie).
-        is_test_lead: True = gate-bypass — accepteer ongeacht status (mits er
-                     wel een email is). Voor smoke-test pipeline. Stuur via
-                     _build_lead_payload BCC zodat het naar HEATR_TEST_BCC_EMAIL
-                     mirrort.
+        is_test_lead: True = gate-bypass voor verificatie-statussen (risky/
+                     not_found/pending), NIET voor suppressie (bounced/
+                     unsubscribed/blocked — die winnen altijd). Voor
+                     smoke-test pipeline. Stuur via _build_lead_payload BCC
+                     zodat het naar HEATR_TEST_BCC_EMAIL mirrort.
 
     Returns:
         (sendable: bool, reason: str)
@@ -79,13 +86,18 @@ def is_sendable(
         # Zonder email valt er niets te sturen, zelfs niet in test-mode.
         return False, "no_email"
 
+    status = (email_status or "").strip().lower()
+
+    # Suppressie wint van de test-bypass: een test-gemarkeerde lead die
+    # unsubscribed/bounced is, blijft geblokkeerd (fase 2-hotfix).
+    if status in _SUPPRESSED_STATUSES:
+        return False, f"status:{status}"
+
     if is_test_lead:
         return True, "test_lead_bypass"
 
     if allow_risky is None:
         allow_risky = os.getenv("HEATR_ALLOW_RISKY_EMAILS", "true").lower() == "true"
-
-    status = (email_status or "").strip().lower()
 
     if status in _NEVER_SENDABLE:
         return False, f"status:{status}"

@@ -84,6 +84,15 @@ def test_compliance_blocks_disqualified():
     assert "disqualified" in reason
 
 
+def test_compliance_blocks_bounced():
+    """Fase 2-hotfix (audit v2 P0-2): een hard-bounced lead was launchbaar
+    omdat 'bounced' niet in BLOCKED_STATUSES stond en /campaigns/launch geen
+    email_status-gate heeft."""
+    ok, reason = compliance_check(_base_lead(status="bounced"))
+    assert ok is False
+    assert "bounced" in reason
+
+
 def test_compliance_blocks_gdpr_unsafe():
     ok, reason = compliance_check(_base_lead(gdpr_safe=False))
     assert ok is False
@@ -226,4 +235,4 @@ def test_constants_match_expected_field_names():
     assert HARD_REQUIRED_FIELDS == ("archetype", "score", "sector")
     assert "personalized_opener" in SOFT_RECOMMENDED_FIELDS
     assert "contact_first_name" in SOFT_RECOMMENDED_FIELDS
-    assert BLOCKED_STATUSES == ("unsubscribed", "forgotten", "disqualified")
+    assert BLOCKED_STATUSES == ("unsubscribed", "forgotten", "disqualified", "bounced")
