@@ -23,10 +23,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils.outbound_dispatcher import (
     DispatchBlocked,
+    DispatchHalted,
     DispatchLedgerUnavailable,
     dispatch_outbound,
     ids_hash,
 )
+
+
+@pytest.fixture(autouse=True)
+def _prospect_sends_on(monkeypatch):
+    """WP-A: de centrale kill-switch is fail-closed (default uit). Vrijwel
+    alle tests testen gedrag ACHTER de switch → standaard aan; de
+    kill-switch-tests zetten hem zelf expliciet uit."""
+    monkeypatch.setenv("ENABLE_PROSPECT_SENDS", "true")
+    monkeypatch.delenv("ENABLE_CAMPAIGN_SENDS", raising=False)
+    monkeypatch.delenv("ENABLE_INTERNAL_NOTIFICATIONS", raising=False)
 
 _ACTIVE = ("in_flight", "completed")
 
@@ -348,6 +359,59 @@ def test_enforce_idempotency_false_executes_despite_previous():
     assert result.executed is True
     assert calls["n"] == 1
     assert db.by_status("completed")
+
+
+# ── Centrale kill-switch (WP-A stap 7) ──────────────────────────────────────
+
+def test_killswitch_off_blocks_prospect_send(monkeypatch):
+    """Scenario 8 (audit v2): switch uit → élk prospect-pad stopt centraal."""
+    monkeypatch.setenv("ENABLE_PROSPECT_SENDS", "false")
+    db = FakeLedgerDB()
+    with pytest.raises(DispatchHalted):
+        _dispatch(db)
+    assert db.rows[0]["status"] == "blocked_killswitch"
+
+
+def test_killswitch_default_is_closed(monkeypatch):
+    """Geen enkele flag gezet → fail-closed (default false)."""
+    monkeypatch.delenv("ENABLE_PROSPECT_SENDS", raising=False)
+    monkeypatch.delenv("ENABLE_CAMPAIGN_SENDS", raising=False)
+    db = FakeLedgerDB()
+    with pytest.raises(DispatchHalted):
+        _dispatch(db)
+
+
+def test_killswitch_legacy_campaign_flag_still_works(monkeypatch):
+    """Backwards-compat: bestaande deploys met ENABLE_CAMPAIGN_SENDS=true
+    blijven versturen zonder nieuwe env-var."""
+    monkeypatch.delenv("ENABLE_PROSPECT_SENDS", raising=False)
+    monkeypatch.setenv("ENABLE_CAMPAIGN_SENDS", "true")
+    db = FakeLedgerDB()
+    result, calls = _dispatch(db)
+    assert result.executed is True and calls["n"] == 1
+
+
+def test_killswitch_off_operator_email_still_sends(monkeypatch):
+    """Campagne-stop mag interne meldingen niet dempen (eigen switch)."""
+    monkeypatch.setenv("ENABLE_PROSPECT_SENDS", "false")
+    db = FakeLedgerDB()
+    result, calls = _dispatch(db, kind="operator_email", lead=None)
+    assert result.executed is True and calls["n"] == 1
+
+
+def test_internal_notifications_switch_blocks_operator_email(monkeypatch):
+    monkeypatch.setenv("ENABLE_INTERNAL_NOTIFICATIONS", "false")
+    db = FakeLedgerDB()
+    with pytest.raises(DispatchHalted):
+        _dispatch(db, kind="operator_email", lead=None)
+
+
+def test_killswitch_is_catchable_as_dispatch_blocked(monkeypatch):
+    """Bestaande callers vangen DispatchBlocked — DispatchHalted valt daaronder."""
+    monkeypatch.setenv("ENABLE_PROSPECT_SENDS", "false")
+    db = FakeLedgerDB()
+    with pytest.raises(DispatchBlocked):
+        _dispatch(db)
 
 
 # ── Input-validatie ─────────────────────────────────────────────────────────

@@ -30,6 +30,13 @@ Key-conventies per pad (deterministisch uit de send-intentie):
     herzendbaar; accidentele dubbele dispatch = zelfde key = geblokkeerd)
   - operator-email:      briefing:{workspace}:{date} / alert:record-only
 
+Master-kill-switch (WP-A stap 7): élk prospect-kind wordt hier centraal
+gegate't op ENABLE_PROSPECT_SENDS (fallback: de legacy
+ENABLE_CAMPAIGN_SENDS, die vóór WP-A alleen /campaigns/launch dekte —
+audit v2 P0-4). operator_email heeft een eigen switch
+(ENABLE_INTERNAL_NOTIFICATIONS, default aan) zodat een campagne-stop
+geen interne alerts dempt.
+
 Degradatie-gedrag (Werkpakket A, Besluit 3 — GEWIJZIGD t.o.v. Sprint 2):
 prospect-gerichte kinds falen CLOSED als de ledger onbeschikbaar is —
 geen reservering = geen send (DispatchLedgerUnavailable). Alleen
@@ -75,8 +82,36 @@ def _inflight_stale_minutes() -> int:
         return 15
 
 
+def _prospect_sends_enabled() -> bool:
+    """Centrale master-kill-switch voor prospect-gerichte sends (WP-A stap 7).
+
+    ENABLE_PROSPECT_SENDS is leidend; ontbreekt die, dan geldt de legacy
+    ENABLE_CAMPAIGN_SENDS (die vóór WP-A alleen /campaigns/launch gate'te —
+    audit v2 P0-4). Fail-closed: default false, en elke niet-"true"-waarde
+    (typefout incluis) blokkeert.
+    """
+    value = os.getenv("ENABLE_PROSPECT_SENDS")
+    if value is None:
+        value = os.getenv("ENABLE_CAMPAIGN_SENDS", "false")
+    return value.strip().lower() == "true"
+
+
+def _internal_notifications_enabled() -> bool:
+    """Aparte switch voor operator_email (briefings/alerts): een campagne-stop
+    mag kritieke interne meldingen niet dempen. Default aan."""
+    return os.getenv("ENABLE_INTERNAL_NOTIFICATIONS", "true").strip().lower() == "true"
+
+
 class DispatchBlocked(Exception):
     """Side-effect geweigerd door de dispatcher (compliance). Bevat de reden."""
+
+
+class DispatchHalted(DispatchBlocked):
+    """Side-effect geweigerd door de master-kill-switch (geen compliance-fout).
+
+    Subclass van DispatchBlocked zodat bestaande callers de block-afhandeling
+    hergebruiken: geen send, nette reden, geen kale 500.
+    """
 
 
 class DispatchLedgerUnavailable(DispatchBlocked):
@@ -384,6 +419,32 @@ async def dispatch_outbound(
             workspace_id=workspace_id, actor=actor, lead_id=lead_id,
             lead_count=lead_count, reason=reason,
         )
+
+    # 0. Master-kill-switch — absoluut en centraal (WP-A stap 7): élk
+    #    prospect-pad (launch, follow-up, ad-hoc push, review-mail) stopt
+    #    hier, niet alleen /campaigns/launch. Interne meldingen hebben een
+    #    eigen switch zodat een campagne-stop geen alerts dempt.
+    if kind in PROSPECT_KINDS and not _prospect_sends_enabled():
+        detail = ("prospect-sends staan uit "
+                  "(ENABLE_PROSPECT_SENDS/ENABLE_CAMPAIGN_SENDS != true)")
+        _append_record(
+            supabase_client,
+            workspace_id=workspace_id, idempotency_key=idempotency_key,
+            kind=kind, status="blocked_killswitch", actor=actor,
+            lead_id=lead_id, lead_ids=lead_ids, error=detail, metadata=metadata,
+        )
+        _decide("blocked_killswitch", detail)
+        raise DispatchHalted(detail)
+    if kind == "operator_email" and not _internal_notifications_enabled():
+        detail = "interne meldingen staan uit (ENABLE_INTERNAL_NOTIFICATIONS=false)"
+        _append_record(
+            supabase_client,
+            workspace_id=workspace_id, idempotency_key=idempotency_key,
+            kind=kind, status="blocked_killswitch", actor=actor,
+            lead_id=lead_id, lead_ids=lead_ids, error=detail, metadata=metadata,
+        )
+        _decide("blocked_killswitch", detail)
+        raise DispatchHalted(detail)
 
     # 1. Compliance — laatste vangnet. Hoort nooit te triggeren (callers
     #    gaten al); als het triggert is er een gat en is dít de muur.
