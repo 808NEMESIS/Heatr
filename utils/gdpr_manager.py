@@ -21,7 +21,24 @@ logger = logging.getLogger(__name__)
 
 # Fields replaced with anonymized placeholder on forget
 _REDACTED = "VERWIJDERD"
-_REDACTED_EMAIL = "verwijderd@anoniem.nl"
+# Legacy gedeelde placeholder (pre fase-2). Bewaard voor herkenning van oude
+# rijen; NIET meer gebruikt voor nieuwe forgets — met de unique index op
+# (workspace_id, lower(email)) uit migratie 021 botste de TWEEDE forget in
+# een workspace op de constraint, werd de fout geslikt en bleef de echte
+# PII staan terwijl de functie succes rapporteerde (audit v2, Art.17-fout).
+_LEGACY_REDACTED_EMAIL = "verwijderd@anoniem.nl"
+
+
+def _redacted_email(lead_id: str) -> str:
+    """Per-lead-unieke, niet-herleidbare placeholder.
+
+    - uniek per lead (volledige UUID) → geen unique-index-collision;
+    - afgeleid van lead_id, niet van het originele adres → niet herleidbaar;
+    - @anoniem.invalid (RFC 2606-gereserveerd TLD) → nooit afleverbaar;
+    - stabiel per lead → een forget-retry schrijft dezelfde waarde
+      (idempotent, geen nieuwe collision).
+    """
+    return f"verwijderd+{lead_id}@anoniem.invalid"
 
 
 async def forget_lead(
@@ -29,27 +46,35 @@ async def forget_lead(
     workspace_id: str,
     supabase_client,
     performed_by: str = "user",
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """
     Permanently remove all personal data for a lead.
     Retains anonymised statistical record for analytics.
 
-    Steps (all or nothing — errors are logged but don't abort):
+    Steps:
     1. Capture email for GDPR audit trail before deletion
-    2. Anonymise leads table (replace PII fields)
+    2. Anonymise leads table (replace PII fields, per-lead-unieke placeholder)
+       — KRITIEK: faalt dit of matcht het 0 rijen, dan is ok=False en wordt
+       status NIET als 'forgotten' gerapporteerd (fase 2-fix: de oude code
+       slikte de fout en rapporteerde succes terwijl de PII bleef staan)
     3. Delete all enrichment_data rows
     4. Delete screenshot from Supabase Storage
     5. Anonymise lead_timeline body/title (strip emails/names)
     6. Delete from lead_campaign_history
     7. Cancel open crm_tasks
-    8. Mark lead status='forgotten'
+    8. Delete reply_inbox messages
     9. Log to gdpr_log
 
+    Elke stap-fout belandt in `errors`; ok=True ALLEEN als alle stappen
+    slaagden. Een retry is idempotent (placeholder is stabiel per lead).
+
     Returns:
-        { "deleted_records": int, "anonymized_records": int }
+        { "ok": bool, "deleted_records": int, "anonymized_records": int,
+          "errors": list[str] }
     """
     deleted = 0
     anonymized = 0
+    errors: list[str] = []
 
     # Step 1: get email before wiping
     lead_email: str | None = None
@@ -60,10 +85,13 @@ async def forget_lead(
     except Exception as e:
         logger.warning("forget_lead: could not read lead email: %s", e)
 
-    # Step 2: anonymise leads row
+    # Step 2: anonymise leads row — de kritieke stap. Per-lead-unieke
+    # placeholder (zie _redacted_email) i.p.v. één gedeeld adres, zodat de
+    # unique index (workspace_id, lower(email)) nooit de anonimisering van
+    # de tweede vergeten lead blokkeert.
     try:
-        supabase_client.table("leads").update({
-            "email": _REDACTED_EMAIL,
+        res = supabase_client.table("leads").update({
+            "email": _redacted_email(lead_id),
             "contact_first_name": _REDACTED,
             "contact_last_name": None,
             "phone": None,
@@ -72,8 +100,14 @@ async def forget_lead(
             "company_summary": None,
             "status": "forgotten",
         }).eq("id", lead_id).eq("workspace_id", workspace_id).execute()
-        anonymized += 1
+        if res.data:
+            anonymized += 1
+        else:
+            errors.append("leads_anonymize: 0 rijen gematcht (verkeerde lead_id/workspace?)")
+            logger.error("forget_lead: leads anonymize matchte 0 rijen (lead=%s ws=%s)",
+                         lead_id, workspace_id)
     except Exception as e:
+        errors.append(f"leads_anonymize: {e}")
         logger.error("forget_lead: leads anonymize failed: %s", e)
 
     # Step 3: delete enrichment_data
@@ -81,6 +115,7 @@ async def forget_lead(
         res = supabase_client.table("enrichment_data").delete().eq("lead_id", lead_id).execute()
         deleted += len(res.data or [])
     except Exception as e:
+        errors.append(f"enrichment_data_delete: {e}")
         logger.warning("forget_lead: enrichment_data delete failed: %s", e)
 
     # Step 4: delete screenshot from Storage
@@ -105,6 +140,7 @@ async def forget_lead(
             ).eq("id", row["id"]).execute()
             anonymized += 1
     except Exception as e:
+        errors.append(f"timeline_anonymize: {e}")
         logger.warning("forget_lead: timeline anonymize failed: %s", e)
 
     # Step 6: delete campaign history
@@ -112,6 +148,7 @@ async def forget_lead(
         res = supabase_client.table("lead_campaign_history").delete().eq("lead_id", lead_id).execute()
         deleted += len(res.data or [])
     except Exception as e:
+        errors.append(f"campaign_history_delete: {e}")
         logger.warning("forget_lead: campaign_history delete failed: %s", e)
 
     # Step 7: cancel open tasks
@@ -119,6 +156,7 @@ async def forget_lead(
         supabase_client.table("crm_tasks").update({"status": "cancelled"}).eq(
             "lead_id", lead_id).eq("status", "open").execute()
     except Exception as e:
+        errors.append(f"task_cancellation: {e}")
         logger.warning("forget_lead: task cancellation failed: %s", e)
 
     # Step 8: delete reply_inbox messages
@@ -126,6 +164,7 @@ async def forget_lead(
         res = supabase_client.table("reply_inbox").delete().eq("lead_id", lead_id).execute()
         deleted += len(res.data or [])
     except Exception as e:
+        errors.append(f"reply_inbox_delete: {e}")
         logger.warning("forget_lead: reply_inbox delete failed: %s", e)
 
     # Step 9: log to gdpr_log
@@ -139,10 +178,18 @@ async def forget_lead(
             "performed_by": performed_by,
         }).execute()
     except Exception as e:
+        errors.append(f"gdpr_log_write: {e}")
         logger.error("forget_lead: gdpr_log write failed: %s", e)
 
-    logger.info("forget_lead: lead %s anonymized. deleted=%d anonymized=%d", lead_id, deleted, anonymized)
-    return {"deleted_records": deleted, "anonymized_records": anonymized}
+    ok = not errors
+    if ok:
+        logger.info("forget_lead: lead %s anonymized. deleted=%d anonymized=%d",
+                    lead_id, deleted, anonymized)
+    else:
+        logger.error("forget_lead: lead %s ONVOLLEDIG vergeten — %d fout(en): %s",
+                     lead_id, len(errors), "; ".join(errors)[:500])
+    return {"ok": ok, "deleted_records": deleted,
+            "anonymized_records": anonymized, "errors": errors}
 
 
 async def export_lead_data(lead_id: str, supabase_client) -> dict[str, Any]:

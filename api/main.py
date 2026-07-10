@@ -3734,6 +3734,15 @@ async def gdpr_forget(
         supabase_client=db,
         performed_by="api",
     )
+    if not result.get("ok"):
+        # Fase 2-fix: een onvolledige erasure mag NOOIT als succes terugkomen
+        # (Art. 17). De caller ziet exact welke stap faalde en kan retryen —
+        # forget_lead is idempotent.
+        raise HTTPException(status_code=500, detail={
+            "error": "forget_incomplete",
+            **result,
+            "hint": "Retry is veilig (idempotent); los eerst de gerapporteerde stap-fout op.",
+        })
     return result
 
 
