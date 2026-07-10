@@ -45,10 +45,30 @@ class TestWorkspaceMismatch:
         monkeypatch.setenv("WARMR_API_KEY", "key")
 
         job = {"id": "job-1", "lead_id": "lead-1", "workspace_id": "other-ws"}
+        db = MagicMock()
         with patch.object(eq, "claim_next_enrichment_job", new=AsyncMock(return_value=job)):
-            result = await eq.process_next_enrichment("aerys", MagicMock())
+            result = await eq.process_next_enrichment("aerys", db)
         assert result["processed"] is False
         assert result["error"] == "workspace_mismatch"
+        # Fase 4 PR 13: het vangnet laat de job niet meer stranden in
+        # 'running' — hij wordt teruggezet naar pending.
+        db.table.assert_any_call("enrichment_jobs")
+        update_calls = [c for c in db.table.return_value.update.call_args_list
+                        if c.args and c.args[0].get("status") == "pending"]
+        assert update_calls, "job niet teruggezet naar pending (strand-fix)"
+
+    @pytest.mark.asyncio
+    async def test_claim_is_workspace_scoped(self, monkeypatch):
+        """Fase 4 PR 13 (audit v2 scenario 10): de claim filtert op de eigen
+        workspace — cross-tenant job-steal is structureel onmogelijk."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setenv("WARMR_API_URL", "https://example.test")
+        monkeypatch.setenv("WARMR_API_KEY", "key")
+        claim = AsyncMock(return_value=None)
+        with patch.object(eq, "claim_next_enrichment_job", new=claim):
+            await eq.process_next_enrichment("aerys", MagicMock())
+        claim.assert_awaited_once()
+        assert claim.await_args.kwargs.get("workspace_id") == "aerys"
 
 
 # ==============================================================================

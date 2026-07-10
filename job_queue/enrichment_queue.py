@@ -164,6 +164,7 @@ async def queue_all_unenriched_leads(
 
 async def claim_next_enrichment_job(
     supabase_client: Any,
+    workspace_id: str | None = None,
 ) -> dict | None:
     """Atomically claim the next pending enrichment job.
 
@@ -172,15 +173,25 @@ async def claim_next_enrichment_job(
 
     Args:
         supabase_client: Supabase client.
+        workspace_id: Fase 4 PR 13 (audit v2 P1-1/scenario 10): filter de
+            claim op de eigen workspace. Zonder filter kon een per-workspace
+            n8n-worker andermans job claimen (status->running flippen) en
+            hem bij de post-hoc check gestrand in 'running' achterlaten tot
+            de reaper. None = globale claim (single-tenant daemon).
 
     Returns:
         Full job row dict if claimed, None if no pending jobs.
     """
     try:
-        response = (
+        q = (
             supabase_client.table("enrichment_jobs")
             .select("*")
             .eq("status", "pending")
+        )
+        if workspace_id:
+            q = q.eq("workspace_id", workspace_id)
+        response = (
+            q
             .order("priority", desc=False)
             .order("created_at", desc=False)
             .limit(1)
@@ -585,7 +596,7 @@ async def _run_step(
         # Stap 2: rich Claude classifier voor cosmetische sector waar we page_text hebben
         if sector == "cosmetische_behandelaars":
             domain = await _get_lead_field(lead_id, "domain", supabase_client)
-            page_text = await _get_page_text_for_lead(lead_id, supabase_client) or ""
+            page_text = await _get_page_text_for_lead(lead_id, supabase_client, workspace_id=workspace_id) or ""
             if domain and page_text:
                 from enrichment.treatment_classifier import classify_treatment_focus
                 focus = await classify_treatment_focus(
@@ -1104,6 +1115,7 @@ async def _get_lead_field(
 async def _get_page_text_for_lead(
     lead_id: str,
     supabase_client: Any,
+    workspace_id: str | None = None,
 ) -> str | None:
     """Return concatenated page text for a lead's website, or None.
 
@@ -1161,13 +1173,16 @@ async def _get_page_text_for_lead(
         return None
 
     try:
-        cr = (
+        # Fase 4 PR 13 (audit v2 P1-1): workspace-filter — twee tenants die
+        # hetzelfde kliniek-domein scrapen deelden elkaars page-text.
+        cr_q = (
             supabase_client.table("companies_raw")
             .select("description, scraped_text")
             .eq("domain", domain)
-            .limit(1)
-            .execute()
         )
+        if workspace_id:
+            cr_q = cr_q.eq("workspace_id", workspace_id)
+        cr = cr_q.limit(1).execute()
         rows = cr.data or []
         if rows:
             parts = [rows[0].get("description") or "", rows[0].get("scraped_text") or ""]
@@ -1221,7 +1236,9 @@ async def process_next_enrichment(
         or {"processed": False, "error": "..."} on failure
     """
     try:
-        job = await claim_next_enrichment_job(supabase_client)
+        # Fase 4 PR 13: claim direct op de eigen workspace — cross-tenant
+        # claims zijn daarmee structureel onmogelijk.
+        job = await claim_next_enrichment_job(supabase_client, workspace_id=workspace_id)
     except Exception as e:
         logger.error("process_next_enrichment: claim failed: %s", e)
         return {"processed": False, "error": f"claim_failed: {str(e)[:100]}"}
@@ -1229,13 +1246,23 @@ async def process_next_enrichment(
     if job is None:
         return None
 
-    # Safety: verify workspace_id matches (claim_next_enrichment_job does not filter on it)
+    # Vangnet (hoort nooit te triggeren nu de claim filtert). Fase 4 PR 13:
+    # reset de job naar 'pending' i.p.v. hem gestrand in 'running' achter te
+    # laten tot de 30-min-reaper (audit v2 scenario 10).
     if job.get("workspace_id") and job["workspace_id"] != workspace_id:
-        logger.warning(
+        logger.error(
             "process_next_enrichment: claimed job from different workspace "
-            "(got %s, expected %s) — skipping",
+            "(got %s, expected %s) — VANGNET actief ondanks claim-filter; "
+            "job teruggezet naar pending.",
             job.get("workspace_id"), workspace_id,
         )
+        try:
+            supabase_client.table("enrichment_jobs").update({
+                "status": "pending", "started_at": None,
+            }).eq("id", job["id"]).eq("status", "running").execute()
+        except Exception as e:
+            logger.error("process_next_enrichment: reset naar pending faalde (job=%s): %s",
+                         job.get("id"), e)
         return {"processed": False, "error": "workspace_mismatch"}
 
     try:

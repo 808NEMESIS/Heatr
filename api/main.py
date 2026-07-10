@@ -3324,7 +3324,8 @@ async def warmr_webhook(
 
         # Route events to appropriate handlers
         if event_type in ("interested", "lead.interested"):
-            db.table("leads").update({"crm_stage": "gereageerd"}).eq("id", heatr_lead_id).execute()
+            db.table("leads").update({"crm_stage": "gereageerd"}).eq(
+                "id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "reply_received",
@@ -3332,7 +3333,8 @@ async def warmr_webhook(
             )
 
         elif event_type in ("replied", "lead.replied"):
-            db.table("leads").update({"crm_stage": "beantwoord"}).eq("id", heatr_lead_id).execute()
+            db.table("leads").update({"crm_stage": "beantwoord"}).eq(
+                "id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "reply_received",
@@ -3714,8 +3716,11 @@ async def create_deal(
     res = db.table("crm_deals").insert(row).execute()
     deal = res.data[0]
 
-    # Mark lead as gewonnen
-    db.table("leads").update({"crm_stage": "gewonnen"}).eq("id", body.lead_id).execute()
+    # Mark lead as gewonnen — workspace-scoped (fase 4 PR 13, audit v2 P1-1:
+    # dit was een id-only mutatie waarmee een caller met andermans lead-UUID
+    # die lead op 'gewonnen' kon zetten).
+    db.table("leads").update({"crm_stage": "gewonnen"}).eq(
+        "id", body.lead_id).eq("workspace_id", workspace_id).execute()
     _insert_timeline_event(
         db, workspace_id, body.lead_id, "deal_won",
         f"Deal gewonnen: € {body.value:,.0f}",
