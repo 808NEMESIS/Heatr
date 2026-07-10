@@ -11,8 +11,9 @@
 1. **Eerst** in de Supabase SQL-editor, in deze volgorde:
    - migratie **022** (ledger-UNIQUE; sectie A moet 0 rijen geven),
    - migratie **023** (email_status-CHECK-fix — de huidige CHECK wijst de bounce/unsub-webhook-writes af),
-   - migratie **024** (suppressions-tabel — de dispatcher is er fail-closed op).
-2. **Daarna** de code deployen (commits `a4623af` + `869de08` + `e8fe878` + `8767c5a` + `8b6128a`).
+   - migratie **024** (suppressions-tabel — de dispatcher is er fail-closed op),
+   - migratie **025** (tracking-enrollments: send_owner-kolom + UNIQUE — launch is er fail-closed op).
+2. **Daarna** de code deployen (commits `a4623af` + `869de08` + `e8fe878` + `8767c5a` + `8b6128a` + `897ad74` + `6557393`).
 3. **Env-check vóór restart:** staat `ENABLE_CAMPAIGN_SENDS=true` in de productie-`.env`? Dan blijft alles versturen zoals nu (de nieuwe `ENABLE_PROSPECT_SENDS` valt daarop terug). Staat hij op `false`, dan blokkeert de dispatcher vanaf deploy **álle** prospect-sends — dat is de bedoelde master-switch-semantiek, maar verifieer dat dit gewenst is.
 
 Andersom deployen (code vóór migraties) is fail-closed maar disruptief: elke prospect-send krijgt `DispatchLedgerUnavailable` tot de tabellen bestaan… wat nog steeds veiliger is dan het oude fail-open.
@@ -28,6 +29,12 @@ Andersom deployen (code vóór migraties) is fail-closed maar disruptief: elke p
   WHERE normalized_email = '<adres>' AND revoked_at IS NULL;
   ```
   Nooit rijen deleten (append-only). Let op: revoke heft alleen de platformlijst op; de per-lead `status`/`email_status` blijft staan en blokkeert mogelijk nog via `compliance_check`.
+
+### Fase 3 — tracking-enrollments (ADR-001, 2026-07-10)
+- **Besluit (docs/adr/ADR-001):** Warmr dript; Heatr trackt. Launch en `/leads/send-to-warmr` schrijven per gepushte lead een `lead_campaign_history`-rij met `send_owner='warmr'`, `status='active'` — **nooit `'pending'`**. `get_due_sends` selecteert uitsluitend `send_owner='heatr'`; dat is de harde grens tegen dubbele drip.
+- **Launch blokkeert nu echt dubbele campagnes:** leads met een `is_active=true`-enrollment worden geweigerd (óók onder een andere campagnenaam), en na afronding geldt de 90-dagen-cooldown (anker = `sent_at`, gezet bij closure). Fail-closed: is `lead_campaign_history` niet leesbaar, dan weigert launch (503).
+- **Webhook sluit enrollments:** reply/bounce/unsubscribe/`campaign.completed` → `is_active=false` + terminale status, gescoped op `campaign_id` (indien in payload) en met terminal-guard (een `no_response` overschrijft nooit `replied`). 
+- **Incident "lead onterecht geblokkeerd als in-actieve-campagne":** check `SELECT * FROM heatr_lead_campaign_history WHERE lead_id='<id>' AND is_active=true;` — hoort na `campaign.completed` leeg te zijn. Blijft een rij hangen (webhook gemist), sluit handmatig: `UPDATE heatr_lead_campaign_history SET is_active=false, status='no_response', stopped_at=now(), sent_at=COALESCE(sent_at, now()) WHERE id='<rij>';`
 
 ## 2. Wat is er veranderd (operator-samenvatting)
 
