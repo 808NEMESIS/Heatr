@@ -824,11 +824,11 @@ async def control_outbound_ledger(
     workspace_id: str = Depends(get_workspace),
     db: Client = Depends(get_supabase),
 ) -> dict:
-    """Control Plane: het append-only outbound-ledger (heatr_outbound_log).
+    """Control Plane: het outbound-ledger (heatr_outbound_log).
 
-    Elke side-effect-poging — completed, failed, blocked_compliance,
-    skipped_duplicate — via de dispatcher. Leeg + warning zolang
-    migratie 020 niet gedraaid is.
+    Elke side-effect-poging — in_flight, completed, failed_retryable,
+    failed_terminal, blocked_compliance, skipped_duplicate — via de
+    dispatcher (reserveringsmodel sinds migratie 022 / WP-A).
     """
     try:
         q = (
@@ -845,7 +845,12 @@ async def control_outbound_ledger(
     except Exception as e:
         return {
             "records": [], "count": 0,
-            "warning": f"outbound_log niet leesbaar ({type(e).__name__}) — is migratie 020 gedraaid?",
+            "warning": (
+                f"outbound_log niet leesbaar ({type(e).__name__}) — ledger "
+                "onbeschikbaar; prospect-sends zijn fail-closed geblokkeerd. "
+                "Controleer migratie 020/022 en de outbound_log-registratie "
+                "in config/database.py (zie runbook outbound_safety)."
+            ),
         }
 
 

@@ -41,6 +41,11 @@ _HEATR_TABLES = {
     "campaigns",
     # Import idempotency (migration 016)
     "import_runs",
+    # Outbound side-effect-ledger + idempotency (migration 020 + 022).
+    # KRITIEK: ontbrak hier tot 2026-07-10, waardoor de dispatcher naar de
+    # ongeprefixte (niet-bestaande) tabel schreef en idempotency fail-open
+    # was op elk send-pad (audit v2, P0-1).
+    "outbound_log",
 }
 
 

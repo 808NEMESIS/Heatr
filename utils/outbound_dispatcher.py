@@ -1,6 +1,7 @@
 """
 utils/outbound_dispatcher.py — de verplichte doorgang voor outbound
-side-effects (Sprint 2 Control Plane, invarianten I3 + I6 + I7).
+side-effects (Sprint 2 Control Plane, invarianten I3 + I6 + I7;
+aangescherpt in Werkpakket A "Outbound Safety Foundation", 2026-07-10).
 
 Waarom één doorgang: de Sprint 1-audit vond 9 egress-paden met per-pad
 geregelde gates. De compliance-gate is sindsdien gedeeld (I1), maar
@@ -9,9 +10,15 @@ ontbraken. De dispatcher is het ene punt waar:
 
   1. compliance als LAATSTE vangnet wordt afgedwongen (I1, defense in
      depth — callers gaten al, de dispatcher garandeert);
-  2. de idempotency-key wordt afgedwongen (I6) — één keuzepunt i.p.v. 9;
-  3. elke poging append-only wordt weggeschreven in heatr_outbound_log,
-     óók geblokkeerde en geskipte pogingen (I7-fundament).
+  2. de idempotency-key wordt afgedwongen (I6) via een ATOMISCHE
+     in_flight-reservering: de INSERT op heatr_outbound_log is de
+     eigenaarstoewijzing, gedekt door de partial-UNIQUE-index
+     uq_outbound_log_active_key (migratie 022). Wie de insert wint mag
+     versturen; wie een unique-conflict krijgt, verstuurt NIET;
+  3. elke poging in heatr_outbound_log belandt, óók geblokkeerde en
+     geskipte pogingen (I7-fundament). De reserveringsrij wordt in-place
+     gefinaliseerd (in_flight → completed | failed_retryable |
+     failed_terminal); alle overige rijen zijn append-only.
 
 Key-conventies per pad (deterministisch uit de send-intentie):
   - send-to-warmr bulk:  warmr-bulk:{campaign_id}:{sha1(sorted lead_ids)}
@@ -23,18 +30,29 @@ Key-conventies per pad (deterministisch uit de send-intentie):
     herzendbaar; accidentele dubbele dispatch = zelfde key = geblokkeerd)
   - operator-email:      briefing:{workspace}:{date} / alert:record-only
 
-Degradatie-gedrag: als heatr_outbound_log nog niet bestaat (migratie 020
-niet gedraaid) faalt de dispatcher OPEN met een luide error-log —
-compliance blijft afgedwongen (in-memory), idempotency en ledger niet.
-Bewuste keuze: pre-migratie alle sends bricken is erger dan tijdelijk
-zonder dedup draaien; de log maakt de degradatie zichtbaar.
+Degradatie-gedrag (Werkpakket A, Besluit 3 — GEWIJZIGD t.o.v. Sprint 2):
+prospect-gerichte kinds falen CLOSED als de ledger onbeschikbaar is —
+geen reservering = geen send (DispatchLedgerUnavailable). Alleen
+operator_email faalt zacht (een gemiste interne melding is erger dan
+een dubbele). De oude fail-open-keuze verborg precies de bug die hem
+motiveerde: de ledger-writes faalden maandenlang stil door een
+tabelnaam-prefix-fout, en elke send draaide zonder dedup.
+
+Residueel risico (gedocumenteerd, buiten scope WP-A): een Warmr-timeout
+ná acceptatie finaliseert de rij als failed_retryable terwijl de mail
+mogelijk wél bezorgd wordt; een retry kan dan dubbel bezorgen. De
+definitieve fix is een Idempotency-Key-header richting Warmr
+(actieplan fase 3+). metadata.external_state_unknown markeert deze
+gevallen voor de runbook-check.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from utils.enrichment_check import compliance_check
@@ -42,10 +60,32 @@ from utils.enrichment_check import compliance_check
 logger = logging.getLogger(__name__)
 
 VALID_KINDS = ("warmr_push", "warmr_bulk_push", "warmr_campaign_create", "operator_email")
+# Kinds die een prospect kunnen bereiken → fail-closed + (commit 3) kill-switch.
+PROSPECT_KINDS = ("warmr_push", "warmr_bulk_push", "warmr_campaign_create")
+# Statussen die meetellen in de partial-UNIQUE (migratie 022): één actieve
+# eigenaar per key. failed_* valt erbuiten zodat een retry opnieuw kan reserveren.
+_ACTIVE_STATUSES = ("in_flight", "completed")
+
+
+def _inflight_stale_minutes() -> int:
+    """Na hoeveel minuten een in_flight-reservering als gecrasht geldt."""
+    try:
+        return max(1, int(os.getenv("OUTBOUND_INFLIGHT_STALE_MINUTES", "15")))
+    except ValueError:
+        return 15
 
 
 class DispatchBlocked(Exception):
     """Side-effect geweigerd door de dispatcher (compliance). Bevat de reden."""
+
+
+class DispatchLedgerUnavailable(DispatchBlocked):
+    """Ledger onbeschikbaar bij een prospect-send → fail-closed (Besluit 3).
+
+    Subclass van DispatchBlocked zodat bestaande callers (sequence_engine,
+    endpoints) de block-afhandeling hergebruiken: geen send, wel een nette
+    reden i.p.v. een kale 500.
+    """
 
 
 def ids_hash(lead_ids: list[str]) -> str:
@@ -58,8 +98,48 @@ class DispatchResult:
     executed: bool
     skipped_duplicate: bool = False
     result: Any = None
-    previous: dict | None = None  # het eerdere completed-record bij een skip
+    previous: dict | None = None  # het eerdere actieve record bij een skip
     record_ids: list[str] = field(default_factory=list)
+
+
+def _log_decision(*, decision: str, kind: str, idempotency_key: str,
+                  workspace_id: str, actor: str, lead_id: str | None,
+                  lead_count: int, reason: str | None = None) -> None:
+    """Structured decision-log (actieplan §4.2): key=value, geen mailinhoud/PII.
+
+    Dit is de metrics-bron voor de runbook-queries (outbound_dispatch_total
+    per decision) zolang er geen Prometheus is.
+    """
+    logger.info(
+        "outbound_dispatch decision=%s kind=%s key=%s workspace_id=%s actor=%s "
+        "lead_id=%s lead_count=%d reason=%s",
+        decision, kind, idempotency_key, workspace_id, actor,
+        lead_id or "-", lead_count, (reason or "-")[:300],
+    )
+
+
+def _serialize_result(result: Any) -> Any:
+    try:
+        return json.loads(json.dumps(result, default=str))
+    except (TypeError, ValueError):
+        return {"repr": repr(result)[:500]}
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    """Postgres 23505 via PostgREST/supabase-py — meerdere verschijningsvormen."""
+    if getattr(exc, "code", None) == "23505":
+        return True
+    text = str(exc)
+    return "23505" in text or "duplicate key" in text.lower()
+
+
+def _classify_failure(exc: Exception) -> str:
+    """failed_terminal bij een definitieve 4xx (fout in de request zelf);
+    failed_retryable bij netwerk/timeout/5xx/onbekend. 408/429 zijn retrybaar."""
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int) and 400 <= status_code < 500 and status_code not in (408, 429):
+        return "failed_terminal"
+    return "failed_retryable"
 
 
 def _append_record(
@@ -76,7 +156,10 @@ def _append_record(
     error: str | None = None,
     metadata: dict | None = None,
 ) -> str | None:
-    """Append-only write naar heatr_outbound_log. Faalt zacht met luide log."""
+    """Append-only write van een informatieve rij (blocked_*, skipped_*,
+    record-only completed). Faalt zacht met luide log — deze rijen zijn
+    audit-informatie, geen eigenaarstoewijzing; de reservering (fail-closed
+    voor prospect-kinds) loopt via _reserve()."""
     row = {
         "workspace_id": workspace_id,
         "idempotency_key": idempotency_key,
@@ -89,43 +172,160 @@ def _append_record(
         "metadata": metadata or {},
     }
     if result is not None:
-        try:
-            row["result"] = json.loads(json.dumps(result, default=str))
-        except (TypeError, ValueError):
-            row["result"] = {"repr": repr(result)[:500]}
+        row["result"] = _serialize_result(result)
     try:
         res = supabase_client.table("outbound_log").insert(row).execute()
         return (res.data or [{}])[0].get("id")
     except Exception as e:
         logger.error(
             "outbound_dispatcher: LEDGER-WRITE MISLUKT (key=%s status=%s): %s — "
-            "is migratie 020 gedraaid? Ledger/idempotency zijn NIET actief.",
+            "audit-rij verloren; controleer migratie 020/022 en de "
+            "outbound_log-prefixregistratie in config/database.py.",
             idempotency_key, status, e,
         )
         return None
 
 
-def _find_completed(supabase_client: Any, workspace_id: str, idempotency_key: str) -> dict | None:
-    """Zoek een eerder completed record voor deze key. None bij tabel-afwezig."""
+def _find_active(supabase_client: Any, workspace_id: str, idempotency_key: str) -> dict | None:
+    """Zoek het actieve record (in_flight/completed) voor deze key.
+
+    Raises bij een ledger-leesfout — de caller beslist fail-closed/soft.
+    """
+    res = (
+        supabase_client.table("outbound_log")
+        .select("id, status, result, created_at, actor")
+        .eq("workspace_id", workspace_id)
+        .eq("idempotency_key", idempotency_key)
+        .in_("status", list(_ACTIVE_STATUSES))
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+def _is_stale_inflight(record: dict) -> bool:
+    """True als een in_flight-reservering ouder is dan de stale-TTL (worker
+    gecrasht tussen reservering en finalisatie)."""
+    if record.get("status") != "in_flight":
+        return False
+    raw = record.get("created_at") or ""
+    try:
+        created = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - created > timedelta(minutes=_inflight_stale_minutes())
+
+
+def _reserve(
+    supabase_client: Any,
+    *,
+    workspace_id: str,
+    idempotency_key: str,
+    kind: str,
+    actor: str,
+    lead_id: str | None,
+    lead_ids: list[str] | None,
+    metadata: dict | None,
+) -> tuple[str | None, dict | None]:
+    """Atomische eigenaarstoewijzing: INSERT in_flight, gedekt door de
+    partial-UNIQUE (migratie 022).
+
+    Returns:
+        (reservation_id, None)  — wij zijn eigenaar, verstuur.
+        (None, existing_row)    — een ander actief record bestaat, verstuur NIET.
+
+    Raises:
+        Exception — ledger onbeschikbaar (géén unique-conflict); de caller
+        beslist fail-closed (prospect) of fail-soft (operator).
+    """
+    row = {
+        "workspace_id": workspace_id,
+        "idempotency_key": idempotency_key,
+        "kind": kind,
+        "status": "in_flight",
+        "actor": actor,
+        "lead_id": lead_id,
+        "lead_ids": lead_ids,
+        "metadata": metadata or {},
+    }
+    try:
+        res = supabase_client.table("outbound_log").insert(row).execute()
+        rec_id = (res.data or [{}])[0].get("id")
+        if not rec_id:
+            raise RuntimeError("reservering-insert gaf geen record-id terug")
+        return rec_id, None
+    except Exception as e:
+        if not _is_unique_violation(e):
+            raise
+    # Unique-conflict: er bestaat al een actief record voor deze key.
+    existing = _find_active(supabase_client, workspace_id, idempotency_key)
+    return None, (existing or {})
+
+
+def _finalize(
+    supabase_client: Any,
+    *,
+    reservation_id: str,
+    status: str,
+    result: Any = None,
+    error: str | None = None,
+) -> bool:
+    """Finaliseer de reserveringsrij (CAS op status='in_flight'). Faalt zacht
+    met luide log: de send is dan al gebeurd — een raise zou de caller een
+    vals 'niet verstuurd' geven."""
+    update: dict[str, Any] = {"status": status}
+    if result is not None:
+        update["result"] = _serialize_result(result)
+    if error:
+        update["error"] = error[:2000]
     try:
         res = (
             supabase_client.table("outbound_log")
-            .select("id, status, result, created_at, actor")
-            .eq("workspace_id", workspace_id)
-            .eq("idempotency_key", idempotency_key)
-            .eq("status", "completed")
-            .limit(1)
+            .update(update)
+            .eq("id", reservation_id)
+            .eq("status", "in_flight")
             .execute()
         )
-        rows = res.data or []
-        return rows[0] if rows else None
+        if not (res.data or []):
+            logger.error(
+                "outbound_dispatcher: FINALISATIE MISTE de reserveringsrij "
+                "(id=%s → %s) — rij was niet meer in_flight; onderzoek handmatig.",
+                reservation_id, status,
+            )
+            return False
+        return True
     except Exception as e:
         logger.error(
-            "outbound_dispatcher: IDEMPOTENCY-CHECK MISLUKT (key=%s): %s — "
-            "fail-open, dedup NIET afgedwongen. Is migratie 020 gedraaid?",
-            idempotency_key, e,
+            "outbound_dispatcher: FINALISATIE MISLUKT (id=%s → %s): %s — de send "
+            "is WEL uitgevoerd; de in_flight-rij blokkeert deze key tot de "
+            "stale-TTL (%d min). Zie runbook outbound_safety.",
+            reservation_id, status, e, _inflight_stale_minutes(),
         )
-        return None
+        return False
+
+
+def _release_stale(supabase_client: Any, record: dict) -> bool:
+    """Neem een gecrashte in_flight-reservering over: CAS → failed_retryable.
+    Alleen de winnaar van deze CAS mag opnieuw reserveren."""
+    try:
+        res = (
+            supabase_client.table("outbound_log")
+            .update({"status": "failed_retryable",
+                     "error": "stale in_flight-reservering overgenomen (worker-crash?)"})
+            .eq("id", record.get("id"))
+            .eq("status", "in_flight")
+            .execute()
+        )
+        return bool(res.data or [])
+    except Exception as e:
+        logger.error(
+            "outbound_dispatcher: stale-takeover mislukt (id=%s): %s",
+            record.get("id"), e,
+        )
+        return False
 
 
 async def dispatch_outbound(
@@ -149,8 +349,8 @@ async def dispatch_outbound(
             module-docstring voor conventies).
         actor: wie triggert (user:…, service:…, scheduler:…) — audit-spoor.
         send: async callable zonder args die de daadwerkelijke side-effect
-            uitvoert. Wordt ALLEEN aangeroepen als compliance + idempotency
-            groen zijn.
+            uitvoert. Wordt ALLEEN aangeroepen als compliance groen is én de
+            in_flight-reservering gewonnen is.
         lead / leads: compliance-target(s). Prospect-gerichte kinds MOETEN
             er één leveren; operator_email mag zonder.
         enforce_idempotency: False = record-only (gebruikt door alerts,
@@ -159,8 +359,10 @@ async def dispatch_outbound(
     Raises:
         DispatchBlocked: compliance-fail op (één van) de target(s). Het
             geblokkeerde record staat dan al in de ledger.
+        DispatchLedgerUnavailable: ledger onbereikbaar bij een prospect-kind
+            → fail-closed, send NIET uitgevoerd (Besluit 3).
         ValueError: onbekende kind of ontbrekende compliance-target.
-        Exception: de send-exceptie zelf, ná het failed-record.
+        Exception: de send-exceptie zelf, ná finalisatie van de reservering.
     """
     if kind not in VALID_KINDS:
         raise ValueError(f"Onbekende dispatch-kind: {kind!r} (geldig: {VALID_KINDS})")
@@ -174,6 +376,14 @@ async def dispatch_outbound(
 
     lead_id = (lead or {}).get("id") if lead else None
     lead_ids = [l.get("id") for l in (leads or []) if l.get("id")] or None
+    lead_count = len(targets)
+
+    def _decide(decision: str, reason: str | None = None) -> None:
+        _log_decision(
+            decision=decision, kind=kind, idempotency_key=idempotency_key,
+            workspace_id=workspace_id, actor=actor, lead_id=lead_id,
+            lead_count=lead_count, reason=reason,
+        )
 
     # 1. Compliance — laatste vangnet. Hoort nooit te triggeren (callers
     #    gaten al); als het triggert is er een gat en is dít de muur.
@@ -187,50 +397,112 @@ async def dispatch_outbound(
                 kind=kind, status="blocked_compliance", actor=actor,
                 lead_id=lead_id, lead_ids=lead_ids, error=detail, metadata=metadata,
             )
+            _decide("blocked_compliance", detail)
             logger.error(
                 "outbound_dispatcher: COMPLIANCE-BLOCK op dispatcher-niveau "
                 "(key=%s, %s) — caller-gate heeft een gat!", idempotency_key, detail,
             )
             raise DispatchBlocked(detail)
 
-    # 2. Idempotency — één keuzepunt (I6).
+    # 2. Idempotency — atomische in_flight-reservering (I6, migratie 022).
+    reservation_id: str | None = None
     if enforce_idempotency:
-        previous = _find_completed(supabase_client, workspace_id, idempotency_key)
-        if previous:
+        for attempt in (1, 2):  # 2e poging alleen na een stale-takeover
+            try:
+                reservation_id, existing = _reserve(
+                    supabase_client,
+                    workspace_id=workspace_id, idempotency_key=idempotency_key,
+                    kind=kind, actor=actor, lead_id=lead_id, lead_ids=lead_ids,
+                    metadata=metadata,
+                )
+            except Exception as e:
+                if kind in PROSPECT_KINDS:
+                    _decide("ledger_unavailable", str(e))
+                    logger.error(
+                        "outbound_dispatcher: LEDGER ONBESCHIKBAAR (key=%s): %s — "
+                        "prospect-send FAIL-CLOSED geblokkeerd (Besluit 3). "
+                        "Controleer migratie 020/022 + outbound_log-prefix.",
+                        idempotency_key, e,
+                    )
+                    raise DispatchLedgerUnavailable(
+                        f"ledger onbeschikbaar — prospect-send geblokkeerd: {e}"
+                    ) from e
+                # operator_email: fail-soft — melding gaat vóór dedup.
+                _decide("ledger_unavailable_soft", str(e))
+                logger.error(
+                    "outbound_dispatcher: LEDGER ONBESCHIKBAAR (key=%s): %s — "
+                    "operator_email gaat door zonder reservering (fail-soft).",
+                    idempotency_key, e,
+                )
+                break
+
+            if reservation_id:
+                break  # wij zijn eigenaar
+
+            # Conflict met een bestaand actief record.
+            existing = existing or {}
+            if attempt == 1 and _is_stale_inflight(existing):
+                if _release_stale(supabase_client, existing):
+                    continue  # takeover gewonnen → opnieuw reserveren
+                # takeover verloren: een ander is bezig — behandel als skip
+            status_label = existing.get("status") or "onbekend"
             rec = _append_record(
                 supabase_client,
                 workspace_id=workspace_id, idempotency_key=idempotency_key,
                 kind=kind, status="skipped_duplicate", actor=actor,
                 lead_id=lead_id, lead_ids=lead_ids,
-                metadata={**(metadata or {}), "previous_record": previous.get("id"),
-                          "previous_at": previous.get("created_at")},
+                metadata={**(metadata or {}), "previous_record": existing.get("id"),
+                          "previous_status": status_label,
+                          "previous_at": existing.get("created_at")},
             )
+            _decide("skipped_duplicate", f"previous_status={status_label}")
             logger.info(
-                "outbound_dispatcher: duplicate geskipt (key=%s, eerder: %s door %s)",
-                idempotency_key, previous.get("created_at"), previous.get("actor"),
+                "outbound_dispatcher: duplicate geskipt (key=%s, eerder: %s status=%s door %s)",
+                idempotency_key, existing.get("created_at"), status_label,
+                existing.get("actor"),
             )
             return DispatchResult(
                 executed=False, skipped_duplicate=True,
-                previous=previous, record_ids=[r for r in [rec] if r],
+                previous=existing, record_ids=[r for r in [rec] if r],
             )
 
-    # 3. Uitvoeren + append-only vastleggen (I7-fundament).
+    # 3. Uitvoeren + reservering finaliseren (I7-fundament).
     try:
         result = await send()
     except Exception as e:
-        _append_record(
-            supabase_client,
-            workspace_id=workspace_id, idempotency_key=idempotency_key,
-            kind=kind, status="failed", actor=actor,
-            lead_id=lead_id, lead_ids=lead_ids,
-            error=f"{type(e).__name__}: {e}", metadata=metadata,
-        )
+        failure_status = _classify_failure(e)
+        error_text = f"{type(e).__name__}: {e}"
+        fail_meta = dict(metadata or {})
+        if failure_status == "failed_retryable" and getattr(e, "status_code", None) in (None, 0, 408):
+            # Timeout/netwerk: de externe staat is onbekend — Warmr kan de
+            # send WEL geaccepteerd hebben. Runbook-check vóór handmatige retry.
+            fail_meta["external_state_unknown"] = True
+            error_text += " [external_state_unknown]"
+        if reservation_id:
+            _finalize(supabase_client, reservation_id=reservation_id,
+                      status=failure_status, error=error_text)
+        else:
+            _append_record(
+                supabase_client,
+                workspace_id=workspace_id, idempotency_key=idempotency_key,
+                kind=kind, status=failure_status, actor=actor,
+                lead_id=lead_id, lead_ids=lead_ids,
+                error=error_text, metadata=fail_meta,
+            )
+        _decide(failure_status, error_text)
         raise
 
-    rec = _append_record(
-        supabase_client,
-        workspace_id=workspace_id, idempotency_key=idempotency_key,
-        kind=kind, status="completed", actor=actor,
-        lead_id=lead_id, lead_ids=lead_ids, result=result, metadata=metadata,
-    )
-    return DispatchResult(executed=True, result=result, record_ids=[r for r in [rec] if r])
+    if reservation_id:
+        _finalize(supabase_client, reservation_id=reservation_id,
+                  status="completed", result=result)
+        record_ids = [reservation_id]
+    else:
+        rec = _append_record(
+            supabase_client,
+            workspace_id=workspace_id, idempotency_key=idempotency_key,
+            kind=kind, status="completed", actor=actor,
+            lead_id=lead_id, lead_ids=lead_ids, result=result, metadata=metadata,
+        )
+        record_ids = [r for r in [rec] if r]
+    _decide("executed")
+    return DispatchResult(executed=True, result=result, record_ids=record_ids)
