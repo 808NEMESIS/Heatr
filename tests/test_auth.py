@@ -80,7 +80,24 @@ def test_jwt_valid_returns_workspace(jwt_secret):
     assert _jwt_workspace(req) == "tenant-x"
 
 
-def test_jwt_no_workspace_claim_falls_back_to_default(jwt_secret):
+def test_jwt_no_workspace_claim_rejected_fail_closed(jwt_secret, monkeypatch):
+    """OMGEKEERD in fase 4 PR 12 (audit v2 scenario 11): een geldige JWT
+    zonder workspace_id-claim kreeg voorheen stilzwijgend DEFAULT_WORKSPACE
+    en daarmee volledige toegang tot de aerys-data. Nu: geweigerd."""
+    monkeypatch.delenv("HEATR_JWT_WORKSPACE_FALLBACK", raising=False)
+    from api.main import _jwt_workspace
+    token = _jwt.encode(
+        {"sub": "user-id", "aud": "authenticated"},
+        jwt_secret, algorithm="HS256",
+    )
+    req = _make_request({"Authorization": f"Bearer {token}"})
+    assert _jwt_workspace(req) is None
+
+
+def test_jwt_no_claim_allowed_via_explicit_cutover_flag(jwt_secret, monkeypatch):
+    """De oude fallback bestaat alleen nog achter de expliciete flag —
+    voor de frontend-cutover tot de claims geprovisioned zijn."""
+    monkeypatch.setenv("HEATR_JWT_WORKSPACE_FALLBACK", "true")
     from api.main import _jwt_workspace
     token = _jwt.encode(
         {"sub": "user-id", "aud": "authenticated"},

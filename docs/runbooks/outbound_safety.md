@@ -49,6 +49,19 @@ Andersom deployen (code vóór migraties) is fail-closed maar disruptief: elke p
 - **SendingGuard is nu fail-closed:** guard-data onbereikbaar (lch/suppressions niet leesbaar) = prospect-send geblokkeerd met een "Interne fout in SendingGuard"-reden. Dat is bedoeld gedrag — herstel de data-laag, omzeil de guard niet.
 - **Bounce-breaker** telt `heatr_suppressions` type `hard_bounce` (vandaag, per workspace) tegen de pushes van vandaag; drempel `MAX_BOUNCE_RATE` (default 3%, min. 10 sends). De **domein-cap is bewust uitgeschakeld** tot Warmr capacity-events levert — er is geen kolom die hem eerlijk kan voeden.
 
+### Fase 4 — workspace fail-closed (PR 12)
+**Een JWT zonder `app_metadata.workspace_id`-claim wordt GEWEIGERD** (401). Vóór deze deploy of direct erna: provision de claim voor bestaande Supabase-users, anders sluit de frontend zichzelf buiten:
+```sql
+-- In de Supabase SQL-editor (past alleen users aan die de claim nog missen):
+UPDATE auth.users
+SET raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb)
+                        || '{"workspace_id": "aerys"}'::jsonb
+WHERE raw_app_meta_data->>'workspace_id' IS NULL;
+-- Verificatie (verwacht: 0):
+SELECT count(*) FROM auth.users WHERE raw_app_meta_data->>'workspace_id' IS NULL;
+```
+Let op: bestaande sessies dragen de oude JWT tot refresh — gebruikers moeten mogelijk opnieuw inloggen. Noodknop tijdens de cutover: `HEATR_JWT_WORKSPACE_FALLBACK=true` (tijdelijk! elke fallback wordt luid gelogd; zet uit zodra de verificatie-query 0 geeft). De service-key-route blijft `DEFAULT_WORKSPACE` — per-workspace service keys zijn een aparte migratie (actieplan PR 12-vervolg).
+
 ## 2. Wat is er veranderd (operator-samenvatting)
 
 | Vóór WP-A | Ná WP-A |

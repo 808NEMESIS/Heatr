@@ -138,7 +138,14 @@ def _jwt_workspace(request: Request) -> str | None:
     """Supabase JWT path — voor browser-clients.
 
     Decodes Supabase HS256-signed JWT, reads workspace_id from app_metadata.
-    Falls back to DEFAULT_WORKSPACE if claim ontbreekt (single-tenant MVP).
+
+    FAIL-CLOSED (fase 4 PR 12, audit v2 P1-1/scenario 11): een geldig
+    getekende JWT ZONDER workspace_id-claim wordt geweigerd — voorheen
+    kreeg zo'n token stilzwijgend DEFAULT_WORKSPACE en daarmee volledige
+    lees/schrijftoegang tot de aerys-data. De oude fallback bestaat alleen
+    nog achter de expliciete cutover-flag HEATR_JWT_WORKSPACE_FALLBACK
+    (default uit; zie runbook voor de provisioning-SQL die bestaande
+    Supabase-users de claim geeft).
     """
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -156,7 +163,23 @@ def _jwt_workspace(request: Request) -> str | None:
     except _jwt.InvalidTokenError:
         return None
     app_meta = payload.get("app_metadata") or {}
-    return app_meta.get("workspace_id") or DEFAULT_WORKSPACE
+    claimed = app_meta.get("workspace_id")
+    if claimed:
+        return claimed
+    # Geen claim: alleen doorlaten als de expliciete cutover/dev-flag aanstaat.
+    if os.getenv("HEATR_JWT_WORKSPACE_FALLBACK", "false").strip().lower() == "true":
+        logger.warning(
+            "auth: JWT zonder workspace_id-claim toegelaten via "
+            "HEATR_JWT_WORKSPACE_FALLBACK → %s (sub=%s). Provision de claim "
+            "en zet de flag uit (zie runbook).",
+            DEFAULT_WORKSPACE, payload.get("sub", "?"),
+        )
+        return DEFAULT_WORKSPACE
+    logger.warning(
+        "auth: JWT GEWEIGERD — geen app_metadata.workspace_id-claim (sub=%s). "
+        "Fail-closed (fase 4 PR 12).", payload.get("sub", "?"),
+    )
+    return None
 
 
 def _legacy_dev_token(request: Request) -> str | None:
