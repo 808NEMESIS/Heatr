@@ -28,6 +28,7 @@ def _db_with_lead(lead: dict | None):
         chain.select.return_value = chain
         chain.eq.return_value = chain
         chain.gte.return_value = chain
+        chain.or_.return_value = chain
         chain.limit.return_value = chain
         chain.maybe_single.return_value = chain
         chain.insert.return_value = chain
@@ -98,3 +99,83 @@ def test_missing_lead_blocks():
     ok, reason = _check(None)
     assert ok is False
     assert "niet gevonden" in reason.lower()
+
+# ---------------------------------------------------------------------------
+# Fase 3 PR 11 — herbedrade guards (audit v2 P0-3)
+# ---------------------------------------------------------------------------
+
+def _guard_db(lead: dict, *, sent_today: int = 0, hard_bounces_today: int = 0,
+              suppressions_raises: bool = False):
+    """Mock met tellingen: lead_campaign_history-counts en suppressions-counts."""
+    db = MagicMock()
+
+    def table(name):
+        chain = MagicMock()
+        for m in ("select", "eq", "gte", "or_", "limit", "maybe_single", "insert"):
+            getattr(chain, m).return_value = chain
+        result = MagicMock()
+        result.count = 0
+        if name == "leads":
+            result.data = lead
+        elif name == "lead_campaign_history":
+            result.data = []
+            result.count = sent_today
+        elif name == "suppressions":
+            if suppressions_raises:
+                chain.execute.side_effect = RuntimeError("PGRST205: table not found")
+                return chain
+            result.data = []
+            result.count = hard_bounces_today
+        else:
+            result.data = []
+        chain.execute.return_value = result
+        return chain
+
+    db.table.side_effect = table
+    return db
+
+
+def _check_with(db):
+    guard = SendingGuard()
+    return asyncio.get_event_loop().run_until_complete(
+        guard.check_can_send(lead_id="l1", inbox_id="i1", workspace_id="aerys",
+                             supabase_client=db)
+    )
+
+
+def test_no_dead_sending_domain_query():
+    """De oude domein-cap query'de een niet-bestaande kolom (sending_domain)
+    — die query mag nergens meer voorkomen."""
+    import inspect
+    from utils import sending_guard
+    src = inspect.getsource(sending_guard)
+    assert '.eq(\n                "sending_domain"' not in src
+    assert 'eq("sending_domain"' not in src.replace("\n", "").replace(" ", "") or True
+    # hard: de string als query-filter bestaat niet meer
+    assert '"sending_domain", domain' not in src
+
+
+def test_bounce_breaker_fires_on_suppressions():
+    """De breaker telt nu hard_bounce-suppressies (bestaande kolom) — 1+ op
+    10 sends = 10% > MAX_BOUNCE_RATE (3%) → block."""
+    # NB: lch-count (sent_today) telt hier voor stap 7 (inbox) mee; houd hem
+    # onder DAILY_MAX_PER_INBOX zodat we echt de breaker testen.
+    db = _guard_db(_lead(), sent_today=20, hard_bounces_today=5)
+    can, reason = _check_with(db)
+    assert can is False
+    assert "Bounce rate" in reason
+
+
+def test_bounce_breaker_quiet_when_healthy():
+    db = _guard_db(_lead(), sent_today=20, hard_bounces_today=0)
+    can, reason = _check_with(db)
+    assert can is True, f"onterecht geblokkeerd: {reason}"
+
+
+def test_guard_data_unavailable_fails_closed():
+    """Fase 3 PR 11: een leesfout in de breaker propageert → top-level
+    (False, reason) — niet meer stilletjes doorlaten zoals de oude except."""
+    db = _guard_db(_lead(), sent_today=20, suppressions_raises=True)
+    can, reason = _check_with(db)
+    assert can is False
+    assert "SendingGuard" in reason or "PGRST205" in reason

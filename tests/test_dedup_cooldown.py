@@ -222,6 +222,10 @@ class _GuardQuery:
         self._eq[("gte", c)] = v
         return self
 
+    def or_(self, *a, **k):
+        # PR 11: ws-daily-count gebruikt or_(enrolled_at/sent_at) — no-op filter
+        return self
+
     def order(self, *a, **k):
         return self
 

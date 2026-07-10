@@ -109,28 +109,32 @@ class SendingGuard:
                 return await self._block(lead_id, inbox_id, workspace_id, "low_reputation",
                                          f"Inbox reputatie te laag: {rep:.0f} (min {self.MIN_INBOX_REPUTATION})", db)
 
-        # 7. Inbox daily limit
+        # 7. Inbox daily limit — heatr-owned sends (Model B) hebben sent_at per
+        # stap; warmr-tracking-rijen tellen mee via enrolled_at (de push).
+        # Workspace-scoping toegevoegd (fase 3 PR 11, audit v2 P1-1).
         today = datetime.now(timezone.utc).date().isoformat()
         inbox_sent_res = db.table("lead_campaign_history").select("id", count="exact").eq(
+            "workspace_id", workspace_id).eq(
             "inbox_id", inbox_id).gte("sent_at", today).execute()
         inbox_today = inbox_sent_res.count or 0
         if inbox_today >= self.DAILY_MAX_PER_INBOX:
             return await self._block(lead_id, inbox_id, workspace_id, "inbox_daily_limit",
                                      f"Inbox dagelijkse limiet bereikt: {inbox_today}/{self.DAILY_MAX_PER_INBOX}", db)
 
-        # 8. Sending domain daily limit
-        if inbox and inbox.get("sending_domain"):
-            domain = inbox["sending_domain"]
-            domain_sent_res = db.table("lead_campaign_history").select("id", count="exact").eq(
-                "sending_domain", domain).gte("sent_at", today).execute()
-            domain_today = domain_sent_res.count or 0
-            if domain_today >= self.DAILY_MAX_PER_DOMAIN:
-                return await self._block(lead_id, inbox_id, workspace_id, "domain_daily_limit",
-                                         f"Sending domain dagelijkse limiet bereikt: {domain_today}/{self.DAILY_MAX_PER_DOMAIN}", db)
+        # 8. Sending-domain daily limit — VERWIJDERD als query (fase 3 PR 11).
+        # De oude check filterde op lead_campaign_history.sending_domain: die
+        # kolom bestaat alleen in het dode supabase_schema.sql, niet in de
+        # runtime-tabel (migratie 009/025) → de query faalde ALTIJD en de cap
+        # was cosmetisch (audit v2 P0-3). Een eerlijke domein-cap vereist
+        # Warmr-capacity-events (actieplan, Warmr-contract) — geen nep-check
+        # die groen lijkt maar niets meet. DAILY_MAX_PER_DOMAIN blijft
+        # gereserveerd voor die aansluiting.
 
-        # 9. Workspace daily limit
+        # 9. Workspace daily limit — pushes van vandaag: warmr-enrollments
+        # (enrolled_at, fase 3 PR 9) + heatr-owned stap-sends (sent_at).
         ws_sent_res = db.table("lead_campaign_history").select("id", count="exact").eq(
-            "workspace_id", workspace_id).gte("sent_at", today).execute()
+            "workspace_id", workspace_id).or_(
+            f"enrolled_at.gte.{today},sent_at.gte.{today}").execute()
         ws_today = ws_sent_res.count or 0
         if ws_today >= self.DAILY_MAX_PER_WORKSPACE:
             return await self._block(lead_id, inbox_id, workspace_id, "workspace_daily_limit",
@@ -175,23 +179,35 @@ class SendingGuard:
         return None
 
     async def _check_bounce_rate(self, workspace_id: str, today: str, db) -> str | None:
-        """Returns error message if bounce rate is too high, else None."""
-        try:
-            sent_res = db.table("lead_campaign_history").select("id", count="exact").eq(
-                "workspace_id", workspace_id).gte("sent_at", today).execute()
-            total_sent = sent_res.count or 0
-            if total_sent < 10:
-                return None  # Not enough data
+        """Returns error message if bounce rate is too high, else None.
 
-            bounced_res = db.table("reply_inbox").select("id", count="exact").eq(
-                "workspace_id", workspace_id).eq("event_type", "bounced").gte("received_at", today).execute()
-            bounced = bounced_res.count or 0
-            rate = bounced / total_sent
+        HERBEDRAAD (fase 3 PR 11, audit v2 P0-3): de oude check telde
+        reply_inbox.event_type='bounced' — die kolom bestaat niet in de
+        runtime-tabel (migratie 004), dus de query faalde altijd, de except
+        slikte hem en de breaker vuurde NOOIT. Nu tellen we hard-bounce-
+        suppressies (fase 2 PR 7 — de webhook schrijft die per bounce) tegen
+        de pushes van vandaag.
 
-            if rate > self.MAX_BOUNCE_RATE:
-                return f"Bounce rate {rate:.1%} overschrijdt maximum {self.MAX_BOUNCE_RATE:.1%} — alle sends gestopt"
-        except Exception as e:
-            logger.warning("Bounce rate check failed: %s", e)
+        BEWUST GEEN try/except meer: een leesfout hoort te propageren naar
+        check_can_send, dat top-level (False, reason) retourneert —
+        guard-data-onbeschikbaar = geen prospect-send (Besluit 3), niet
+        stilletjes doorlaten zoals voorheen.
+        """
+        sent_res = db.table("lead_campaign_history").select("id", count="exact").eq(
+            "workspace_id", workspace_id).or_(
+            f"enrolled_at.gte.{today},sent_at.gte.{today}").execute()
+        total_sent = sent_res.count or 0
+        if total_sent < 10:
+            return None  # Not enough data
+
+        bounced_res = db.table("suppressions").select("id", count="exact").eq(
+            "suppression_type", "hard_bounce").eq(
+            "source_workspace_id", workspace_id).gte("created_at", today).execute()
+        bounced = bounced_res.count or 0
+        rate = bounced / total_sent
+
+        if rate > self.MAX_BOUNCE_RATE:
+            return f"Bounce rate {rate:.1%} overschrijdt maximum {self.MAX_BOUNCE_RATE:.1%} — alle sends gestopt"
         return None
 
     async def _block(

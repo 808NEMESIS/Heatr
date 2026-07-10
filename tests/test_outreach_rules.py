@@ -312,47 +312,42 @@ class TestNoDuplicateCampaigns:
 class TestBounceRateCircuitBreaker:
     @pytest.mark.asyncio
     async def test_high_bounce_rate_blocks_all_sends(self):
-        """Bounce rate > MAX_BOUNCE_RATE blocks all sends for workspace."""
+        """Bounce rate > MAX_BOUNCE_RATE blocks all sends for workspace.
+
+        HERSCHREVEN (fase 3 PR 11): de breaker telt nu hard_bounce-
+        suppressies i.p.v. de niet-bestaande reply_inbox.event_type-kolom;
+        de mock is tabel-bewust i.p.v. positioneel (de oude volgorde-mock
+        brak op elke query-wijziging).
+        """
         guard = SendingGuard()
         guard.MAX_BOUNCE_RATE = 0.03  # 3%
 
-        db = _make_db()
-        lead_result = MagicMock()
-        lead_result.data = _lead({"gdpr_safe": True, "status": "active"})
+        db = MagicMock()
 
-        no_campaign = MagicMock()
-        no_campaign.data = []
+        def table(name):
+            chain = MagicMock()
+            for m in ("select", "eq", "gte", "or_", "lte", "limit",
+                      "maybe_single", "insert", "order"):
+                getattr(chain, m).return_value = chain
+            result = MagicMock()
+            result.count = 0
+            if name == "leads":
+                result.data = _lead({"gdpr_safe": True, "status": "active"})
+            elif name == "lead_campaign_history":
+                # 20 pushes vandaag: onder inbox(50)/ws(500)-limiet, boven
+                # de min-10 van de breaker
+                result.data = []
+                result.count = 20
+            elif name == "suppressions":
+                # 5 hard bounces op 20 sends = 25% > 3%
+                result.data = []
+                result.count = 5
+            else:
+                result.data = None if name == "system_state" else []
+            chain.execute.return_value = result
+            return chain
 
-        no_inbox = MagicMock()
-        no_inbox.data = None  # no inbox cache
-
-        # Inbox daily count: 5 (under limit)
-        inbox_count = MagicMock(); inbox_count.data = []; inbox_count.count = 5
-        # Workspace daily count: 50 (under limit)
-        ws_count = MagicMock(); ws_count.data = []; ws_count.count = 50
-        # Bounce check: 100 sent, 5 bounced = 5% > 3%
-        sent_count = MagicMock(); sent_count.count = 100
-        bounce_count = MagicMock(); bounce_count.count = 5  # 5%
-
-        results = [lead_result, no_campaign, no_inbox, inbox_count, ws_count, sent_count, bounce_count]
-        call_count = [0]
-
-        table_mock = MagicMock()
-        table_mock.select.return_value = table_mock
-        table_mock.eq.return_value = table_mock
-        table_mock.gte.return_value = table_mock
-        table_mock.lte.return_value = table_mock
-        table_mock.limit.return_value = table_mock
-        table_mock.maybe_single.return_value = table_mock
-        table_mock.insert.return_value = table_mock
-
-        def mock_execute():
-            idx = call_count[0]
-            call_count[0] += 1
-            return results[idx] if idx < len(results) else MagicMock(data=[], count=0)
-
-        table_mock.execute = mock_execute
-        db.table = MagicMock(return_value=table_mock)
+        db.table = MagicMock(side_effect=table)
 
         with patch("utils.alert_manager.send_alert", new_callable=AsyncMock):
             can_send, reason = await guard.check_can_send(
