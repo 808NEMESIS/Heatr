@@ -13,8 +13,11 @@
    - migratie **023** (email_status-CHECK-fix — de huidige CHECK wijst de bounce/unsub-webhook-writes af),
    - migratie **024** (suppressions-tabel — de dispatcher is er fail-closed op),
    - migratie **025** (tracking-enrollments: send_owner-kolom + UNIQUE — launch is er fail-closed op),
-   - migratie **026** (webhook-eventledger — inbound is er fail-soft op, maar zonder tabel geen dedup).
-2. **Daarna** de code deployen (commits `a4623af` t/m `abbc794` — WP-A + fase 2 + fase 3).
+   - migratie **026** (webhook-eventledger — inbound is er fail-soft op, maar zonder tabel geen dedup),
+   - migratie **027** (cost-sum-RPC + indexen — AI-calls zijn er fail-closed op) en **028** (resumable steps),
+   - de **auth-provisioning-SQL** (zie fase 4 hieronder — anders sluit de frontend zichzelf buiten).
+2. **Daarna** de code deployen (commits `a4623af` t/m `4ef4921` — WP-A + fase 2 + 3 + 4).
+3. **Nieuwe env-vars om te overwegen:** `PLATFORM_DAILY_BUDGET_EUR` / `PLATFORM_MONTHLY_BUDGET_EUR` (globaal AI-plafond — zet aan vóór er een tweede tenant komt), `HEATR_JWT_WORKSPACE_FALLBACK` (alleen tijdens cutover).
 3. **Env-check vóór restart:** staat `ENABLE_CAMPAIGN_SENDS=true` in de productie-`.env`? Dan blijft alles versturen zoals nu (de nieuwe `ENABLE_PROSPECT_SENDS` valt daarop terug). Staat hij op `false`, dan blokkeert de dispatcher vanaf deploy **álle** prospect-sends — dat is de bedoelde master-switch-semantiek, maar verifieer dat dit gewenst is.
 
 Andersom deployen (code vóór migraties) is fail-closed maar disruptief: elke prospect-send krijgt `DispatchLedgerUnavailable` tot de tabellen bestaan… wat nog steeds veiliger is dan het oude fail-open.
