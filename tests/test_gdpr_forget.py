@@ -169,6 +169,20 @@ def test_retry_is_idempotent():
     assert lead["email"] == _redacted_email("lead-1")  # zelfde waarde, geen collision
 
 
+def test_forget_registers_cross_workspace_suppression():
+    """Fase 2 PR 7: het ORIGINELE adres belandt in de suppressielijst zodat
+    her-scrapen het nooit opnieuw aanschrijfbaar maakt — in geen workspace."""
+    db = FakeDB()
+    db.add_lead("lead-1", "piet@praktijk.nl")
+    result = _run(forget_lead("lead-1", "aerys", db))
+    assert result["ok"] is True
+    sups = db.tables.get("suppressions", [])
+    assert len(sups) == 1
+    assert sups[0]["normalized_email"] == "piet@praktijk.nl"
+    assert sups[0]["suppression_type"] == "forgotten"
+    assert sups[0]["source"] == "gdpr_forget"
+
+
 def test_gdpr_log_written_with_original_email():
     db = FakeDB()
     db.add_lead("lead-1", "piet@praktijk.nl")

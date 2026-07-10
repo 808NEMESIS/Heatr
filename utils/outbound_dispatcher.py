@@ -63,6 +63,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from utils.enrichment_check import compliance_check
+from utils.suppression import check_suppressed
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +465,43 @@ async def dispatch_outbound(
                 "(key=%s, %s) — caller-gate heeft een gat!", idempotency_key, detail,
             )
             raise DispatchBlocked(detail)
+
+    # 1b. Platformbrede suppressie (fase 2 PR 7, audit v2 P0-2) — de
+    #     cross-workspace lijst is de tweede linie bovenop de per-lead
+    #     compliance_check. I/O-gate ná de pure checks, vóór de
+    #     reservering. FAIL-CLOSED bij een leesfout (Besluit 3): een
+    #     onbereikbare suppressielijst mag nooit stilletjes "niets
+    #     gesuppressed" betekenen.
+    if kind in PROSPECT_KINDS:
+        target_emails = [t.get("email") for t in targets if t.get("email")]
+        if target_emails:
+            try:
+                suppressed = check_suppressed(supabase_client, target_emails)
+            except Exception as e:
+                _decide("suppression_unavailable", str(e))
+                logger.error(
+                    "outbound_dispatcher: SUPPRESSIE-CHECK ONBESCHIKBAAR (key=%s): %s — "
+                    "prospect-send FAIL-CLOSED geblokkeerd. Is migratie 024 gedraaid?",
+                    idempotency_key, e,
+                )
+                raise DispatchLedgerUnavailable(
+                    f"suppressie-check onbeschikbaar — prospect-send geblokkeerd: {e}"
+                ) from e
+            if suppressed:
+                # Privacy-contract: alleen DAT het adres gesuppressed is —
+                # nooit door welke tenant/campagne (utils/suppression.py).
+                detail = (
+                    f"{len(suppressed)} adres(sen) globally_suppressed: "
+                    f"{', '.join(sorted(suppressed)[:5])}"
+                )
+                _append_record(
+                    supabase_client,
+                    workspace_id=workspace_id, idempotency_key=idempotency_key,
+                    kind=kind, status="blocked_suppression", actor=actor,
+                    lead_id=lead_id, lead_ids=lead_ids, error=detail, metadata=metadata,
+                )
+                _decide("blocked_suppression", detail)
+                raise DispatchBlocked(detail)
 
     # 2. Idempotency — atomische in_flight-reservering (I6, migratie 022).
     reservation_id: str | None = None

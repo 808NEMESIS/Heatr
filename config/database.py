@@ -46,6 +46,8 @@ _HEATR_TABLES = {
     # ongeprefixte (niet-bestaande) tabel schreef en idempotency fail-open
     # was op elk send-pad (audit v2, P0-1).
     "outbound_log",
+    # Platformbrede suppressielijst (migration 024, fase 2 PR 7)
+    "suppressions",
 }
 
 

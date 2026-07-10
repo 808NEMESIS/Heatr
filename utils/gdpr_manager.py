@@ -110,6 +110,23 @@ async def forget_lead(
         errors.append(f"leads_anonymize: {e}")
         logger.error("forget_lead: leads anonymize failed: %s", e)
 
+    # Step 2b: platformbrede suppressie van het ORIGINELE adres (fase 2 PR 7).
+    # Onderdeel van de erasure-belofte: her-scrapen van hetzelfde bedrijf mag
+    # dit adres nooit opnieuw aanschrijfbaar maken — in geen enkele workspace.
+    # Idempotent (unique-conflict = al gesuppressed = ok).
+    if lead_email:
+        from utils.suppression import add_suppression
+        sup = add_suppression(
+            supabase_client, email=lead_email, suppression_type="forgotten",
+            source="gdpr_forget", source_workspace_id=workspace_id,
+            lead_id=lead_id, reason=f"Art.17 erasure door {performed_by}",
+        )
+        if not sup.get("ok"):
+            errors.append(f"suppression_register: {sup.get('error')}")
+    else:
+        logger.warning("forget_lead: geen origineel e-mailadres beschikbaar — "
+                       "suppressie-registratie overgeslagen (lead=%s)", lead_id)
+
     # Step 3: delete enrichment_data
     try:
         res = supabase_client.table("enrichment_data").delete().eq("lead_id", lead_id).execute()

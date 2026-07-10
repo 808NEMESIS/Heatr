@@ -45,8 +45,9 @@ _ACTIVE = ("in_flight", "completed")
 class _Query:
     """Minimale supabase-py querychain over een in-memory rijenlijst."""
 
-    def __init__(self, db: "FakeLedgerDB"):
+    def __init__(self, db: "FakeLedgerDB", table: str = "outbound_log"):
         self.db = db
+        self.table_name = table
         self.op: str | None = None
         self.payload: dict | None = None
         self.filters: list[tuple[str, str, object]] = []
@@ -73,6 +74,10 @@ class _Query:
         self.filters.append(("in", col, list(vals)))
         return self
 
+    def is_(self, col, _null):
+        self.filters.append(("is_null", col, None))
+        return self
+
     def order(self, *_, **__):
         return self
 
@@ -86,9 +91,17 @@ class _Query:
                 return False
             if kind == "in" and row.get(col) not in val:
                 return False
+            if kind == "is_null" and row.get(col) is not None:
+                return False
         return True
 
     def execute(self):
+        if self.table_name == "suppressions":
+            if self.db.suppression_raises:
+                raise RuntimeError(self.db.suppression_raises)
+            res = type("Res", (), {})()
+            res.data = [dict(r) for r in self.db.suppression_rows if self._match(r)]
+            return res
         if self.db.table_missing:
             raise RuntimeError("PGRST205: table outbound_log not found")
         res = type("Res", (), {})()
@@ -128,15 +141,24 @@ class _Query:
 
 
 class FakeLedgerDB:
-    """In-memory heatr_outbound_log met UNIQUE-emulatie en CAS-updates."""
+    """In-memory heatr_outbound_log (+ suppressions) met UNIQUE-emulatie
+    en CAS-updates."""
 
     def __init__(self, table_missing: bool = False):
         self.rows: list[dict] = []
         self.table_missing = table_missing
+        self.suppression_rows: list[dict] = []
+        self.suppression_raises: str | None = None
 
     def table(self, name):
-        assert name == "outbound_log", f"onverwachte tabel: {name}"
-        return _Query(self)
+        assert name in ("outbound_log", "suppressions"), f"onverwachte tabel: {name}"
+        return _Query(self, table=name)
+
+    def suppress(self, email: str, stype: str = "unsubscribe") -> None:
+        self.suppression_rows.append({
+            "normalized_email": email.strip().lower(),
+            "suppression_type": stype, "revoked_at": None,
+        })
 
     def seed(self, *, status: str, key: str = "test-key-1", ws: str = "aerys",
              age_minutes: int = 0, result=None) -> dict:
@@ -359,6 +381,49 @@ def test_enforce_idempotency_false_executes_despite_previous():
     assert result.executed is True
     assert calls["n"] == 1
     assert db.by_status("completed")
+
+
+# ── Platformbrede suppressie-gate (fase 2 PR 7) ─────────────────────────────
+
+SUPPRESSED_TARGET = {"id": "l9", "gdpr_safe": True, "status": "enriched",
+                     "email": "Uitgeschreven@Praktijk.nl"}
+
+
+def test_suppressed_email_blocks_prospect_send():
+    """Cross-workspace suppressie wint óók als de lead-status schoon is
+    (bv. dezelfde persoon in een andere workspace, audit v2 scenario 12)."""
+    db = FakeLedgerDB()
+    db.suppress("uitgeschreven@praktijk.nl")
+    with pytest.raises(DispatchBlocked) as exc:
+        _dispatch(db, lead=SUPPRESSED_TARGET)
+    assert "globally_suppressed" in str(exc.value)
+    assert db.by_status("blocked_suppression")
+    # Privacy-contract: geen bron-workspace in de reden
+    assert "workspace" not in str(exc.value).lower()
+
+
+def test_suppression_check_unavailable_fails_closed():
+    """Besluit 3: suppressie-infra onbereikbaar = prospect-send geblokkeerd."""
+    db = FakeLedgerDB()
+    db.suppression_raises = "PGRST205: table suppressions not found"
+    with pytest.raises(DispatchLedgerUnavailable):
+        _dispatch(db, lead=SUPPRESSED_TARGET)
+
+
+def test_clean_email_passes_suppression_gate():
+    db = FakeLedgerDB()
+    db.suppress("iemand-anders@x.nl")
+    result, calls = _dispatch(db, lead=SUPPRESSED_TARGET)
+    assert result.executed is True and calls["n"] == 1
+
+
+def test_lead_without_email_skips_suppression_gate():
+    """Geen e-mail op de target → geen suppressie-query (COMPLIANT heeft
+    geen email-veld; dit borgt dat de bestaande flow niet extra faalt)."""
+    db = FakeLedgerDB()
+    db.suppression_raises = "zou niet bevraagd mogen worden"
+    result, _ = _dispatch(db)  # COMPLIANT: geen email
+    assert result.executed is True
 
 
 # ── Centrale kill-switch (WP-A stap 7) ──────────────────────────────────────

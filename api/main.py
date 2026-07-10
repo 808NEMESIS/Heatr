@@ -3104,6 +3104,43 @@ async def get_sendability_config() -> dict:
 # WEBHOOKS — Warmr
 # =============================================================================
 
+def _register_suppression_from_webhook(
+    db: Client,
+    heatr_lead_id: str,
+    workspace_id: str,
+    *,
+    suppression_type: str,
+    event_type: str,
+    fallback_email: str | None = None,
+) -> None:
+    """Registreer een webhook-event (bounce/unsubscribe) in de platformbrede
+    suppressielijst (fase 2 PR 7). Fail-soft met luide log: de lead-level
+    status is al gezet (eerste linie); een gemiste suppressie-write mag de
+    webhook-verwerking niet laten crashen, maar moet wél zichtbaar zijn.
+    """
+    from utils.suppression import add_suppression
+    email = fallback_email
+    try:
+        res = (db.table("leads").select("email")
+               .eq("id", heatr_lead_id).eq("workspace_id", workspace_id)
+               .maybe_single().execute())
+        email = (res.data or {}).get("email") or fallback_email
+    except Exception as e:
+        logger.warning("webhooks/warmr: email-lookup voor suppressie faalde (lead=%s): %s",
+                       heatr_lead_id, e)
+    outcome = add_suppression(
+        db, email=email, suppression_type=suppression_type,
+        source="warmr_webhook", source_workspace_id=workspace_id,
+        lead_id=heatr_lead_id, reason=event_type,
+    )
+    if not outcome.get("ok"):
+        logger.error(
+            "webhooks/warmr: SUPPRESSIE NIET GEREGISTREERD (lead=%s type=%s): %s — "
+            "alleen de per-lead status blokkeert nu; cross-workspace dekking mist.",
+            heatr_lead_id, suppression_type, outcome.get("error"),
+        )
+
+
 @app.post("/webhooks/warmr")
 async def warmr_webhook(
     request: Request,
@@ -3183,6 +3220,11 @@ async def warmr_webhook(
                 "email_status": "bounced",
                 "status": "bounced",
             }).eq("id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
+            _register_suppression_from_webhook(
+                db, heatr_lead_id, workspace_id,
+                suppression_type="hard_bounce", event_type=event_type,
+                fallback_email=payload.get("from_email") or payload.get("email"),
+            )
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "bounced",
@@ -3198,6 +3240,11 @@ async def warmr_webhook(
                 "status": "unsubscribed",
                 "crm_stage": "afgesloten",
             }).eq("id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
+            _register_suppression_from_webhook(
+                db, heatr_lead_id, workspace_id,
+                suppression_type="unsubscribe", event_type=event_type,
+                fallback_email=payload.get("from_email") or payload.get("email"),
+            )
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "unsubscribed",

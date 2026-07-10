@@ -244,6 +244,7 @@ async def process_reply(
         try:
             supabase_client.table("leads").update({
                 "status": "unsubscribed",
+                "email_status": "unsubscribed",
                 "unsubscribed_at": datetime.now(timezone.utc).isoformat(),
                 "unsubscribe_source": "reply_classifier",
                 "gdpr_safe": False,
@@ -252,6 +253,25 @@ async def process_reply(
             actions_taken.append("marked_unsubscribed")
         except Exception as e:
             logger.error("unsubscribe action failed: %s", e)
+        # Fase 2 PR 7: óók de platformbrede suppressielijst (fail-soft met
+        # luide log in add_suppression zelf; lead-status hierboven is de
+        # eerste linie).
+        try:
+            from utils.suppression import add_suppression
+            email_res = (supabase_client.table("leads").select("email")
+                         .eq("id", lead_id).eq("workspace_id", workspace_id)
+                         .maybe_single().execute())
+            add_suppression(
+                supabase_client,
+                email=(email_res.data or {}).get("email"),
+                suppression_type="unsubscribe", source="reply_classifier",
+                source_workspace_id=workspace_id, lead_id=lead_id,
+                reason="unsubscribe-reply geclassificeerd",
+            )
+            actions_taken.append("suppression_registered")
+        except Exception as e:
+            logger.error("reply_classifier: suppressie-registratie faalde (lead=%s): %s",
+                         lead_id, e)
 
     elif category == CATEGORY_NOT_INTERESTED:
         try:
