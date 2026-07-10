@@ -3222,6 +3222,56 @@ async def warmr_webhook(
     event_type = payload.get("event")
     heatr_lead_id = payload.get("custom_fields", {}).get("heatr_lead_id")
     workspace_id = payload.get("custom_fields", {}).get("workspace_id", DEFAULT_WORKSPACE)
+    campaign_ref = payload.get("campaign_id") or payload.get("custom_fields", {}).get("campaign_id")
+
+    # Fase 3 PR 10 — eventledger vóór élk side-effect (audit v2 scenario 3):
+    # een geredeliverd event (Warmr = at-least-once) botst op de UNIQUE en
+    # stopt hier, vóór dubbele inbox-rijen/crm_tasks/statuswissels.
+    from utils.webhook_ledger import (
+        LEAD_BOUND_EVENTS, finalize_event, make_event_id, record_event,
+    )
+    event_id = make_event_id(payload)
+    ledger_state = record_event(
+        db, event_id=event_id, workspace_id=workspace_id,
+        event_type=event_type, payload=payload,
+        lead_id=heatr_lead_id, campaign_id=campaign_ref,
+    )
+    if ledger_state == "duplicate":
+        return {"ok": True, "duplicate": True, "event_id": event_id}
+
+    # Lead-resolutie (audit v2 scenario 14): lead-gebonden events zonder
+    # bekende lead gaan naar dead_letter i.p.v. stil {"ok": true}. Fallback-
+    # correlatie op Warmr's eigen lead-id vóór we opgeven.
+    if event_type in LEAD_BOUND_EVENTS:
+        lead_known = False
+        if heatr_lead_id:
+            try:
+                _lr = (db.table("leads").select("id").eq("id", heatr_lead_id)
+                       .eq("workspace_id", workspace_id).maybe_single().execute())
+                lead_known = bool(_lr.data)
+            except Exception as e:
+                logger.warning("webhooks/warmr: lead-lookup faalde (%s): %s", heatr_lead_id, e)
+        if not lead_known:
+            warmr_ref = payload.get("lead_id") or payload.get("warmr_lead_id")
+            if warmr_ref:
+                try:
+                    _wr = (db.table("leads").select("id").eq("warmr_lead_id", str(warmr_ref))
+                           .eq("workspace_id", workspace_id).maybe_single().execute())
+                    if _wr.data:
+                        heatr_lead_id = _wr.data["id"]
+                        lead_known = True
+                        logger.info("webhooks/warmr: lead gecorreleerd via warmr_lead_id=%s → %s",
+                                    warmr_ref, heatr_lead_id)
+                except Exception as e:
+                    logger.warning("webhooks/warmr: warmr-correlatie faalde (%s): %s", warmr_ref, e)
+        if not lead_known:
+            detail = (f"onbekende lead (heatr_lead_id={heatr_lead_id!r}, "
+                      f"warmr_ref={payload.get('lead_id') or payload.get('warmr_lead_id')!r})")
+            finalize_event(db, event_id, "dead_letter", error=detail)
+            logger.error("webhooks/warmr: DEAD-LETTER %s event=%s — %s",
+                         event_type, event_id, detail)
+            return {"ok": False, "reason": "unknown_lead", "dead_letter": True,
+                    "event_id": event_id}
 
     audit_logged = True
     if heatr_lead_id:
@@ -3367,7 +3417,12 @@ async def warmr_webhook(
 
     # EERLIJKE response (recovery-fix): geen {"ok": true} als de audit-inserts
     # faalden. Zo blijft een stille PGRST204 niet langer als succes gerapporteerd.
-    return {"ok": audit_logged, "audit_logged": audit_logged}
+    finalize_event(
+        db, event_id,
+        "processed" if audit_logged else "error",
+        error=None if audit_logged else "één of meer audit-writes faalden (zie logs)",
+    )
+    return {"ok": audit_logged, "audit_logged": audit_logged, "event_id": event_id}
 
 
 # =============================================================================

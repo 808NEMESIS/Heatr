@@ -48,6 +48,8 @@ _HEATR_TABLES = {
     "outbound_log",
     # Platformbrede suppressielijst (migration 024, fase 2 PR 7)
     "suppressions",
+    # Inbound webhook-eventledger (migration 026, fase 3 PR 10)
+    "webhook_events",
 }
 
 
