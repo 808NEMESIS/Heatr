@@ -50,6 +50,9 @@ _HEATR_TABLES = {
     "suppressions",
     # Inbound webhook-eventledger (migration 026, fase 3 PR 10)
     "webhook_events",
+    # Teardown-pagina's + intent-view-log (migration 029, fase A PR A1)
+    "teardown_pages",
+    "page_views",
 }
 
 
