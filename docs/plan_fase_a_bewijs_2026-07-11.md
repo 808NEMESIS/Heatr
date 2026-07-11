@@ -2,7 +2,31 @@
 
 **Datum:** 2026-07-11 · **Bron:** strategie_heatr_vs_markt_2026-07-11.md, fase A
 **Doel:** 10 gevoerde review-gesprekken, ≥3 betaalde opdrachten, elke uitkomst vastgelegd.
-**Kernproduct:** de **teardown-pagina** — de website-analyse als deelbaar, persoonlijk artefact; de mail wordt bezorger van waarde i.p.v. vraag om tijd.
+**Kernproduct:** de **teardown-pagina** — de website-analyse als deelbaar, persoonlijk artefact.
+
+## BESLISSING 2026-07-11 — de teardown is NIET stap 1
+
+De teardown mag **geen ongevraagde openingszet** zijn. Een vreemde die zonder
+contact een gepubliceerd rapportcijfer over je praktijk stuurt is aanmatigend,
+juridisch grijs (zeker bij solo-behandelaren waar bedrijf = persoon) en de
+snelste route naar een spamklacht (= het schadelijkste deliverability-signaal,
+zie Warmr). De teardown is de **beloning ná contact**, niet de ambush ervoor.
+
+**Funnel:**
+1. **Koude mail** = mens, persoonlijk, ÉÉN observatie uit `extract_findings()` +
+   één vraag. Geen link, geen cijfer, geen rapport. (De website-intelligence
+   powert de opener als zin, niet als pagina.)
+2. **Positieve reply** (interested/question — de reply-classifier categoriseert
+   dit al) = consent.
+3. **Dán** wordt de teardown gegenereerd + gestuurd — nu gevraagd, dus welkom,
+   mét het volledige beeld en de score.
+
+Segment: **iedereen in de ICP** — kan nu, want de koude mail is een zachte
+observatie (categorisch minder indringend dan een gepubliceerd rapport); het
+gevoelige artefact gaat alleen naar wie zich al engageerde (zelfselectie).
+
+De teardown-view (na reply) is daarmee een WARM signaal → de beltaak van A2 is
+dubbel gerechtvaardigd.
 
 ---
 
@@ -57,10 +81,15 @@ De vision-tekst van Claude wordt extern zichtbaar, mét bedrijfsnaam — een ver
 - Dedupe: max 1 taak per lead per dag; view ná gesprek-gepland → geen taak.
 - Tests: view→task-dedupe, revoked token → 410.
 
-### PR A3 — Sequence v4 "teardown" + gate
-- `config/sequence_templates.py`: v4-varianten per brug. Mail 1: één observatie + de link ("ik heb jullie site naast twee praktijken in {stad} gelegd — dit viel me op: {…}. De hele analyse staat hier: {teardown_url}"). Mail 2 (dag 4): tweede inzicht uit de anályse + zachte vraag. Mail 3 (dag 7): kort, deur open. Geen prijzen (bestaande regel), max 90 woorden, geen tracking-pixels — de link zelf is de meting.
-- `{{teardown_url}}` in de renderer (`inject_variables`); **fail-closed**: lead zonder published teardown → geblokkeerd in `_gate_leads_for_template` (zelfde mechaniek als personalisatie-gate).
-- Tests: gate blokkeert zonder pagina; URL-injectie; template-selectie per brug.
+### PR A3 — Sequence v4 "observatie" (GEEN link in de koude mail)
+- `config/sequence_templates.py`: v4-varianten per brug. Mail 1: één rake observatie uit `extract_findings()` + één vraag ("ik keek naar {domein} en wat me opviel: {top_finding}. Bewust, of blijven liggen?"). Mail 2 (dag 4): tweede observatie + zachte vraag. Mail 3 (dag 7): kort, deur open. **Geen teardown-link, geen cijfer** — de mail moet de reply verdienen. Geen prijzen, max 90 woorden, geen tracking-pixels.
+- De observatie-injectie leest de findings van de lead; **fail-closed**: lead zonder bruikbare findings → geblokkeerd (kan geen personaliseren = niet versturen).
+- Tests: observatie-injectie per brug; gate blokkeert zonder findings; geen link/cijfer in de body.
+
+### PR A3b — Teardown-trigger op positieve reply
+- Reply-classifier-hook: `interested`/`question` → genereer teardown (draft→review of auto per B4) → stuur als opvolgmail ("zoals beloofd — de volledige analyse: {teardown_url}").
+- Dit is het punt waar de teardown-URL wél de deur uit gaat: ná consent.
+- Tests: alleen positieve categorieën triggeren; geen dubbele teardown per lead; not_interested/unsubscribe triggeren niets.
 
 ### PR A4 — Launch-integratie + bulk-publish
 - Launch-flow stap: vóór de push per bucket controleren dat alle leads een published teardown hebben; response toont `missing_teardowns`.
