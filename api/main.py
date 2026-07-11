@@ -605,6 +605,143 @@ async def patch_lead(
     return res.data[0]
 
 
+# =============================================================================
+# Inbound website-leads (Aerys Praktijk-Check / contact) — service-to-service
+# =============================================================================
+
+class InboundLead(BaseModel):
+    source: str = "website"
+    contact: dict = Field(default_factory=dict)   # name, email, phone, company
+    consent: dict = Field(default_factory=dict)   # business, contactOptIn
+    data: dict = Field(default_factory=dict)      # scan-antwoorden + euro-schatting
+
+
+# Vrije mailproviders → geen bedrijfsdomein afleiden.
+_FREEMAIL = {
+    "gmail.com", "googlemail.com", "hotmail.com", "hotmail.nl", "outlook.com",
+    "live.nl", "live.com", "yahoo.com", "yahoo.nl", "icloud.com", "me.com", "ziggo.nl", "kpnmail.nl",
+}
+
+# Leesbare labels voor de scan-antwoorden in de CRM-notitie.
+_INBOUND_LABELS: dict[str, tuple[str, dict[str, str]]] = {
+    "niche": ("Praktijk", {"cosmetisch": "Cosmetische kliniek", "chiro": "Chiropractie/houding", "anders": "Anders"}),
+    "appts": ("Afspraken/week", {"lt40": "< 40", "40-80": "40-80", "80-150": "80-150", "gt150": "> 150"}),
+    "intake_channel": ("Instroom", {"telefoon": "Vooral telefonisch", "online": "Online zelf boeken", "beide": "Half/half"}),
+    "rate": ("Tarief", {"lt75": "< 75", "75-150": "75-150", "150-300": "150-300", "gt300": "> 300"}),
+    "missed_calls": ("Gemiste oproepen", {"niets": "Beller weg", "voicemail": "Voicemail", "terugbellijst": "Terugbel-lijst"}),
+    "reminders": ("Herinneringen", {"nee": "Geen", "handmatig": "Handmatig", "automatisch": "Automatisch"}),
+    "followup": ("Nazorg", {"nee": "Geen", "soms": "Soms", "gestructureerd": "Vast proces"}),
+}
+
+
+def _inbound_summary(data: dict) -> str:
+    """Leesbare samenvatting van de scan voor crm_notes + timeline."""
+    lines: list[str] = []
+    for key, (label, opts) in _INBOUND_LABELS.items():
+        v = data.get(key)
+        if v:
+            lines.append(f"- {label}: {opts.get(str(v), v)}")
+    lo, hi, hrs = data.get("totalLow"), data.get("totalHigh"), data.get("hours")
+    if lo is not None and hi is not None:
+        bedrag = f"EUR {int(lo):,}-{int(hi):,}/jaar".replace(",", ".")
+        lines.append(f"- Geschat weglek: {bedrag} (~{hrs} u/week handwerk)")
+    fr = data.get("frustration")
+    if fr:
+        lines.append(f'- In eigen woorden: "{fr}"')
+    return "\n".join(lines) if lines else "(geen scan-details meegestuurd)"
+
+
+@app.post("/leads/inbound")
+async def inbound_lead(
+    body: InboundLead,
+    workspace_id: str = Depends(require_service_key),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Warme inbound lead van de Aerys-website (Praktijk-Check/contact).
+
+    Auth: X-API-Key (HEATR_API_KEY) -> DEFAULT_WORKSPACE. De lead landt als warme
+    lead in de CRM (crm_stage 'gereageerd'), NIET in de koude Warmr-flow:
+    email_status='valid' (self-provided) valt buiten de Warmr-eligibility.
+    Bestaat de e-mail/het domein al, dan mergen we op de bestaande lead.
+    """
+    from utils.deduplicator import is_duplicate_entity, normalize_domain
+
+    contact = body.contact or {}
+    email = (contact.get("email") or "").lower().strip()
+    name = (contact.get("name") or "").strip()
+    company = (contact.get("company") or "").strip() or name or "Onbekende praktijk"
+    phone = (contact.get("phone") or "").strip() or None
+    data = body.data or {}
+
+    domain = ""
+    if "@" in email:
+        d = email.split("@", 1)[1].strip()
+        if d and d not in _FREEMAIL:
+            domain = normalize_domain(d)
+
+    sector = {
+        "cosmetisch": "cosmetische_behandelaars",
+        "chiro": "alternatieve_geneeskunde",
+    }.get(data.get("niche"), "overig")
+
+    parts = name.split()
+    first = parts[0] if parts else None
+    last = " ".join(parts[1:]) if len(parts) > 1 else None
+    opt_in = bool((body.consent or {}).get("contactOptIn"))
+
+    summary = _inbound_summary(data)
+    note = f"Inbound via website ({body.source}).\n{summary}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Dedup: e-mail eerst (sterkste inbound-signaal), dan domein/naam.
+    existing_id: str | None = None
+    if email:
+        r = db.table("leads").select("id").eq("workspace_id", workspace_id).eq("email", email).limit(1).execute()
+        if r.data:
+            existing_id = r.data[0]["id"]
+    if not existing_id and (domain or company):
+        is_dup, dup_id = await is_duplicate_entity(company, domain, "", workspace_id, db)
+        if is_dup:
+            existing_id = dup_id
+
+    if existing_id:
+        update = {"crm_stage": "gereageerd", "crm_notes": note, "updated_at": now}
+        if phone:
+            update["phone"] = phone
+        db.table("leads").update(update).eq("id", existing_id).eq("workspace_id", workspace_id).execute()
+        lead_id, action = existing_id, "merged"
+    else:
+        ins = db.table("leads").insert({
+            "workspace_id": workspace_id,
+            "company_name": company,
+            "domain": domain or None,
+            "sector": sector,
+            "country": "NL",
+            "contact_name": name or None,
+            "contact_first_name": first,
+            "contact_last_name": last,
+            "email": email or None,
+            "email_status": "valid",
+            "email_type": "personal",
+            "gdpr_safe": opt_in,
+            "phone": phone,
+            "score": 90,
+            "status": "qualified",
+            "crm_stage": "gereageerd",
+            "crm_notes": note,
+        }).execute()
+        lead_id = ins.data[0]["id"] if ins.data else None
+        action = "created"
+
+    if lead_id:
+        _insert_timeline_event(
+            db, workspace_id, lead_id, "note_added",
+            "Inbound Praktijk-Check ontvangen", summary,
+        )
+
+    return {"ok": True, "lead_id": lead_id, "action": action}
+
+
 @app.post("/leads/enrich")
 async def enrich_leads(
     body: EnrichRequest,
