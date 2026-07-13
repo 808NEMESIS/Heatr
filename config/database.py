@@ -53,6 +53,10 @@ _HEATR_TABLES = {
     # Teardown-pagina's + intent-view-log (migration 029, fase A PR A1)
     "teardown_pages",
     "page_views",
+    # E-mailverificatie-diagnostiek (migration 030) + catch-all-cache (031).
+    # 'domain_cache' ontbrak → catch-all-write faalde stil (PGRST205).
+    "email_verifications",
+    "domain_cache",
 }
 
 
