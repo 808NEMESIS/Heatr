@@ -98,9 +98,13 @@ def _variant_index(lead_id: str, n: int) -> int:
 
 
 def pick_observation(lead: dict, wi: dict) -> dict | None:
-    """Kies de sterkste bruikbare observatie. Return None als er geen
-    herkenbaar conversie-signaal is (→ lead niet personaliseerbaar, mail-1
-    wordt geblokkeerd; fail-closed zoals de personalisatie-gate)."""
+    """LET OP — NIET VEILIG voor koude verzending (remediation C3).
+
+    Leest de OPGESLAGEN conversie-signalen uit website_intelligence, die
+    onbetrouwbaar zijn (kale httpx-fetch, ~10% lege fetch, smalle
+    keyword-set → false-negatives). Gebruik dit UITSLUITEND voor interne
+    preview/analyse. Voor de daadwerkelijke A3-mail: pick_safe_observation().
+    """
     failed = _failed_conversion_signals(wi)
     for sig in _PRIORITY:
         if sig in failed:
@@ -109,6 +113,35 @@ def pick_observation(lead: dict, wi: dict) -> dict | None:
             obs = v["obs"].replace("{domein}", lead.get("domain") or "jullie site")
             return {"signal": sig, "observation": obs, "question": v["q"]}
     return None
+
+
+def pick_safe_observation(lead: dict, booking_check: dict | None) -> dict | None:
+    """GO-VEILIG (remediation C3): geeft alleen een observatie terug die VERS
+    en met HOGE confidence is geverifieerd.
+
+    Args:
+        lead: lead-dict (voor id/domein/naam).
+        booking_check: resultaat van website_intelligence.booking_detector.
+            detect_booking() op een GESLAAGDE, verse fetch. None = geen verse
+            verificatie beschikbaar.
+
+    Regels:
+        - Alleen bij booking_check.value == 'no_booking' EN confidence ==
+          'high' (dus: geslaagde fetch én geen enkele booking-indicator) mag
+          de negatieve online-boeken-observatie de deur uit.
+        - Bij 'has_booking' / 'unknown' / fetch-fout / None → None (geen mail).
+        Dit is fail-closed: een mislukte of twijfelachtige fetch produceert
+        NOOIT een negatieve observatie.
+    """
+    if not booking_check:
+        return None
+    if booking_check.get("value") != "no_booking" or booking_check.get("confidence") != "high":
+        return None
+    variants = _OBSERVATIONS["online_booking"]
+    v = variants[_variant_index(lead.get("id", ""), len(variants))]
+    obs = v["obs"].replace("{domein}", lead.get("domain") or "jullie site")
+    return {"signal": "online_booking", "observation": obs, "question": v["q"],
+            "confidence": "high", "evidence": booking_check.get("evidence", [])}
 
 
 def render_mail1(lead: dict, wi: dict, *, signature: str = SIGNATURE_LIGHT) -> str | None:

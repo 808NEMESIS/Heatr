@@ -121,3 +121,32 @@ def test_question_capitalized():
     # de vraag is een eigen zin met hoofdletter, geen ". bewust"
     assert ". Bewust" in mail or ". Regelen" in mail
     assert ". bewust" not in mail
+
+
+# ── C3: GO-veilige observatie (alleen vers + hoge confidence) ────────────────
+
+def test_safe_observation_only_on_high_confidence_no_booking():
+    from campaigns.observation_opener import pick_safe_observation
+    lead = _lead()
+    # geslaagde fetch, geen booking → observatie mag
+    ok = pick_safe_observation(lead, {"value": "no_booking", "confidence": "high", "evidence": []})
+    assert ok is not None and ok["signal"] == "online_booking"
+    assert ok["confidence"] == "high"
+
+
+def test_safe_observation_blocked_on_unknown_fetch():
+    from campaigns.observation_opener import pick_safe_observation
+    # mislukte/twijfelachtige fetch → GEEN observatie (fail-closed)
+    assert pick_safe_observation(_lead(), {"value": "unknown", "confidence": "low"}) is None
+    assert pick_safe_observation(_lead(), None) is None
+
+
+def test_safe_observation_blocked_when_booking_exists():
+    from campaigns.observation_opener import pick_safe_observation
+    # site HEEFT booking → nooit 'geen booking' claimen
+    assert pick_safe_observation(_lead(), {"value": "has_booking", "confidence": "high"}) is None
+
+
+def test_safe_observation_low_confidence_no_booking_blocked():
+    from campaigns.observation_opener import pick_safe_observation
+    assert pick_safe_observation(_lead(), {"value": "no_booking", "confidence": "low"}) is None
