@@ -234,16 +234,32 @@ async def enrich_company(
             anthropic_client=anthropic_client,
         )
 
+    # --- Normaliseer vrije Claude-tekst vóór opslag (P1/C2) -----------------
+    # Ruwe output werd ongeschoond opgeslagen → 89% markdown/meta-vervuild.
+    # Corrupte output (refusal/leeg) wordt NIET als productieveld opgeslagen.
+    from utils.text_normalizer import normalize_generated_text
+    opener_clean, opener_ok, opener_reason = normalize_generated_text(
+        result.get("personalized_opener"), max_sentences=3)
+    summary_clean, summary_ok, _ = normalize_generated_text(
+        result.get("company_summary"), max_sentences=3)
+    if not opener_ok:
+        logger.warning("company_enrichment: opener afgekeurd (%s) voor lead %s — niet opgeslagen",
+                       opener_reason, lead_id)
+
     # --- Persist to leads table ---------------------------------------------
     try:
         version = (lead.get("enrichment_version") or 0) + 1
-        supabase_client.table("leads").update({
+        patch = {
             "industry": result["industry"],
-            "company_summary": result["company_summary"],
-            "personalized_opener": result["personalized_opener"],
             "company_size_estimate": result["company_size_estimate"],
             "enrichment_version": version,
-        }).eq("id", lead_id).execute()
+        }
+        # alleen schone, gevalideerde tekst opslaan; afgekeurd → veld ongemoeid
+        if opener_ok:
+            patch["personalized_opener"] = opener_clean
+        if summary_ok:
+            patch["company_summary"] = summary_clean
+        supabase_client.table("leads").update(patch).eq("id", lead_id).execute()
     except Exception as e:
         logger.error("Failed to persist enrichment for lead %s: %s", lead_id, e)
 
