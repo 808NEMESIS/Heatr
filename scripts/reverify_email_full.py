@@ -54,6 +54,17 @@ async def main(apply: bool = False, limit: int = 2000) -> int:
     for i, r in enumerate(rows, 1):
         res = await verify_via_api(r["email"])
         status = res["status"]; method = res.get("method", "bouncer_api")
+
+        # Tegoed-muur: een 402 ('no_credits') herstelt niet mid-run. Stop
+        # ONMIDDELLIJK en schrijf deze lead NIET (geen not_checked-write op een
+        # non-verdict) — anders verbranden we de rest van de rij aan not_checked
+        # voordat de 50%-backstop aanslaat (geleerd van run 2026-07-13).
+        if res.get("raw_reason") == "no_credits_402":
+            print(f"\n⛔ STOP bij {i-1}/{len(rows)}: Bouncer-tegoed op (402). "
+                  f"Vul tegoed aan en draai opnieuw — de runner pakt alleen de "
+                  f"resterende risky/not_checked leads op (idempotent, geen dubbele kosten).")
+            break
+
         coarse = coarse_email_status(status)
         st[coarse] += 1
         if method in ("error", "disabled") or status == "not_checked":
