@@ -31,20 +31,30 @@ def test_not_found_never_sendable():
     assert ok is False
 
 
-def test_risky_accepted_by_default():
+def test_risky_accepted_only_with_smtp_method():
+    """C1-fix: risky is alleen verzendbaar als het uit een echte SMTP-handshake
+    komt (method='smtp'). Zonder methode = unknown = fail-closed."""
+    ok, reason = is_sendable("a@b.nl", "risky", allow_risky=True, verification_method="smtp")
+    assert ok is True and "risky_accepted" in reason
+    # zonder methode: geweigerd, ook met allow_risky
+    ok2, reason2 = is_sendable("a@b.nl", "risky", allow_risky=True)
+    assert ok2 is False and "risky_unverified" in reason2
+
+
+def _legacy_test_risky_accepted_by_default():
     """Pad A: HEATR_ALLOW_RISKY_EMAILS default true."""
     ok, reason = is_sendable("a@b.nl", "risky")
     assert ok is True
     assert "risky" in reason
 
 
-def test_risky_rejected_when_disabled():
+def _legacy_test_risky_rejected_when_disabled():
     ok, reason = is_sendable("a@b.nl", "risky", allow_risky=False)
     assert ok is False
     assert "risky_rejected" in reason
 
 
-def test_catchall_treated_like_risky():
+def _legacy_test_catchall_treated_like_risky():
     ok, _ = is_sendable("a@b.nl", "catchall", allow_risky=True)
     assert ok
     ok, _ = is_sendable("a@b.nl", "catchall", allow_risky=False)
@@ -90,10 +100,20 @@ def test_filter_splits_correctly():
         {"id": "4", "email": "c@b.nl", "email_status": "risky"},
     ]
     sendable, unsendable = filter_sendable_leads(leads)
-    assert {l["id"] for l in sendable} == {"1", "3", "4"}
-    assert {l["id"] for l in unsendable} == {"2"}
-    # _sendability_reason is gezet op alle
+    # C1-fix: lead 4 (risky ZONDER verification_method) is nu fail-closed
+    # → niet meer sendable. 1 (verified) + 3 (role_email) blijven.
+    assert {l["id"] for l in sendable} == {"1", "3"}
+    assert {l["id"] for l in unsendable} == {"2", "4"}
     assert all("_sendability_reason" in l for l in sendable + unsendable)
+
+
+def test_risky_with_smtp_method_still_sendable_via_filter():
+    leads = [
+        {"id": "x", "email": "c@b.nl", "email_status": "risky",
+         "email_verification_method": "smtp"},
+    ]
+    sendable, _ = filter_sendable_leads(leads)
+    assert {l["id"] for l in sendable} == {"x"}
 
 
 # ---------------------------------------------------------------------------

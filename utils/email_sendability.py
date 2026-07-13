@@ -62,6 +62,7 @@ def is_sendable(
     allow_risky: bool | None = None,
     allow_role_emails: bool = True,
     is_test_lead: bool = False,
+    verification_method: str | None = None,
 ) -> tuple[bool, str]:
     """Return (sendable, reason).
 
@@ -106,6 +107,15 @@ def is_sendable(
         return True, "verified"
 
     if status in _RISKY_STATUSES:
+        # FAIL-CLOSED (remediation C1): 'risky' is alleen verzendbaar als het
+        # een ECHTE adres-twijfel is uit een geslaagde SMTP-handshake
+        # (verification_method='smtp'). Bestaande 'risky' ZONDER methode kan
+        # net zo goed een infra-fout of een gegokt adres zijn → behandel als
+        # unknown en weiger, ook met ALLOW_RISKY=true. Her-verificatie (2.5)
+        # bepaalt de echte status.
+        vm = (verification_method or "").strip().lower()
+        if vm != "smtp":
+            return False, f"risky_unverified:{status}:method={vm or 'none'}"
         if allow_risky:
             return True, f"risky_accepted:{status}"
         return False, f"risky_rejected:{status}"
@@ -142,6 +152,7 @@ def filter_sendable_leads(
             lead.get("email_status"),
             allow_risky=allow_risky,
             is_test_lead=bool(lead.get("is_test_lead")),
+            verification_method=lead.get("email_verification_method"),
         )
         if ok:
             lead["_sendability_reason"] = reason

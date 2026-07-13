@@ -74,6 +74,7 @@ def assess_launch_readiness(lead: dict[str, Any], *, now: datetime | None = None
     #    is_sendable, maar een lead zonder email blijft geblokkeerd
     sendable, send_reason = is_sendable(
         lead.get("email"), lead.get("email_status"), is_test_lead=is_test,
+        verification_method=lead.get("email_verification_method"),
     )
     add("email", sendable, "block",
         f"Email sendable ({send_reason})" if sendable else f"Email niet sendable: {send_reason}")

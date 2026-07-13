@@ -47,8 +47,39 @@ _CATCHALL_PREFIX = "xzq7k2m9"
 
 # SMTP response code categories
 _SMTP_VALID_CODES = {250}
-_SMTP_INVALID_CODES = {550, 551, 552, 553, 554, 450, 501, 503, 521}
-_SMTP_RISKY_CODES = {421, 452, 451}
+_SMTP_INVALID_CODES = {550, 551, 552, 553, 554, 501, 503, 521}
+# Temporary/greylist codes — NIET 'risky' (adres-kwaliteit) maar
+# 'temporary_failure' (infra/greylisting). 450 hoort hier: het is een
+# tijdelijke weigering, geen definitieve bounce. Her-verificatie (fase 2.5)
+# probeert deze later opnieuw; inline seconden-retry verslaat greylisting niet.
+_SMTP_TEMPORARY_CODES = {421, 450, 451, 452}
+
+# Granulaire verificatie-statussen (remediation C1). De eerste drie zijn
+# ADRES-kwaliteit; de laatste drie zijn INFRA-fouten die NIET als
+# verzendbaar-twijfelachtig mogen tellen.
+_ADDRESS_STATUSES = {"valid", "invalid", "risky", "catchall_risky"}
+_INFRA_STATUSES = {"timeout", "connection_error", "temporary_failure"}
+
+# Granulaire status → coarse email_status dat binnen de migratie-023 CHECK
+# valt. Infra-fouten worden 'not_checked' (al toegestaan én al fail-closed in
+# is_sendable); de precieze reden leeft in email_verification_method.
+_COARSE_EMAIL_STATUS = {
+    "valid": "valid",
+    "invalid": "invalid",
+    "risky": "risky",
+    "catchall_risky": "catchall_risky",
+    "not_found": "not_found",
+    "not_checked": "not_checked",
+    "timeout": "not_checked",
+    "connection_error": "not_checked",
+    "temporary_failure": "not_checked",
+}
+
+
+def coarse_email_status(granular_status: str) -> str:
+    """Map een granulaire verificatie-status naar de coarse email_status die
+    de migratie-023 CHECK toestaat. Onbekend → 'not_checked' (fail-closed)."""
+    return _COARSE_EMAIL_STATUS.get(granular_status, "not_checked")
 
 
 # =============================================================================
@@ -159,26 +190,35 @@ async def get_best_email(
         Tuple of (best_email, status). best_email is None if nothing found.
     """
     if not candidates:
-        return (None, "not_found")
-
-    best_risky: str | None = None
-    best_risky_status: str = "risky"
+        return (None, "not_found", "none")
 
     results = await verify_email_list(candidates, supabase_client)
+
+    # Voorkeursvolgorde: bevestigd valid > adres-twijfel (risky/catchall) >
+    # infra-onbekend (timeout/connection_error/temporary_failure). Een
+    # infra-onbekend adres wordt WEL teruggegeven zodat de waterfall het
+    # opslaat, maar met zijn infra-status → coarse 'not_checked' → NIET
+    # verzendbaar (fail-closed). Alleen 'valid' en echte 'risky' (met
+    # method='smtp') zijn later verzendbaar.
+    first_address: tuple[str, str, str] | None = None
+    first_infra: tuple[str, str, str] | None = None
 
     for result in results:
         status = result["status"]
         email = result["email"]
+        method = result.get("method", "smtp")
         if status == "valid":
-            return (email, "valid")
-        if status in ("risky", "catchall_risky") and best_risky is None:
-            best_risky = email
-            best_risky_status = status
+            return (email, "valid", method)
+        if status in ("risky", "catchall_risky") and first_address is None:
+            first_address = (email, status, method)
+        elif status in _INFRA_STATUSES and first_infra is None:
+            first_infra = (email, status, method)
 
-    if best_risky:
-        return (best_risky, best_risky_status)
-
-    return (None, "not_found")
+    if first_address:
+        return first_address
+    if first_infra:
+        return first_infra
+    return (None, "not_found", "not_found")
 
 
 # =============================================================================
@@ -327,10 +367,11 @@ async def _smtp_verify(
         )
         return (status, method)
     except asyncio.TimeoutError:
-        return ("risky", "timeout")
+        # INFRA-fout, GEEN adres-oordeel (remediation C1).
+        return ("timeout", "timeout")
     except Exception as e:
         logger.debug("SMTP verify exception for %s: %s", email, e)
-        return ("risky", "exception")
+        return ("connection_error", "exception")
 
 
 def _smtp_verify_sync(
@@ -351,6 +392,10 @@ def _smtp_verify_sync(
     Returns:
         Tuple of (status, method).
     """
+    # We onthouden of ÉÉN host een RCPT-antwoord gaf (dan is de infra ok en
+    # is een verder falen adres-gerelateerd) vs. dat we nooit een handshake
+    # kregen (pure infra-fout → connection_error/timeout, NIET 'risky').
+    saw_timeout = False
     for mx_host in mx_hosts[:3]:  # Try at most 3 MX hosts
         try:
             with smtplib.SMTP(timeout=timeout) as smtp:
@@ -364,30 +409,28 @@ def _smtp_verify_sync(
                     return ("valid", "smtp")
                 elif code in _SMTP_INVALID_CODES:
                     return ("invalid", "smtp")
-                elif code in _SMTP_RISKY_CODES:
-                    return ("risky", "smtp")
+                elif code in _SMTP_TEMPORARY_CODES:
+                    # 421/450/451/452 = greylist/tijdelijk → INFRA, geen
+                    # adres-oordeel. Her-verificatie (2.5) probeert later opnieuw.
+                    return ("temporary_failure", "smtp")
                 else:
-                    # Unknown code — treat as risky
+                    # Onbekende code, maar we KREGEN een RCPT-antwoord → de
+                    # infra werkt; behandel als adres-twijfel (risky), niet infra.
                     logger.debug("Unknown SMTP code %d for %s", code, email)
                     return ("risky", "smtp")
 
-        except smtplib.SMTPConnectError:
-            logger.debug("SMTP connect error for MX %s", mx_host)
-            continue
-        except smtplib.SMTPServerDisconnected:
-            logger.debug("SMTP server disconnected for MX %s", mx_host)
-            continue
         except socket.timeout:
             logger.debug("SMTP timeout for MX %s", mx_host)
+            saw_timeout = True
             continue
-        except ConnectionRefusedError:
-            logger.debug("SMTP connection refused for MX %s", mx_host)
-            continue
-        except OSError as e:
-            logger.debug("SMTP OS error for MX %s: %s", mx_host, e)
+        except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected,
+                ConnectionRefusedError, OSError) as e:
+            logger.debug("SMTP connect/OS error for MX %s: %s", mx_host, e)
             continue
         except Exception as e:
             logger.debug("SMTP unexpected error for MX %s: %s", mx_host, e)
             continue
 
-    return ("risky", "timeout")
+    # Geen enkele host gaf een RCPT-antwoord → PURE INFRA-fout. NOOIT 'risky'
+    # (dat zou een niet-bestaand/gegokt adres verzendbaar maken). C1-kern.
+    return ("timeout", "timeout") if saw_timeout else ("connection_error", "connection_error")

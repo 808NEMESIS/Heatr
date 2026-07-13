@@ -101,8 +101,17 @@ def test_expired_cooldown_does_not_block():
     assert out["verdict"] == "ready"
 
 
-def test_risky_email_needs_review():
+def test_risky_email_without_method_blocked():
+    """C1-fix: risky ZONDER geslaagde SMTP-handshake is fail-closed geblokkeerd."""
     out = _verdict(_ready_lead(email_status="risky"))
+    assert out["verdict"] == "blocked"
+    assert any("niet sendable" in c["detail"] for c in out["checks"]
+               if c["key"] == "email")
+
+
+def test_risky_email_with_smtp_method_needs_review():
+    """Echte adres-twijfel (method='smtp') mag door met een review-waarschuwing."""
+    out = _verdict(_ready_lead(email_status="risky", email_verification_method="smtp"))
     assert out["verdict"] == "needs_review"
     assert any("bounce-risico" in r for r in out["reviews"])
 
@@ -135,6 +144,7 @@ def test_test_lead_bypasses_score_and_completeness_not_compliance():
 
 def test_blocked_wins_over_review():
     """Lead met zowel block- als review-issues → verdict blocked."""
-    out = _verdict(_ready_lead(gdpr_safe=False, email_status="risky"))
+    out = _verdict(_ready_lead(gdpr_safe=False,
+                               pushed_to_warmr_at="2026-06-01T10:00:00+00:00"))
     assert out["verdict"] == "blocked"
     assert len(out["reviews"]) >= 1  # review-redenen blijven zichtbaar

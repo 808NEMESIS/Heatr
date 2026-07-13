@@ -136,7 +136,7 @@ async def discover_email(
                     if any(c["email"] == cand_email for c in all_candidates):
                         continue
                     # Verify each candidate
-                    best_email, status = await get_best_email([cand_email], supabase_client)
+                    best_email, status, vmethod = await get_best_email([cand_email], supabase_client)
                     if best_email:
                         email_type, gdpr_safe = classify_email_gdpr(best_email, mode=gdpr_mode)
                         if gdpr_safe or gdpr_mode != "strict":
@@ -144,7 +144,9 @@ async def discover_email(
                                 "email": best_email,
                                 "email_type": email_type,
                                 "email_status": status,
+                                "email_verification_method": vmethod,
                                 "email_discovery_method": "google_search",
+                                "email_discovery_source": "google",
                                 "gdpr_safe": gdpr_safe,
                                 "source_step": "google_search",
                             })
@@ -164,13 +166,15 @@ async def discover_email(
                 if raw_email and not any(c["email"] == raw_email for c in all_candidates):
                     email_type, gdpr_safe = classify_email_gdpr(raw_email, mode=gdpr_mode)
                     if gdpr_safe or gdpr_mode != "strict":
-                        best_email, status = await get_best_email([raw_email], supabase_client)
+                        best_email, status, vmethod = await get_best_email([raw_email], supabase_client)
                         if best_email:
                             all_candidates.append({
                                 "email": best_email,
                                 "email_type": email_type,
                                 "email_status": status,
+                                "email_verification_method": vmethod,
                                 "email_discovery_method": "kvk",
+                                "email_discovery_source": "kvk",
                                 "gdpr_safe": gdpr_safe,
                                 "source_step": "kvk",
                             })
@@ -297,15 +301,21 @@ async def run_waterfall_for_lead(
 
     lead = response.data
 
-    # Skip waterfall if already has a valid/risky email
+    # H2-fix: sla de verificatie-waterval ALLEEN over als er een écht
+    # geverifieerd adres staat (email_status='valid'). Een ongeverifieerd
+    # 'risky'/'not_checked'-adres (bv. hardcoded door contact_crawl) mag de
+    # verificatie NIET kortsluiten — anders wordt een gok een lead-email.
     existing_status = lead.get("email_status", "")
-    if existing_status in ("valid", "risky") and lead.get("email"):
-        logger.info("Lead %s already has email (%s) — skipping waterfall", lead_id, existing_status)
+    existing_method = lead.get("email_verification_method", "")
+    if existing_status == "valid" and lead.get("email"):
+        logger.info("Lead %s heeft al een geverifieerd adres — waterfall geskipt", lead_id)
         return {
             "email": lead["email"],
             "email_type": "unknown",
-            "email_status": existing_status,
+            "email_status": "valid",
             "email_discovery_method": "pre_existing",
+            "email_verification_method": existing_method or "pre_existing",
+            "email_discovery_source": "pre_existing",
             "gdpr_safe": True,
         }
 
@@ -365,9 +375,10 @@ async def _step_website(
             raw = existing.data[0].get("raw_result") or {}
             candidate = raw.get("email_candidate") if isinstance(raw, dict) else None
             if candidate:
-                best, status = await get_best_email([candidate], supabase_client)
+                best, status, vmethod = await get_best_email([candidate], supabase_client)
                 if best:
-                    return {"email": best, "email_status": status}
+                    return {"email": best, "email_status": status,
+                            "email_verification_method": vmethod, "email_discovery_source": "website"}
     except Exception as e:
         logger.debug("Failed to check existing website enrichment: %s", e)
 
@@ -382,9 +393,10 @@ async def _step_website(
         )
         emails = website_data.get("emails", [])
         if emails:
-            best, status = await get_best_email(emails, supabase_client)
+            best, status, vmethod = await get_best_email(emails, supabase_client)
             if best:
-                return {"email": best, "email_status": status}
+                return {"email": best, "email_status": status,
+                        "email_verification_method": vmethod, "email_discovery_source": "website"}
     except Exception as e:
         logger.warning("Website scraper step failed: %s", e)
 
@@ -421,9 +433,10 @@ async def _step_patterns(
             tussenvoegsel=tussenvoegsel,
         )
         if candidates:
-            best, status = await get_best_email(candidates, supabase_client)
+            best, status, vmethod = await get_best_email(candidates, supabase_client)
             if best:
-                return {"email": best, "email_status": status}
+                return {"email": best, "email_status": status,
+                        "email_verification_method": vmethod, "email_discovery_source": "pattern"}
     except Exception as e:
         logger.warning("Pattern generator step failed: %s", e)
 
@@ -448,16 +461,42 @@ async def _update_lead_email(
         method: Discovery method label.
         supabase_client: Supabase client.
     """
+    from enrichment.email_verifier import coarse_email_status
+    granular = outcome.get("email_status") or "not_checked"
+    vmethod = outcome.get("email_verification_method") or "unknown"
+    source = outcome.get("email_discovery_source") or method
+    now = datetime.now(timezone.utc).isoformat()
     try:
+        # email_status = COARSE (blijft binnen migratie-023 CHECK); infra-fouten
+        # → 'not_checked' (fail-closed). De granulaire diagnostiek leeft in
+        # email_verification_method.
         supabase_client.table("leads").update({
             "email": outcome.get("email"),
             "email_type": outcome.get("email_type"),
-            "email_status": outcome.get("email_status"),
+            "email_status": coarse_email_status(granular),
+            "email_verification_method": vmethod,
+            "email_verified_at": now,
+            "email_discovery_source": source,
             "gdpr_safe": outcome.get("gdpr_safe", False),
-            "enriched_at": datetime.now(timezone.utc).isoformat(),
+            "enriched_at": now,
         }).eq("id", lead_id).execute()
     except Exception as e:
         logger.error("Failed to update lead email for %s: %s", lead_id, e)
+    # Append-only audit-trail (fail-soft: migratie 030 kan nog ontbreken).
+    try:
+        ws = (outcome.get("workspace_id") or "")
+        supabase_client.table("email_verifications").insert({
+            "workspace_id": ws or "aerys",
+            "lead_id": lead_id,
+            "email": outcome.get("email"),
+            "verification_status": granular if granular in (
+                "valid","invalid","catchall_risky","risky","timeout",
+                "connection_error","temporary_failure","not_checked","not_found") else "not_checked",
+            "verification_method": vmethod,
+            "discovery_source": source,
+        }).execute()
+    except Exception as e:
+        logger.debug("email_verifications-log niet geschreven (migratie 030?): %s", e)
 
 
 async def _mark_lead_not_found(lead_id: str, supabase_client: Any) -> None:
@@ -573,6 +612,8 @@ def _check_step_result(
         "email": email,
         "email_type": email_type,
         "email_status": step_result.get("email_status", "unknown"),
+        "email_verification_method": step_result.get("email_verification_method"),
+        "email_discovery_source": step_result.get("email_discovery_source"),
         "email_discovery_method": step_result.get("email_discovery_method", "unknown"),
         "gdpr_safe": gdpr_safe,
     }

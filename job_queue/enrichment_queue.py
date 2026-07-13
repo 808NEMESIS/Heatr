@@ -433,8 +433,14 @@ async def _run_step(
                 patch: dict = {}
                 existing_email = await _get_lead_field(lead_id, "email", supabase_client)
                 if not existing_email and crawl.get("emails"):
+                    # H2-fix: een gecrawld adres is NIET geverifieerd. Zet
+                    # 'not_checked' (fail-closed) i.p.v. het misleidende 'risky',
+                    # zodat de verificatie-waterval (stap 4) het adres alsnog
+                    # echt verifieert i.p.v. zichzelf over te slaan.
                     patch["email"] = crawl["emails"][0]
-                    patch["email_status"] = "risky"
+                    patch["email_status"] = "not_checked"
+                    patch["email_verification_method"] = "crawl_unverified"
+                    patch["email_discovery_source"] = "contact_crawl"
                 existing_phone = await _get_lead_field(lead_id, "phone", supabase_client)
                 if not existing_phone and crawl.get("phones"):
                     patch["phone"] = crawl["phones"][0]
