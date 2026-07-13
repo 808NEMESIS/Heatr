@@ -35,6 +35,40 @@ _COST_PER_M_INPUT = _PRICING["input_per_m_eur"]
 _COST_PER_M_OUTPUT = _PRICING["output_per_m_eur"]
 _ESTIMATED_COST_EUR = 0.0005
 
+# H3-fix (remediation): een geëxtraheerde naam mag alleen als contact_name
+# gebruikt worden als hij aantoonbaar in de brontekst voorkomt (geen
+# hallucinatie) én de confidence de floor haalt.
+OWNER_NAME_CONFIDENCE_FLOOR = 0.5
+
+
+def _normalize_name(s: str) -> str:
+    """Whitespace + case-normalisatie voor naam-matching."""
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def name_in_source(name: str | None, page_text: str | None) -> bool:
+    """True als de (voor)naam aantoonbaar in de brontekst voorkomt.
+
+    Matcht op de volledige naam OF op de achternaam (laatste token) — Claude
+    geeft soms 'Dr. J. Jansen' terwijl de site 'Jansen' toont. Een losse
+    voornaam van <3 tekens telt niet (te veel false matches). Leeg → False.
+    """
+    n = _normalize_name(name or "")
+    text = _normalize_name(page_text or "")
+    if not n or not text:
+        return False
+
+    def _word_in(needle: str) -> bool:
+        # woordgrens-match: 'an' matcht NIET binnen 'jansen'
+        return re.search(r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])", text) is not None
+
+    # volledige naam (≥3 tekens) als woord(groep)
+    if len(n) >= 3 and _word_in(n):
+        return True
+    # anders: achternaam (laatste zinvolle token ≥3 tekens) als woord
+    tokens = [t for t in n.split(" ") if len(t) >= 3]
+    return bool(tokens) and _word_in(tokens[-1])
+
 _ROLES_OWNER = {
     # Dutch
     "eigenaar", "oprichter", "mede-eigenaar", "dga", "directeur-eigenaar",

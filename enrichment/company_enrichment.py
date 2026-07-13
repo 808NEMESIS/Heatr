@@ -618,18 +618,22 @@ async def _fetch_website_text_from_enrichment(
         Website text string or "".
     """
     try:
+        # H1-fix: de crawler slaat op onder source='contact_crawl_v2' met key
+        # 'page_text' — NIET source='website'/'website_text' (die bestaan
+        # nergens). De oude query retourneerde daardoor structureel "" →
+        # industry/summary/size uitgehongerd.
         response = (
             supabase_client.table("enrichment_data")
             .select("raw_result")
             .eq("lead_id", lead_id)
-            .eq("source", "website")
+            .eq("source", "contact_crawl_v2")
             .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
         if response.data:
-            raw = response.data[0].get("raw_result", {})
-            return raw.get("website_text", "") or ""
+            raw = response.data[0].get("raw_result", {}) or {}
+            return raw.get("page_text", "") or ""
     except Exception:
         pass
     return ""
@@ -649,11 +653,13 @@ async def _fetch_website_enrichment_data(
         Dict with website enrichment signals or empty dict.
     """
     try:
+        # H1-fix: zie _fetch_website_text_from_enrichment — bron is
+        # 'contact_crawl_v2', niet 'website'.
         response = (
             supabase_client.table("enrichment_data")
             .select("raw_result")
             .eq("lead_id", lead_id)
-            .eq("source", "website")
+            .eq("source", "contact_crawl_v2")
             .order("created_at", desc=True)
             .limit(1)
             .execute()

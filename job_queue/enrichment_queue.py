@@ -513,20 +513,45 @@ async def _run_step(
                     logger.warning("owner_extract crashed: %s", e)
                     people = []
                 if people:
-                    # Update lead with primary owner name
-                    owner = next((p for p in people if p.get("is_owner")), people[0])
-                    patch2: dict = {}
-                    if owner.get("first_name"):
-                        patch2["contact_first_name"] = owner["first_name"]
-                    if owner.get("name"):
-                        patch2["contact_name"] = owner["name"]
-                    if patch2:
-                        try:
-                            supabase_client.table("leads").update(patch2).eq("id", lead_id).execute()
-                        except Exception as e:
-                            logger.debug("owner_extract lead update failed: %s", e)
-                    # Store all team members in heatr_contacts
-                    for p in people:
+                    from enrichment.owner_extractor import name_in_source, OWNER_NAME_CONFIDENCE_FLOOR
+                    # H3-fix: alleen personen wier naam AANTOONBAAR in de
+                    # brontekst voorkomt (geen hallucinatie) EN met voldoende
+                    # confidence tellen mee.
+                    verified = [
+                        p for p in people
+                        if name_in_source(p.get("name") or p.get("first_name"), page_text)
+                        and float(p.get("confidence") or 0) >= OWNER_NAME_CONFIDENCE_FLOOR
+                    ]
+                    dropped = len(people) - len(verified)
+                    if dropped:
+                        logger.info("owner_extract: %d/%d personen verworpen (naam niet in bron of lage confidence) voor lead %s",
+                                    dropped, len(people), lead_id)
+                    # Update lead ALLEEN met een geverifieerde eigenaar-naam.
+                    owner = next((p for p in verified if p.get("is_owner")), verified[0] if verified else None)
+                    if owner:
+                        patch2: dict = {}
+                        if owner.get("first_name"):
+                            patch2["contact_first_name"] = owner["first_name"]
+                        if owner.get("name"):
+                            patch2["contact_name"] = owner["name"]
+                            patch2["contact_source"] = "owner_extractor_v2_verified"
+                        if patch2:
+                            try:
+                                supabase_client.table("leads").update(patch2).eq("id", lead_id).execute()
+                            except Exception as e:
+                                logger.debug("owner_extract lead update failed: %s", e)
+                    # Dedup: haal bestaande contactnamen op, sla duplicaten over.
+                    try:
+                        existing = (supabase_client.table("contacts").select("name")
+                                    .eq("lead_id", lead_id).execute().data or [])
+                        seen = {(c.get("name") or "").strip().lower() for c in existing}
+                    except Exception:
+                        seen = set()
+                    for p in verified:
+                        key = (p.get("name") or "").strip().lower()
+                        if not key or key in seen:
+                            continue
+                        seen.add(key)
                         try:
                             supabase_client.table("contacts").insert({
                                 "workspace_id": workspace_id,
