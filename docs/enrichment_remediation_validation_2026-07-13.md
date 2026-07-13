@@ -96,3 +96,31 @@ De **veiligheidsmechanismen zijn gebouwd, getest en werken** — het systeem is 
 5. **Pas dán** een gecontroleerde canary: 1 inbox, klein segment, alleen `valid`-e-mails, bounce-rate meten.
 
 **Netto:** de remediation is geslaagd in wat hij moest doen — het systeem verstuurt geen slechte adressen, geen foute observaties, geen verzonnen namen meer, en vastgelopen leads zijn gecontroleerd herpakbaar. Maar fase A kan pas GO zodra de e-mailverificatie-infrastructuur werkt en een sample dát bewijst. Tot die tijd: **NO-GO**, met de bovenstaande vijf-stappen-route als kleinste veilige pad.
+
+---
+
+## ADDENDUM 2026-07-13 — e-mailverificatie-blokkade OPGELOST (externe API)
+
+Stap 1 van de vijf-stappen-route is uitgevoerd: **externe verify-API (Bouncer, EU/GDPR)** geïntegreerd (`enrichment/verify_api.py`), `verify_email` gebruikt de API eerst (fail-closed bij API-fout), en `is_sendable` accepteert `bouncer_api` als geldige methode. 8 unit-tests + 550 suite groen.
+
+**Sample (15 risky in-ICP leads, GEEN mail):** 10 valid · 3 catchall_risky · **1 invalid** (`contact@boerhaave.nl` — zou gebounced zijn) · 1 timeout. **14/15 kregen een echt oordeel** (vs. 1/858 bij de kapotte SMTP-verifier). De uitkomst is logisch en correct → de GO-conditie *"sample correct"* is nu **gehaald**.
+
+**Bijgewerkte GO-toets:**
+
+| GO-conditie | Was | Nu |
+|---|---|---|
+| onbekende/risky niet ongecontroleerd verzonden | ✅ | ✅ |
+| verifier onderscheidt kwaliteit vs infra | ✅ | ✅ |
+| contact_crawl kortsluit niet | ✅ | ✅ |
+| A3 alleen high-confidence observaties | ✅ | ✅ |
+| fetch-fouten geen negatieve observatie | ✅ | ✅ |
+| owner-namen aantoonbaar uit bron | ✅ | ✅ |
+| kleine sample correct | ❌ | ✅ **GEHAALD** |
+
+**Status: van NO-GO naar VOORWAARDELIJKE GO.** Alle zeven condities zijn nu ✅. Resterende, niet-blokkerende stappen vóór een echte batch:
+1. **Migratie 030 draaien** (persisteert `email_verification_method` + audit-trail; zonder 030 schrijft de runner alleen coarse `email_status` — fail-soft).
+2. **Volledige re-verificatie** (`scripts/reverify_email_full.py --apply`) over de 729 risky/not_checked leads (~€2,92 API-tegoed, geen mail) → levert de echte verzendbare set (valid).
+3. **Verse booking-detectie per lead** vóór A3 (de STORED wi-data blijft ongetrouwd — `pick_safe_observation` dwingt dit af).
+4. **Canary:** 1 inbox, klein `valid`-segment, bounce-rate meten.
+
+De veiligheidsmechanismen blijven fail-closed: tot de re-verificatie draait blijven alle 729 leads niet-verzendbaar (correct). Een batch is pas mogelijk ná stap 2 + 3.
