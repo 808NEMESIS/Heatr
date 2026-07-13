@@ -19,7 +19,7 @@
 | H5 | queued_no_inbox geen auto-recovery | **FIXED** | inbox_recovery.py |
 | P1/C2 | opener/summary ruw opgeslagen (89% vervuild) | **FIXED** | text_normalizer.py, company_enrichment.py |
 | 2.4 | greylist-retry | **PARTIAL** | greylist→temporary_failure (fail-closed); inline retry-with-backoff NIET (her-verificatie-pass i.p.v.) |
-| H4 | stil-gefaalde stappen ongeregistreerd; job altijd completed | **NOT FIXED** | (bewust buiten deze sprint; observability, niet send-blokkerend) |
+| H4 | stil-gefaalde stappen ongeregistreerd; job altijd completed | **FIXED** | enrichment_queue.py (`enrich_lead` step-loop, `complete_enrichment_job`) — gefaalde stappen → status `completed_with_errors` + error_message; 5 tests |
 | C3-store | conversion_checker + analyzer Playwright-fallback | **PARTIAL** | detector gebouwd; STORED wi-data blijft ongetrouwd; A3 gebruikt verse detectie |
 
 ---
