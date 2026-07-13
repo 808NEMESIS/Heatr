@@ -19,6 +19,14 @@ from utils.rate_limiter import RATE_LIMITS, consume_token
 import enrichment.email_verifier as ev
 
 
+@pytest.fixture(autouse=True)
+def _disable_verify_api(monkeypatch):
+    """Deze tests toetsen het SMTP-pad — zet de externe API expliciet uit zodat
+    een van een andere test gelekte BOUNCER_API_KEY niet interfereert."""
+    monkeypatch.setenv("EMAIL_VERIFY_PROVIDER", "none")
+    monkeypatch.delenv("BOUNCER_API_KEY", raising=False)
+
+
 def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 

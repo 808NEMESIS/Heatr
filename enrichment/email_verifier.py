@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import random
 import secrets
 import smtplib
 import socket
@@ -108,6 +107,20 @@ async def verify_email(
     email = email.lower().strip()
     domain = email.split("@")[1]
     timeout = int(os.getenv("EMAIL_VERIFY_TIMEOUT", "10"))
+
+    # Externe verify-API eerst (remediation C1-vervolg): werkt óók vanaf een
+    # host met dichte poort 25. Alleen als geconfigureerd (BOUNCER_API_KEY).
+    # Verstuurt niets. Bij een API-fout (timeout/402/error) valt-ie NIET terug
+    # op de kapotte SMTP-verifier maar geeft de fail-closed status door.
+    try:
+        from enrichment.verify_api import is_enabled as _api_enabled, verify_via_api
+        if _api_enabled():
+            res = await verify_via_api(email)
+            return (res["status"], res.get("method", "bouncer_api"))
+    except Exception as e:
+        logger.warning("verify_email: externe API-pad faalde voor %s: %s", email, e)
+        # val NIET stil terug op SMTP als de API bedoeld was — fail-closed
+        return ("not_checked", "error")
 
     # --- Rate limit: globale SMTP-verificatie-bucket -------------------------
     # De 'smtp_verify'-key bestaat nu in RATE_LIMITS (recovery-fix). Een

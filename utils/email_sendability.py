@@ -114,7 +114,7 @@ def is_sendable(
         # unknown en weiger, ook met ALLOW_RISKY=true. Her-verificatie (2.5)
         # bepaalt de echte status.
         vm = (verification_method or "").strip().lower()
-        if vm != "smtp":
+        if vm not in ("smtp", "bouncer_api"):
             return False, f"risky_unverified:{status}:method={vm or 'none'}"
         if allow_risky:
             return True, f"risky_accepted:{status}"
