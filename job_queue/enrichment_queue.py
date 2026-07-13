@@ -281,6 +281,11 @@ async def run_enrichment_for_lead(
     #   voorheen resette de in-memory accumulator naar 0 en kreeg een
     #   crashende job het budget per retry opnieuw.
     steps_done: list[str] = [str(x) for x in (job.get("steps_completed") or [])]
+    # H4 (audit v2): stap-fouten waren onzichtbaar — elke exception werd
+    # "non-fatal" geslikt en de job rapporteerde tóch 'completed'. Voortaan
+    # verzamelen we gefaalde stappen zodat completion het als
+    # 'completed_with_errors' + error_message kan markeren (queryable signaal).
+    steps_failed: list[dict] = []
     prior_spent = float(job.get("spent_eur") or 0)
     if prior_spent > 0:
         accumulator.charge(prior_spent, "restart_carryover")
@@ -353,7 +358,10 @@ async def run_enrichment_for_lead(
                 "Enrichment step %s failed for lead %s (non-fatal): %s",
                 step_name, lead_id, e,
             )
-            # Continue to next step — never let one step failure stop the pipeline
+            steps_failed.append({"step": step_name, "error": str(e)[:300]})
+            # Continue to next step — never let one step failure stop the
+            # pipeline (CLAUDE.md: vang exceptions per lead). Maar registreer
+            # de fout wél (H4) i.p.v. hem stil te laten verdwijnen.
 
     # Bump enrichment_version zodat queue_all_unenriched_leads deze lead niet
     # opnieuw queue't. status=enriched voor sectorselectors.
@@ -365,8 +373,15 @@ async def run_enrichment_for_lead(
     except Exception as e:
         logger.debug("Failed to bump enrichment_version for %s: %s", lead_id, e)
 
-    await complete_enrichment_job(job_id, supabase_client)
-    logger.info("Enrichment complete: lead=%s", lead_id)
+    await complete_enrichment_job(job_id, supabase_client, steps_failed=steps_failed)
+    if steps_failed:
+        logger.warning(
+            "Enrichment complete WITH ERRORS: lead=%s — %d/%d stap(pen) gefaald: %s",
+            lead_id, len(steps_failed), len(enrichment_types),
+            ", ".join(f["step"] for f in steps_failed),
+        )
+    else:
+        logger.info("Enrichment complete: lead=%s", lead_id)
 
 
 async def _run_step(
@@ -1015,18 +1030,34 @@ async def _get_cached_inboxes(
 # Job lifecycle
 # =============================================================================
 
-async def complete_enrichment_job(job_id: str, supabase_client: Any) -> None:
+async def complete_enrichment_job(
+    job_id: str,
+    supabase_client: Any,
+    steps_failed: list[dict] | None = None,
+) -> None:
     """Mark an enrichment job as completed.
 
     Args:
         job_id: Enrichment job UUID.
         supabase_client: Supabase client.
+        steps_failed: H4 (audit v2) — lijst {step, error} van stappen die tijdens
+            deze run non-fataal faalden. Leeg/None → 'completed' (ongewijzigd
+            gedrag). Niet-leeg → status 'completed_with_errors' + error_message,
+            zodat een lead met een stil-gefaalde stap (bv. email_waterfall)
+            queryable is i.p.v. onzichtbaar als 'completed' door te gaan.
     """
+    failed = steps_failed or []
+    update: dict[str, Any] = {
+        "status": "completed_with_errors" if failed else "completed",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if failed:
+        summary = "; ".join(f"{f['step']}: {f['error']}" for f in failed)
+        update["error_message"] = (
+            f"{len(failed)} stap(pen) non-fataal gefaald — {summary}"
+        )[:2000]
     try:
-        supabase_client.table("enrichment_jobs").update({
-            "status": "completed",
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", job_id).execute()
+        supabase_client.table("enrichment_jobs").update(update).eq("id", job_id).execute()
     except Exception as e:
         logger.error("complete_enrichment_job failed for %s: %s", job_id, e)
 
