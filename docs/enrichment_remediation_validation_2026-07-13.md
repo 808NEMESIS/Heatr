@@ -124,3 +124,27 @@ Stap 1 van de vijf-stappen-route is uitgevoerd: **externe verify-API (Bouncer, E
 4. **Canary:** 1 inbox, klein `valid`-segment, bounce-rate meten.
 
 De veiligheidsmechanismen blijven fail-closed: tot de re-verificatie draait blijven alle 729 leads niet-verzendbaar (correct). Een batch is pas mogelijk ná stap 2 + 3.
+
+---
+
+## ADDENDUM 2026-07-13 (2) — migratie 030/031 gedraaid + volledige re-verificatie gestart
+
+**Migratie 030 + 031 toegepast** (door user, Supabase SQL-editor). Bevestigd: `heatr_leads` heeft nu `email_verification_method` / `email_verified_at` / `email_discovery_source`; `heatr_email_verifications` bestaat (audit-trail).
+
+**Volledige re-verificatie (`--apply`, GEEN mail) gedraaid** — afgebroken door de veiligheids-abort toen **Bouncer's proeftegoed op raakte** (HTTP 402 na ~85 echte oordelen). Stand in prod ná de run:
+
+| email_status | aantal | betekenis |
+|---|---|---|
+| **valid** | **50** (49 nieuw, method=`bouncer_api`) | **verzendbaar** — persistentie 030-kolom bevestigd |
+| catchall_risky | 17 | onzeker, gate blokkeert zonder ALLOW_RISKY |
+| invalid | 1 | zou gebounced zijn — nu geblokkeerd |
+| not_checked | 67 | tegen tegoed-muur; **re-runnable** (blijft in scope) |
+| risky | 595 | nooit bereikt (loop brak af); re-runnable |
+
+**Bewijs end-to-end werkend:** 49 valids mét `method='bouncer_api'` (geen fail-soft fallback) + **134 audit-rijen** in `heatr_email_verifications`. De pijplijn klopt; alleen het tegoed was te klein.
+
+**Resterend:** 662 leads (595 risky + 67 not_checked) wachten op verificatie → **Bouncer-tegoed aanvullen** (~€2,5-3 voor ~662 calls), dan `reverify_email_full.py --apply` opnieuw (idempotent — pakt alleen de resterende leads, geen dubbele kosten op de 50 valid/17 catchall/1 invalid).
+
+**Runner gehard:** stopt nu direct bij een 402 i.p.v. de rest aan `not_checked` te verbranden (de 67 not_checked-writes waren vermijdbaar).
+
+**GO-status blijft VOORWAARDELIJKE GO** — nu met **50 aantoonbaar verzendbare leads** als eerste canary-set zodra de A3-tekst + verse booking-detectie staan; volledige set na tegoed-aanvulling.
