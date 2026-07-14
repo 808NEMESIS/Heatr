@@ -25,16 +25,121 @@ MIN_SCORE_FOR_WARMR = int(os.getenv("MIN_SCORE_FOR_WARMR", "65"))
 MIN_ICP_MATCH_FOR_WARMR = float(os.getenv("MIN_ICP_MATCH_FOR_WARMR", "0.6"))
 
 
+def compute_lead_score(lead: dict, icp_match: float) -> dict[str, Any]:
+    """Pure 4-dimensie score-berekening — GEEN DB. Kern van `score_lead`, los
+    testbaar en herbruikbaar in de rescore-dry-run.
+
+    Formules ongewijzigd t.o.v. de oude inline-versie; alleen geëxtraheerd.
+
+    Args:
+        lead: lead-dict met alle scoring-input-velden.
+        icp_match: reeds berekende ICP-match (0-1), voedt de fit-dimensie.
+
+    Returns:
+        {score, fit_score, data_quality_score_num, reachability_score,
+         personalization_potential}
+    """
+    result: dict[str, Any] = {}
+
+    # --- Dimension 1: FIT SCORE (0-40) — volledig uit icp_match + reviews ---
+    fit_score = int(icp_match * 40)
+    review_count = lead.get("google_review_count") or 0
+    if review_count >= 100:
+        fit_score = min(fit_score + 4, 40)
+    elif review_count >= 50:
+        fit_score = min(fit_score + 3, 40)
+    elif review_count >= 20:
+        fit_score = min(fit_score + 2, 40)
+    elif review_count >= 5:
+        fit_score = min(fit_score + 1, 40)
+    # 0 reviews = no boost (not penalized, but no signal of activity)
+    result["fit_score"] = fit_score
+
+    # --- Dimension 2: DATA QUALITY (0-20) ---
+    confidence = lead.get("confidence_scores") or {}
+    if confidence:
+        dq = lead.get("data_quality_score") or 0
+        result["data_quality_score_num"] = round(float(dq) * 20, 1)
+    else:
+        # No verification run yet — assign baseline from available data
+        baseline = 0.0
+        if lead.get("domain"):
+            baseline += 0.3
+        if lead.get("email"):
+            baseline += 0.2
+        if lead.get("company_name"):
+            baseline += 0.2
+        result["data_quality_score_num"] = round(baseline * 20, 1)
+
+    # --- Dimension 3: REACHABILITY (0-25) ---
+    reach = 0
+    email_status = lead.get("email_status") or ""
+    email_scores = {"valid": 10, "risky": 6, "catch_all": 3, "catchall_risky": 2}
+    reach += email_scores.get(email_status, 0)
+
+    if lead.get("contact_first_name") and lead.get("contact_source"):
+        contact_source_scores = {
+            "website_team_page": 5,
+            "kvk": 5,
+            "linkedin_google_search": 4,
+            "email_inference": 2,
+        }
+        reach += contact_source_scores.get(lead.get("contact_source", ""), 2)
+    elif lead.get("contact_first_name"):
+        reach += 2
+
+    if lead.get("phone"):
+        reach += 3
+    if lead.get("gdpr_safe"):
+        reach += 3
+    if lead.get("contact_linkedin_url"):
+        reach += 2
+
+    # Domain email (0-2) — email on company domain stronger than external
+    email = lead.get("email") or ""
+    domain = lead.get("domain") or ""
+    if email and domain and email.split("@")[-1].lower() == domain.lower():
+        reach += 2
+
+    result["reachability_score"] = min(reach, 25)
+
+    # --- Dimension 4: PERSONALIZATION POTENTIAL (0-15) ---
+    pers = 0
+    hooks = lead.get("personalization_hooks") or []
+    observations = lead.get("personalization_observations") or []
+    positioning = lead.get("company_positioning") or ""
+    if hooks:
+        pers += min(len(hooks) * 2, 6)   # Up to 6 pts for hooks
+    if observations:
+        pers += min(len(observations), 4)  # Up to 4 pts for observations
+    if positioning:
+        pers += 3                          # Has clear positioning
+    if lead.get("personalized_opener"):
+        pers += 2                          # Claude opener generated
+    result["personalization_potential"] = min(pers, 15)
+
+    # --- Total ---
+    total = (
+        result["fit_score"]
+        + int(result["data_quality_score_num"])
+        + result["reachability_score"]
+        + result["personalization_potential"]
+    )
+    result["score"] = min(total, 100)
+    return result
+
+
 async def score_lead(
     lead_id: str,
     workspace_id: str,
     supabase_client: Any,
 ) -> dict[str, Any]:
     """
-    Compute multi-dimensional lead score.
+    Compute multi-dimensional lead score and persist it.
 
     Runs ICP matching, reads data quality from verification, checks
-    reachability signals, and assesses personalization potential.
+    reachability signals, and assesses personalization potential. Thin wrapper
+    rond `compute_lead_score` (pure) + push-eligibility + persist.
 
     Returns:
         {
@@ -69,125 +174,15 @@ async def score_lead(
     lead = lead_res.data
     sector = lead.get("sector") or ""
 
-    # -----------------------------------------------------------------------
-    # Dimension 1: FIT SCORE (0-40)
-    # -----------------------------------------------------------------------
+    # ICP match (schrijft zelf leads.icp_match), dan de 4 dimensies (puur).
     icp_match = await match_icp(lead_id, sector, workspace_id, supabase_client)
-    fit_score = int(icp_match * 40)
-
-    # Sectors.py v2 (2026-04-21) heeft geen scoring_boosts meer per sector.
-    # Fit-score komt volledig uit icp_match + review_count signalen hieronder.
-    # Zie CHANGES_PR2.md voor rationale.
-
-    # Review count signal — high review count = active, established business
-    review_count = lead.get("google_review_count") or 0
-    if review_count >= 100:
-        fit_score = min(fit_score + 4, 40)
-    elif review_count >= 50:
-        fit_score = min(fit_score + 3, 40)
-    elif review_count >= 20:
-        fit_score = min(fit_score + 2, 40)
-    elif review_count >= 5:
-        fit_score = min(fit_score + 1, 40)
-    # 0 reviews = no boost (not penalized, but no signal of activity)
-
-    result["fit_score"] = fit_score
-
-    # -----------------------------------------------------------------------
-    # Dimension 2: DATA QUALITY (0-20)
-    # -----------------------------------------------------------------------
-    confidence = lead.get("confidence_scores") or {}
-    if confidence:
-        dq = lead.get("data_quality_score") or 0
-        result["data_quality_score_num"] = round(float(dq) * 20, 1)
-    else:
-        # No verification run yet — assign baseline from available data
-        baseline = 0.0
-        if lead.get("domain"):
-            baseline += 0.3
-        if lead.get("email"):
-            baseline += 0.2
-        if lead.get("company_name"):
-            baseline += 0.2
-        result["data_quality_score_num"] = round(baseline * 20, 1)
-
-    # -----------------------------------------------------------------------
-    # Dimension 3: REACHABILITY (0-25)
-    # -----------------------------------------------------------------------
-    reach = 0
-
-    # Email quality (0-10)
-    email_status = lead.get("email_status") or ""
-    email_scores = {"valid": 10, "risky": 6, "catch_all": 3, "catchall_risky": 2}
-    reach += email_scores.get(email_status, 0)
-
-    # Contact person found (0-5)
-    if lead.get("contact_first_name") and lead.get("contact_source"):
-        contact_source_scores = {
-            "website_team_page": 5,
-            "kvk": 5,
-            "linkedin_google_search": 4,
-            "email_inference": 2,
-        }
-        reach += contact_source_scores.get(lead.get("contact_source", ""), 2)
-    elif lead.get("contact_first_name"):
-        reach += 2
-
-    # Phone available (0-3)
-    if lead.get("phone"):
-        reach += 3
-
-    # GDPR safe (0-3)
-    if lead.get("gdpr_safe"):
-        reach += 3
-
-    # LinkedIn URL (0-2)
-    if lead.get("contact_linkedin_url"):
-        reach += 2
-
-    # Domain email (0-2) — email on company domain stronger than external
-    email = lead.get("email") or ""
-    domain = lead.get("domain") or ""
-    if email and domain and email.split("@")[-1].lower() == domain.lower():
-        reach += 2
-
-    result["reachability_score"] = min(reach, 25)
-
-    # -----------------------------------------------------------------------
-    # Dimension 4: PERSONALIZATION POTENTIAL (0-15)
-    # -----------------------------------------------------------------------
-    pers = 0
-
-    hooks = lead.get("personalization_hooks") or []
-    observations = lead.get("personalization_observations") or []
-    positioning = lead.get("company_positioning") or ""
-
-    if hooks:
-        pers += min(len(hooks) * 2, 6)   # Up to 6 pts for hooks
-    if observations:
-        pers += min(len(observations), 4)  # Up to 4 pts for observations
-    if positioning:
-        pers += 3                          # Has clear positioning
-    if lead.get("personalized_opener"):
-        pers += 2                          # Claude opener generated
-
-    result["personalization_potential"] = min(pers, 15)
-
-    # -----------------------------------------------------------------------
-    # Total score
-    # -----------------------------------------------------------------------
-    total = (
-        result["fit_score"]
-        + int(result["data_quality_score_num"])
-        + result["reachability_score"]
-        + result["personalization_potential"]
-    )
-    result["score"] = min(total, 100)
+    result.update(compute_lead_score(lead, icp_match))
 
     # -----------------------------------------------------------------------
     # Push eligibility
     # -----------------------------------------------------------------------
     block_reasons: list[str] = []
+    email_status = lead.get("email_status") or ""
 
     if result["score"] < MIN_SCORE_FOR_WARMR:
         block_reasons.append(f"score {result['score']} < {MIN_SCORE_FOR_WARMR}")

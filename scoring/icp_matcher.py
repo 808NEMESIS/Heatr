@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 # behandelaars-sectoren dekt: 1-persoons solo praktijken tot 15-person klinieken.
 _FALLBACK_COMPANY_SIZE_RANGE = (1, 15)
 
+# ICP-keyword-saturatie: bij dit aantal DISTINCTE keyword-matches telt de
+# keyword-component volledig (0.35). Absoluut i.p.v. lijstlengte-afhankelijk —
+# de oude `matches / (len(keywords)*0.3)` eiste 42+ matches bij een 137-woorden-
+# sector en ~4 bij een 13-woorden-sector: sector-oneerlijk én overal te laag.
+_KEYWORD_SATURATION = 5
+
 
 def _collect_icp_signals(sector_config: dict) -> list[str]:
     """Flatten alle subcategory icp_signals + global lead_keywords tot één lijst."""
@@ -29,94 +35,86 @@ def _collect_icp_signals(sector_config: dict) -> list[str]:
     return signals
 
 
-async def match_icp(
-    lead_id: str,
-    sector: str,
-    workspace_id: str,
-    supabase_client: Any,
-) -> float:
-    """
-    Compute ICP match score for a lead.
+def _parse_employee_count(lead: dict) -> int | None:
+    """Leid een indicatief medewerker-aantal af uit de kolommen die ECHT bestaan
+    (`kvk_employee_count_range`, `company_size_estimate`).
 
-    Checks:
-      - icp_keywords found on website / company description
-      - exclude_keywords (disqualify if found)
-      - Company size in target range
-      - Google rating threshold
-      - KvK SBI code match
+    De oude code las `employee_count`/`estimated_size` — phantom-kolommen die
+    nergens geschreven worden → iedereen kreeg 'unknown size'. Returnt None als
+    er geen parsebare data is; dan telt de size-component niet mee in de noemer.
+    """
+    import re
+    for field in ("kvk_employee_count_range", "company_size_estimate"):
+        raw = lead.get(field)
+        if not raw:
+            continue
+        nums = re.findall(r"\d+", str(raw))
+        if nums:
+            # Ondergrens van de range als indicatie ("2-10" → 2, "1-5 mdw" → 1).
+            return int(nums[0])
+    return None
+
+
+def compute_icp_match(lead: dict, sector_config: dict) -> dict:
+    """Pure ICP-berekening — GEEN DB. Kern van `match_icp`; los testbaar en
+    herbruikbaar in de rescore-dry-run.
+
+    De denominator (`evaluable_max`) telt ALLEEN componenten mee die voor deze
+    lead daadwerkelijk evalueerbaar zijn. SBI (KvK opt-in) en company-size worden
+    overgeslagen als de benodigde data structureel ontbreekt, zodat een onmeetbaar
+    signaal de score niet omlaag drukt. Dit is de kern-fix: voorheen was
+    `max_score` altijd exact 1.0 (alle componenten onvoorwaardelijk opgeteld),
+    dus delen door `max_score` was een no-op en de score capte rond 0.45.
 
     Returns:
-        ICP match score 0.0-1.0. Also writes to leads.icp_match.
+        {"icp_match": float 0.0-1.0, "signals": list[str], "evaluable_max": float}
     """
-    try:
-        sector_config = get_sector(sector)
-    except ValueError:
-        logger.warning("icp_matcher: unknown sector %s", sector)
-        return 0.0
-
-    # Load lead
-    lead_res = supabase_client.table("leads").select("*").eq(
-        "id", lead_id,
-    ).eq("workspace_id", workspace_id).maybe_single().execute()
-
-    if not lead_res.data:
-        return 0.0
-
-    lead = lead_res.data
     signals: list[str] = []
     score = 0.0
     max_score = 0.0
 
-    # --- Disqualifiers check (instant disqualify) ---
-    # Combineer globale + subcategory disqualifiers
+    company_text = _build_company_text(lead).lower()
+
+    # --- Disqualifiers (instant disqualify) — globale + subcategory ---
     disqualifiers: list[str] = list(sector_config.get("disqualifiers") or [])
     for sub in (sector_config.get("subcategories") or {}).values():
         disqualifiers.extend(sub.get("disqualifiers") or [])
-
-    company_text = _build_company_text(lead).lower()
-
     for kw in disqualifiers:
         if kw.lower() in company_text:
-            logger.info("icp_matcher: lead %s disqualified by keyword '%s'", lead_id, kw)
-            _store_icp_match(supabase_client, lead_id, 0.0)
-            return 0.0
+            return {"icp_match": 0.0, "signals": ["disqualified"], "evaluable_max": 0.0}
 
-    # --- ICP keywords (max 0.35) ---
-    icp_keywords = _collect_icp_signals(sector_config)
+    # --- ICP keywords (0.35) — saturatie op absoluut aantal matches ---
     max_score += 0.35
+    icp_keywords = _collect_icp_signals(sector_config)
     if icp_keywords:
         matches = sum(1 for kw in icp_keywords if kw.lower() in company_text)
-        keyword_ratio = min(matches / max(len(icp_keywords) * 0.3, 1), 1.0)
+        keyword_ratio = min(matches / _KEYWORD_SATURATION, 1.0)
         score += keyword_ratio * 0.35
+        if matches:
+            signals.append(f"keywords:{matches}")
 
-    # --- KvK SBI match (0.20) ---
-    # Nieuwe 5-cijferige SBI 2025 codes. Prefix-match blijft werken (e.g. lead sbi
-    # "86919" matcht entry "86919"; oude 4-cijferige lead sbi "8691" matcht ook
-    # via prefix omdat "86919" startswith("8691") — maar leads zouden inmiddels
-    # naar 5-cijferig gemigreerd moeten zijn).
-    max_score += 0.20
+    # --- KvK SBI match (0.20) — CONDITIONEEL: alleen als evalueerbaar ---
+    # Kolom-fix: de enrichment schrijft `kvk_sbi_code` (niet het phantom
+    # `sbi_code`). Alleen meetellen als de sector SBI-codes kent én de lead
+    # SBI-data heeft — anders is het signaal onmeetbaar (KvK opt-in uit).
     sbi_codes = sector_config.get("sbi_codes") or []
-    lead_sbi = (lead.get("sbi_code") or "").replace(".", "")
-    if lead_sbi and sbi_codes:
+    lead_sbi = (lead.get("kvk_sbi_code") or lead.get("sbi_code") or "").replace(".", "")
+    if sbi_codes and lead_sbi:
+        max_score += 0.20
         if any(code.startswith(lead_sbi) or lead_sbi.startswith(code) for code in sbi_codes):
             score += 0.20
             signals.append("sbi_match")
 
-    # --- Company size fit (0.15) ---
-    # Sectors.py v2 (2026-04-21) bevat geen typical_company_size meer per sector.
-    # We gebruiken een vaste behandelaars-range (1-15) tot feedback data meer
-    # nuance rechtvaardigt.
-    max_score += 0.15
-    lo, hi = _FALLBACK_COMPANY_SIZE_RANGE
-    employee_count = lead.get("employee_count") or lead.get("estimated_size") or 0
-    if employee_count:
+    # --- Company size fit (0.15) — CONDITIONEEL: alleen als parsebaar ---
+    employee_count = _parse_employee_count(lead)
+    if employee_count is not None:
+        max_score += 0.15
+        lo, hi = _FALLBACK_COMPANY_SIZE_RANGE
         if lo <= employee_count <= hi:
             score += 0.15
             signals.append("size_fit")
-    else:
-        score += 0.08  # Unknown size — give partial credit
 
-    # --- Google rating (0.15) ---
+    # --- Google rating (0.15) — onvoorwaardelijk (afwezigheid = echt signaal) ---
     max_score += 0.15
     rating = lead.get("google_rating") or 0
     if rating >= 4.5:
@@ -127,22 +125,53 @@ async def match_icp(
     elif rating >= 3.5:
         score += 0.05
 
-    # --- Has website (0.10) ---
+    # --- Has website (0.10) — onvoorwaardelijk ---
     max_score += 0.10
     if lead.get("domain"):
         score += 0.10
         signals.append("has_website")
 
-    # --- Has valid email (0.05) ---
+    # --- Has valid email (0.05) — onvoorwaardelijk ---
     max_score += 0.05
     if lead.get("email_status") in ("valid", "risky"):
         score += 0.05
         signals.append("has_email")
 
-    icp_match = round(min(score, 1.0), 3)
+    icp_match = round(min(score / max_score, 1.0), 3) if max_score > 0 else 0.0
+    return {"icp_match": icp_match, "signals": signals, "evaluable_max": round(max_score, 3)}
+
+
+async def match_icp(
+    lead_id: str,
+    sector: str,
+    workspace_id: str,
+    supabase_client: Any,
+) -> float:
+    """
+    Compute ICP match score for a lead and persist it to leads.icp_match.
+
+    Thin wrapper rond `compute_icp_match` (pure): sector-config resolven, lead
+    laden, berekenen, opslaan. Returns 0.0-1.0.
+    """
+    try:
+        sector_config = get_sector(sector)
+    except ValueError:
+        logger.warning("icp_matcher: unknown sector %s", sector)
+        return 0.0
+
+    lead_res = supabase_client.table("leads").select("*").eq(
+        "id", lead_id,
+    ).eq("workspace_id", workspace_id).maybe_single().execute()
+
+    if not lead_res.data:
+        return 0.0
+
+    result = compute_icp_match(lead_res.data, sector_config)
+    icp_match = result["icp_match"]
     _store_icp_match(supabase_client, lead_id, icp_match)
 
-    logger.info("icp_matcher: lead=%s sector=%s match=%.2f signals=%s", lead_id, sector, icp_match, signals)
+    logger.info("icp_matcher: lead=%s sector=%s match=%.2f signals=%s",
+                lead_id, sector, icp_match, result["signals"])
     return icp_match
 
 
