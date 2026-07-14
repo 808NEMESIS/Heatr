@@ -636,10 +636,10 @@ async def _store_enrichment_result(
         "enrichment_step": step,
         "source": source,
         "email_candidate": emails_found[0] if emails_found else None,
-        "email_verified": False,  # verification happens in email_verifier.py
+        # 'email_verified' + 'mx_records' verwijderd: die kolommen bestaan niet
+        # in heatr_enrichment_data → hele insert faalde met PGRST204 (datagat).
         "email_status": None,
         "catch_all": False,
-        "mx_records": [],
         "raw_result": raw_result,
         "succeeded": succeeded,
     }

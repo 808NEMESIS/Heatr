@@ -404,6 +404,18 @@ async def _execute_job_with_semaphore(
                 supabase_client=supabase_client,
             )
 
+            # Promoveer de net-gescrapete bedrijven naar leads. Discovery-jobs
+            # (google_maps/directory) vullen companies_raw; zonder deze stap
+            # blijven ze wezen (qualify_and_create_lead had geen callers meer).
+            # website-jobs verrijken een bestaande lead → geen promotie.
+            if job_type in ("google_maps", "directory"):
+                await _promote_scraped_companies(
+                    sector_key=sector_key,
+                    location=location,
+                    workspace_id=workspace_id,
+                    supabase_client=supabase_client,
+                )
+
         except Exception as exc:
             logger.exception("Job %s raised an exception: %s", job_id, exc)
             await fail_job(
@@ -411,6 +423,50 @@ async def _execute_job_with_semaphore(
                 error_message=str(exc),
                 supabase_client=supabase_client,
             )
+
+
+async def _promote_scraped_companies(
+    sector_key: str,
+    location: str,
+    workspace_id: str,
+    supabase_client: Any,
+) -> None:
+    """Promoveer nog-onverwerkte companies_raw-rijen voor deze (sector, stad)
+    naar leads via de bestaande qualifier.
+
+    Fail-soft: de scrape-job is al `completed`; een promotie-fout mag hem niet
+    alsnog laten stranden. Idempotent — qualify_and_create_lead dedupt op domein
+    en markeert afvallers, en we selecteren alleen `qualification_status IS NULL`,
+    dus herdraaien promoveert niets dubbel.
+    """
+    from enrichment.lead_qualifier import qualify_and_create_lead
+    try:
+        q = (supabase_client.table("companies_raw").select("*")
+             .eq("workspace_id", workspace_id)
+             .is_("qualification_status", "null"))
+        if sector_key:
+            q = q.eq("sector", sector_key)
+        if location:
+            q = q.eq("city", location)
+        rows = q.execute().data or []
+    except Exception as e:
+        logger.error("promotie: fetch companies_raw faalde (sector=%s stad=%s): %s",
+                     sector_key, location, e)
+        return
+
+    promoted = 0
+    for raw in rows:
+        try:
+            lead = await qualify_and_create_lead(
+                raw, raw.get("sector") or sector_key, workspace_id, supabase_client,
+            )
+            if lead:
+                promoted += 1
+        except Exception as e:
+            logger.warning("promotie: qualify_and_create_lead faalde voor %s: %s",
+                           raw.get("company_name"), e)
+    logger.info("promotie: %d/%d companies_raw → leads (sector=%s stad=%s)",
+                promoted, len(rows), sector_key, location)
 
 
 async def _dispatch_job(
