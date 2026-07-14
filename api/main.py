@@ -2027,7 +2027,10 @@ async def list_inbox(
 
     q = db.table("reply_inbox").select("*").eq("workspace_id", workspace_id).order("received_at", desc=True).limit(limit)
     if status_filter := params.get("status"):
-        q = q.eq("event_type", status_filter)
+        # Kolom-fix (2026-07-14): 'event_type' bestaat niet op heatr_reply_inbox
+        # (migratie 004) — elke ?status=-aanroep gaf een PostgREST-error. De
+        # echte filterkolom is 'classification'.
+        q = q.eq("classification", status_filter)
 
     res = q.execute()
     return {"messages": res.data or []}
@@ -2043,6 +2046,93 @@ async def get_inbox_message(
     if not res.data:
         raise HTTPException(status_code=404, detail="Message not found")
     return res.data
+
+
+# Classificatie-waarden zoals de classifier ze schrijft (reply_classifier.py
+# VALID_CATEGORIES) — de bron voor het ?classification=-filter hieronder.
+_REPLY_CLASSIFICATIONS = {
+    "interested", "not_now", "not_interested", "wrong_person",
+    "unsubscribe_request", "auto_reply", "question", "other",
+}
+_REPLY_PREVIEW_CHARS = 200
+
+
+@app.get("/reply-inbox")
+async def list_reply_inbox(
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Unified inbox voor de frontend (Inbox.tsx): alle Warmr-replies, nieuwste
+    eerst, in het contract dat de pagina verwacht.
+
+    Contract-fix (2026-07-14): de frontend riep dit endpoint al aan, maar het
+    bestond niet — alleen GET /inbox met andere veldnamen ({messages}, body,
+    from_email). Dit endpoint levert {replies: [...]} met per rij:
+      id, lead_id, subject, body_preview (HTML-gestript + afgekapt),
+      sender_email (← from_email), classification, received_at,
+      company_name (← join heatr_leads).
+
+    Query-params:
+      limit: max aantal rijen (default 100, cap 200).
+      classification: filter op één classifier-waarde, of 'unclassified'
+        voor rijen die nog niet geclassificeerd zijn (classification IS NULL).
+    """
+    from utils.lead_thread import _strip_html_to_text
+
+    params = dict(request.query_params)
+    limit = min(int(params.get("limit", 100)), 200)
+
+    q = (
+        db.table("reply_inbox")
+        .select("id, lead_id, subject, body, body_html, from_email, "
+                "classification, received_at")
+        .eq("workspace_id", workspace_id)
+    )
+    if cls_filter := params.get("classification"):
+        if cls_filter == "unclassified":
+            q = q.is_("classification", "null")
+        elif cls_filter in _REPLY_CLASSIFICATIONS:
+            q = q.eq("classification", cls_filter)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Onbekende classification-filter: {cls_filter!r}",
+            )
+    res = q.order("received_at", desc=True).limit(limit).execute()
+    rows = res.data or []
+
+    # Bedrijfsnamen via een tweede batch-query i.p.v. een embedded join:
+    # heatr_reply_inbox.lead_id heeft GEEN FK naar heatr_leads (migratie 004),
+    # dus PostgREST kan niet embedden (PGRST200 — live smoke 2026-07-14).
+    company_by_lead: dict[str, str] = {}
+    lead_ids = sorted({r["lead_id"] for r in rows if r.get("lead_id")})
+    if lead_ids:
+        try:
+            lres = (db.table("leads").select("id, company_name")
+                    .eq("workspace_id", workspace_id)
+                    .in_("id", lead_ids).execute())
+            company_by_lead = {
+                l["id"]: l.get("company_name") for l in (lres.data or [])
+            }
+        except Exception as e:
+            # Naam-lookup is verrijking, geen kern — inbox blijft werken.
+            logger.warning("reply-inbox: company_name-lookup faalde: %s", e)
+
+    replies = []
+    for row in rows:
+        preview = _strip_html_to_text(row.get("body_html") or row.get("body"))
+        replies.append({
+            "id": row.get("id"),
+            "lead_id": row.get("lead_id"),
+            "subject": row.get("subject"),
+            "body_preview": preview[:_REPLY_PREVIEW_CHARS] or None,
+            "sender_email": row.get("from_email"),
+            "classification": row.get("classification"),
+            "received_at": row.get("received_at"),
+            "company_name": company_by_lead.get(row.get("lead_id")),
+        })
+    return {"replies": replies}
 
 
 # =============================================================================
@@ -3441,6 +3531,17 @@ async def warmr_webhook(
         # GEEN `event_type`/`from_name` (bestaan niet) → voorheen faalde de
         # insert stil met PGRST204 en ging de hele inbound-reply-audittrail
         # verloren, terwijl de webhook tóch {"ok": true} teruggaf.
+        # Deterministische classificatie (2026-07-14): voor events waarvan de
+        # aard al vaststaat hoeft geen Claude-classifier te draaien — de
+        # Afgemeld-tab in de inbox werkt dan direct, en bounce-audit-rijen
+        # vervuilen de unclassified-wachtrij niet.
+        _event_classification: dict[str, tuple[str, str]] = {
+            "unsubscribed": ("unsubscribe_request", "Afmelding via Warmr-event (deterministisch)"),
+            "lead.unsubscribed": ("unsubscribe_request", "Afmelding via Warmr-event (deterministisch)"),
+            "bounced": ("other", "Bounce-event (geen reply)"),
+            "lead.bounced": ("other", "Bounce-event (geen reply)"),
+        }
+        _cls, _cls_summary = _event_classification.get(event_type, (None, None))
         try:
             db.table("reply_inbox").insert({
                 "workspace_id": workspace_id,
@@ -3450,6 +3551,8 @@ async def warmr_webhook(
                 "body": payload.get("body_text") or payload.get("body"),
                 "body_html": payload.get("body_html"),
                 "received_at": _now_iso(),
+                "classification": _cls,
+                "classification_summary": _cls_summary,
             }).execute()
         except Exception as exc:
             audit_logged = False
@@ -3470,7 +3573,10 @@ async def warmr_webhook(
             )
 
         elif event_type in ("replied", "lead.replied"):
-            db.table("leads").update({"crm_stage": "beantwoord"}).eq(
+            # 'gereageerd' i.p.v. het oude 'beantwoord' (2026-07-14): de
+            # CRM-frontend (STAGES-enum) kent 'beantwoord' niet, waardoor
+            # beantwoorders in een onzichtbare kolom belandden.
+            db.table("leads").update({"crm_stage": "gereageerd"}).eq(
                 "id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
@@ -3503,10 +3609,14 @@ async def warmr_webhook(
             # Fase 2-hotfix: status='unsubscribed' is de kolom die
             # compliance_check blokkeert — email_status/crm_stage alleen
             # was het suppression-lek uit audit v2 P0-2.
+            # crm_stage 'verloren' i.p.v. het oude 'afgesloten' (2026-07-14):
+            # 'afgesloten' bestaat niet in de CRM-frontend-enum — afmelders
+            # werden onzichtbaar. status='unsubscribed' + suppressie blijven
+            # de autoritaire blokkade; crm_stage is alleen board-plaatsing.
             db.table("leads").update({
                 "email_status": "unsubscribed",
                 "status": "unsubscribed",
-                "crm_stage": "afgesloten",
+                "crm_stage": "verloren",
             }).eq("id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
             _register_suppression_from_webhook(
                 db, heatr_lead_id, workspace_id,
@@ -4851,10 +4961,13 @@ async def draft_reply_endpoint(
         except Exception:
             pass
 
-    # Use existing classification if present, else classify on-the-fly
+    # Use existing classification if present, else classify on-the-fly.
+    # Kolom-fix (2026-07-14): de echte kolommen heten 'classification' en
+    # 'classification_summary' (migratie 004) — 'category'/'classifier_summary'
+    # bestonden nooit, dus de summary was altijd leeg.
     classification = {
-        "category": reply_row.get("classification") or reply_row.get("category") or "other",
-        "summary": reply_row.get("classifier_summary") or "",
+        "category": reply_row.get("classification") or "other",
+        "summary": reply_row.get("classification_summary") or "",
     }
 
     ac = anthropic.AsyncAnthropic(api_key=_os.environ["ANTHROPIC_API_KEY"])

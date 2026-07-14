@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Mail, Reply, Sparkles, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -6,6 +6,7 @@ import { fmtRelative } from '@/lib/format';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface Reply {
   id: string;
@@ -18,6 +19,22 @@ interface Reply {
   company_name?: string;
 }
 
+/** Tab-definitie: welke classifications vallen onder welke tab.
+ *  'alle' = geen filter; 'overig' = alles wat niet in een expliciete tab zit
+ *  (incl. nog-niet-geclassificeerd). */
+const TAB_FILTERS: { key: string; label: string; emptyLabel: string; match: (c: string | null) => boolean }[] = [
+  { key: 'alle', label: 'Alle', emptyLabel: 'Geen replies nog', match: () => true },
+  { key: 'interested', label: 'Geïnteresseerd', emptyLabel: 'Geen geïnteresseerde replies', match: (c) => c === 'interested' },
+  { key: 'question', label: 'Vraag', emptyLabel: 'Geen vragen', match: (c) => c === 'question' },
+  { key: 'afgemeld', label: 'Afgemeld', emptyLabel: 'Geen afmeldingen', match: (c) => c === 'unsubscribe_request' },
+  {
+    key: 'overig',
+    label: 'Overig',
+    emptyLabel: 'Geen overige replies',
+    match: (c) => !c || !['interested', 'question', 'unsubscribe_request'].includes(c),
+  },
+];
+
 interface DraftResponse {
   draft: string | null;
   category: string;
@@ -27,13 +44,27 @@ interface DraftResponse {
 }
 
 export function InboxPage() {
+  const [tab, setTab] = useState('alle');
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['reply-inbox'],
     queryFn: () => api.get<{ replies: Reply[] }>('/reply-inbox?limit=100'),
     refetchInterval: 30_000,
   });
 
-  const replies = data?.replies || [];
+  const replies = useMemo(() => data?.replies || [], [data]);
+
+  // Counts per tab uit de al opgehaalde set — geen extra fetches.
+  const counts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const t of TAB_FILTERS) out[t.key] = replies.filter((r) => t.match(r.classification)).length;
+    return out;
+  }, [replies]);
+
+  const activeTab = TAB_FILTERS.find((t) => t.key === tab) || TAB_FILTERS[0];
+  const visible = useMemo(
+    () => replies.filter((r) => activeTab.match(r.classification)),
+    [replies, activeTab],
+  );
 
   return (
     <div className="max-w-6xl mx-auto px-10 py-8">
@@ -41,6 +72,18 @@ export function InboxPage() {
         eyebrow="Unified inbox"
         title="Inbox"
         subtitle="Alle Warmr replies — Claude stelt een draft-antwoord voor, jij stuurt hem zelf."
+        actions={
+          <Tabs value={tab} onValueChange={setTab}>
+            <TabsList>
+              {TAB_FILTERS.map((t) => (
+                <TabsTrigger key={t.key} value={t.key}>
+                  {t.label}
+                  {counts[t.key] > 0 && <span className="ml-1.5 text-[var(--color-stone-400)]">({counts[t.key]})</span>}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        }
       />
 
       {isLoading && <div className="skeleton h-64" />}
@@ -55,20 +98,22 @@ export function InboxPage() {
         </Card>
       )}
 
-      {!isLoading && !isError && replies.length === 0 && (
+      {!isLoading && !isError && visible.length === 0 && (
         <Card className="p-16 text-center">
           <Mail className="h-8 w-8 mx-auto mb-3 text-[var(--color-stone-300)]" />
-          <h3 className="font-display text-xl font-semibold mb-2">Geen replies nog</h3>
+          <h3 className="font-display text-xl font-semibold mb-2">{activeTab.emptyLabel}</h3>
           <p className="text-sm text-[var(--color-stone-500)] max-w-md mx-auto">
-            Zodra prospects reageren op je Warmr-campagnes zie je ze hier — met AI-classificatie op intent.
+            {tab === 'alle'
+              ? 'Zodra prospects reageren op je Warmr-campagnes zie je ze hier — met AI-classificatie op intent.'
+              : 'Replies in deze categorie verschijnen hier zodra ze binnenkomen en geclassificeerd zijn.'}
           </p>
         </Card>
       )}
 
-      {!isLoading && !isError && replies.length > 0 && (
+      {!isLoading && !isError && visible.length > 0 && (
         <Card className="overflow-hidden">
           <div className="divide-y divide-[var(--color-ivory-200)]">
-            {replies.map((r) => <ReplyRow key={r.id} reply={r} />)}
+            {visible.map((r) => <ReplyRow key={r.id} reply={r} />)}
           </div>
         </Card>
       )}
