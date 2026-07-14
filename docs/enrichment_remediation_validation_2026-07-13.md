@@ -148,3 +148,27 @@ De veiligheidsmechanismen blijven fail-closed: tot de re-verificatie draait blij
 **Runner gehard:** stopt nu direct bij een 402 i.p.v. de rest aan `not_checked` te verbranden (de 67 not_checked-writes waren vermijdbaar).
 
 **GO-status blijft VOORWAARDELIJKE GO** — nu met **50 aantoonbaar verzendbare leads** als eerste canary-set zodra de A3-tekst + verse booking-detectie staan; volledige set na tegoed-aanvulling.
+
+---
+
+## ADDENDUM 2026-07-14 — re-verificatie AFGEROND (tegoed aangevuld)
+
+Bouncer-tegoed aangevuld (1000 verifications); de resterende 662 leads in één run afgemaakt (`--apply`, GEEN mail, geen 402's). **Totale prod-stand nu (n=731 leads met e-mail):**
+
+| email_status | aantal | betekenis |
+|---|---|---|
+| **valid** | **493** (492× method=`bouncer_api`) | **verzendbaar** |
+| catchall_risky | 165 | onzeker; gate blokkeert zonder ALLOW_RISKY |
+| invalid | 33 | **tegengehouden** — zouden gebounced zijn |
+| not_checked | 38 | transient (timeout/unknown); re-runnable |
+| risky / leeg | 2 | rest-tail |
+
+Audit-trail: **796 rijen** in `heatr_email_verifications`. Nog in re-verify-scope: **39** (kleine, fail-closed staart — niet blokkerend).
+
+**Resultaat t.o.v. de vier sprint-prioriteiten:**
+1. *Slechte adressen beschadigen Warmr-inboxen* → **opgelost**: 33 invalid tegengehouden + 493 positief geverifieerd; gate fail-closed op de rest.
+2. *Foute website-observaties in mail* → afgedekt via `pick_safe_observation` (verse high-confidence booking-detectie vereist; live opener = genormaliseerde `personalized_opener`).
+3. *Verzonnen namen/ongeverifieerde data* → `name_in_source` + confidence-floor; owner-namen aantoonbaar uit bron.
+4. *Vastgelopen leads herpakbaar* → `inbox_recovery.py` + idempotente re-verify-runner + H4-zichtbaarheid (`completed_with_errors`).
+
+**Resterend vóór een echte batch (geen van beide blokkeert op infra/geld):** A3-tekst + verse booking-detectie per lead wiren (feature), dan canary (1 inbox, klein `valid`-segment, bounce-rate meten). **493 valids staan klaar als bronset.**
