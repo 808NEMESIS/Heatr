@@ -172,3 +172,26 @@ Audit-trail: **796 rijen** in `heatr_email_verifications`. Nog in re-verify-scop
 4. *Vastgelopen leads herpakbaar* → `inbox_recovery.py` + idempotente re-verify-runner + H4-zichtbaarheid (`completed_with_errors`).
 
 **Resterend vóór een echte batch (geen van beide blokkeert op infra/geld):** A3-tekst + verse booking-detectie per lead wiren (feature), dan canary (1 inbox, klein `valid`-segment, bounce-rate meten). **493 valids staan klaar als bronset.**
+
+---
+
+## ADDENDUM 2026-07-14 (3) — scoring-blokkade opgelost (icp_matcher-normalisatie)
+
+Na de e-mailfix bleek de échte batch-blokkade de **scoring-gate**: `batch_readiness_report.py` toonde **0/493 valid-leads launchbaar** — de drempel (`MIN_SCORE_FOR_WARMR=65` / `MIN_ICP_MATCH_FOR_WARMR=0.6`) lag boven de max haalbare waarde (score 51 / icp 0.45).
+
+**Drie root causes in `scoring/icp_matcher.py`:** (1) `max_score` werd berekend maar nooit toegepast (altijd 1.0 → delen was no-op); (2) KvK-SBI (0.20) structureel onhaalbaar (opt-in uit + kolomnaam-mismatch `sbi_code` vs `kvk_sbi_code`); (3) keyword-ratio schaalde met lijstlengte (137 keywords → 42+ matches nodig).
+
+**Fix:** `compute_icp_match` (pure) met **conditionele denominator** — SBI/size tellen alleen mee als evalueerbaar; keyword-saturatie op 5 absolute matches; leest `kvk_sbi_code`. `compute_lead_score` idem geëxtraheerd (formules ongewijzigd). 19 unit-tests; suite 591 passed.
+
+**Rescore (`scripts/rescore_leads_full.py --apply`, 858 leads, 0 fouten, geen mail):**
+
+| metriek | oud p50 | nieuw p50 · max |
+|---|---|---|
+| `icp_match` | 0.38 | **0.56** · 0.94 |
+| `score` | 40 | **44.5** · 71 |
+
+Makelaars/bouwbedrijven vallen correct op 0 (uit-ICP). **Drempels herijkt naar 55/0.50** (`.env`; ~241 valid-leads passeren de score/icp-gate).
+
+**Readiness na herscoring (493 valid-leads):** **ready 43** (was **0**), needs_review 161 (meest: mist `treatment_focus`-personalisatie), blocked 289 (score/icp 252, compliance/status 100, completeness 76). De scoring-blokkade is weg; resterende blokkades zijn aparte data-issues (compliance-status, completeness, personalisatie-gaps).
+
+**Observatie (geen bug):** de primaire ICP `cosmetische_behandelaars` scoort lager (p50 0.38) dan het inactieve `alternatieve_geneeskunde` (p50 0.65) — 27 disqualifiers + keyword-dekking. Config/data-review waard, los van de normalisatie.
