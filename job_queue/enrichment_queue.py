@@ -86,7 +86,11 @@ async def queue_lead_for_enrichment(
             "owner_extract",       # Claude Haiku owner extractor
             "email_waterfall",
             "company_enrichment",
-            "website_intelligence",
+            # 'website_intelligence' bewust NIET inline (2026-07-15): de zware
+            # Vision/Playwright-analyse kon de single-threaded worker minutenlang
+            # blokkeren (sync-call die asyncio.wait_for niet kan annuleren) →
+            # kern-pijplijn (email→score→launchbaar) stalde. Draait nu geïsoleerd
+            # in de website_analysis_queue (scripts/run_website_worker.py).
             "domain_age",          # RDAP (gratis)
             "treatment_focus",     # Hybrid: Google-mapping (€0) + Claude voor cosmetisch
             "meta_ads",            # Playwright Meta Ads

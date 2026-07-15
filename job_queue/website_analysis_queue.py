@@ -25,6 +25,7 @@ Workers roepen `process_next_website_analysis()` aan. Die functie:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 # Re-analyse window — skip leads waar WI minder dan N dagen oud is
 _REANALYSIS_DAYS = int(os.getenv("WEBSITE_REANALYSIS_DAYS", "30"))
+# Harde timeout op één analyse (Playwright + Vision + meerdere Claude-calls).
+# Vangt async hangs af zodat de dedicated worker doorgaat naar de volgende lead.
+_ANALYSIS_TIMEOUT_SECONDS = int(os.getenv("WEBSITE_ANALYSIS_TIMEOUT", "180"))
 
 # Welke email_status waardes gelden als "worth analyzing"
 _ELIGIBLE_EMAIL_STATUSES = ("valid", "risky", "catch_all", "catchall_risky")
@@ -111,13 +115,16 @@ async def process_next_website_analysis(
         anthropic_client = _get_anthropic_client()
         from website_intelligence.analyzer import analyze_website
 
-        result = await analyze_website(
-            lead_id=lead_id,
-            domain=domain,
-            sector=sector,
-            workspace_id=workspace_id,
-            supabase_client=supabase_client,
-            anthropic_client=anthropic_client,
+        result = await asyncio.wait_for(
+            analyze_website(
+                lead_id=lead_id,
+                domain=domain,
+                sector=sector,
+                workspace_id=workspace_id,
+                supabase_client=supabase_client,
+                anthropic_client=anthropic_client,
+            ),
+            timeout=_ANALYSIS_TIMEOUT_SECONDS,
         )
 
         duration = round(time.monotonic() - start_ts, 2)
@@ -134,6 +141,21 @@ async def process_next_website_analysis(
             "domain": domain,
             "total_score": total_score,
             "duration_seconds": duration,
+        }
+
+    except asyncio.TimeoutError:
+        duration = round(time.monotonic() - start_ts, 2)
+        logger.warning(
+            "website_analysis_queue: analyze_website TIMEOUT (>%ds) voor %s — overgeslagen",
+            _ANALYSIS_TIMEOUT_SECONDS, domain,
+        )
+        _mark_failure(
+            supabase_client, lead_id, workspace_id,
+            reason=f"analyze_timeout>{_ANALYSIS_TIMEOUT_SECONDS}s",
+        )
+        return {
+            "processed": False, "lead_id": lead_id, "domain": domain,
+            "error": f"timeout>{_ANALYSIS_TIMEOUT_SECONDS}s", "duration_seconds": duration,
         }
 
     except Exception as e:

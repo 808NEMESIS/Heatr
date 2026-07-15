@@ -152,6 +152,52 @@ class TestDaemonExit:
         assert should_exit_when_idle(3, daemon=True) is False
         assert should_exit_when_idle(999, daemon=True) is False
 
+    def test_website_worker_daemon_flag(self):
+        from scripts.run_website_worker import should_exit_when_idle
+        assert should_exit_when_idle(3, daemon=False) is True
+        assert should_exit_when_idle(3, daemon=True) is False
+
+
+# ==============================================================================
+# website_intelligence ontkoppeld van inline enrichment (2026-07-15)
+# ==============================================================================
+
+class TestWebsiteIntelligenceDecoupled:
+    @pytest.mark.asyncio
+    async def test_default_enrichment_types_excludes_website_intelligence(self):
+        """De zware Vision-analyse mag niet meer in het inline kern-pad zitten
+        (blokkeerde de worker) — draait nu in de website_analysis_queue."""
+        from job_queue import enrichment_queue as eq
+        db = _FakeDB(rows={})
+        # vang het gequeuede record
+        captured = {}
+
+        class _Cap:
+            def insert(self, rec):
+                captured["rec"] = rec
+                return self
+
+            def execute(self):
+                class _R:
+                    data = [{"id": "job-x"}]
+                return _R()
+
+            def table(self, *a):
+                return self
+
+        class _CapDB:
+            def table(self, name):
+                return _Cap()
+
+        await eq.queue_lead_for_enrichment(
+            lead_id="L1", workspace_id="aerys", supabase_client=_CapDB(),
+        )
+        types = captured["rec"]["enrichment_types"]
+        assert "website_intelligence" not in types
+        # de kern-stappen blijven wél inline
+        for core in ("website", "email_waterfall", "scoring", "inbox_selection"):
+            assert core in types
+
 
 # ==============================================================================
 # 3. _store_enrichment_result — geen niet-bestaande kolommen
