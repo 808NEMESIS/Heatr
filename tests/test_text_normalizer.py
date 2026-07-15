@@ -57,3 +57,29 @@ def test_empty_after_clean_rejected():
     # alleen een label → na schoonmaak niets over
     out, ok, reason = N("# Openingszin:")
     assert ok is False and reason == "empty_after_clean"
+
+
+def test_bold_wrapped_preamble_dropped():
+    # '**Mogelijke openingszin:**' — preamble in bold; moet gedropt worden.
+    raw = '**Mogelijke openingszin:**\n\n"De consistente 4.8-waardering spreekt voor zich."'
+    out, ok, _ = N(raw, max_sentences=3)
+    assert ok
+    assert "openingszin" not in out.lower()
+    assert not out.startswith(("*", "#", '"'))
+    assert out.startswith("De consistente")
+
+
+def test_conversational_preamble_with_hr_and_aanhef():
+    # 'Hier is een openingszin voor je email:' + '---' + 'Beste X,' allemaal weg.
+    raw = "Hier is een openingszin voor je email:\n\n---\n\nBeste Arina,\n\nHet valt op dat jullie site geen chatbot heeft."
+    out, ok, _ = N(raw, max_sentences=3)
+    assert ok
+    assert out == "Het valt op dat jullie site geen chatbot heeft."
+
+
+def test_orphan_bold_marker_stripped():
+    # Onafgesloten '**' aan het begin van de echte zin.
+    raw = "**Met 50 reviews op 4.9 heeft de kliniek zich bewezen in Amsterdam."
+    out, ok, _ = N(raw, max_sentences=3)
+    assert ok and not out.startswith("*")
+    assert out.startswith("Met 50 reviews")

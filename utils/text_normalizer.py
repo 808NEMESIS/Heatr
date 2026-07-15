@@ -31,9 +31,11 @@ _AANHEF_RE = re.compile(
     r"^\s*(\*+\s*)?(beste|hoi|hallo|geachte|dag)\b.*$", re.IGNORECASE,
 )
 # Conversationele preamble: korte kop-regel die eindigt op ':' en een generator-
-# woord bevat ('Hier is een openingszin voor je email:', 'Mogelijke openingszin:').
+# woord bevat ('Hier is een openingszin voor je email:', '**Mogelijke openingszin:**').
+# Leidende/trailing emphasis (*/_/#) en quotes worden getolereerd.
 _PREAMBLE_RE = re.compile(
-    r"^\s*.{0,60}\b(openingszin|opener|voorstel|e-?mail|mail)\b.{0,30}:\s*[\"'']?\s*$",
+    r"^\s*[*_#]*\s*.{0,60}\b(openingszin|opener|voorstel|e-?mail|mail)\b.{0,30}:"
+    r"[*_\"''\s]*$",
     re.IGNORECASE,
 )
 # Horizontale regel (--- *** ___) die Claude als scheider tussen preamble en tekst zet.
@@ -82,7 +84,8 @@ def normalize_generated_text(
         first = lines[0].strip()
         # Een markdown-header (# ...) aan de kop is nooit geldige prozatekst
         # voor een opener/summary → droppen. Idem lege regels, meta-labels
-        # ('Openingszin:') en aanhef-preambles ('Beste X,').
+        # ('Openingszin:'), aanhef-preambles ('Beste X,'), conversationele
+        # preambles ('Hier is een openingszin:') en horizontale regels.
         if (not first or first.startswith("#")
                 or _LABEL_RE.match(first) or _AANHEF_RE.match(first)
                 or _PREAMBLE_RE.match(first) or _HR_RE.match(first)):
