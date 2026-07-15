@@ -110,3 +110,26 @@ def test_qa_rejects_clinic_voice():
 def test_qa_rejects_title_greeting():
     ok, r = VOS("Dr. staat op 49 reviews met een mooie score en veel tevreden patiënten hier.")
     assert not ok and r == "title_as_greeting"
+
+
+from utils.text_normalizer import strip_unverified_claims as STRIP
+
+
+def test_strip_website_claim_keeps_grounded():
+    raw = ("All Skins staat op 4.7 sterren met 48 reviews. Dat niveau haal je alleen "
+           "als je consistent levert. Toch zag ik dat jullie online presence nog ruimte heeft.")
+    out = STRIP(raw)
+    assert "online presence" not in out
+    assert "4.7 sterren met 48 reviews" in out
+    assert out.endswith("consistent levert.")
+
+
+def test_strip_keeps_competitor_mention():
+    # 'hun online aanwezigheid' (over concurrenten) is geen claim over de prospect.
+    raw = "Vijftig reviews met 4.9, benieuwd hoe jullie dat doen terwijl concurrenten worstelen met hun online aanwezigheid."
+    assert STRIP(raw) == raw
+
+
+def test_strip_noop_without_claim():
+    raw = "Kliniek X staat op 49 reviews met een 4.9. Sterk gebouwd."
+    assert STRIP(raw) == raw

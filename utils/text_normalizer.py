@@ -55,6 +55,30 @@ _CLINIC_VOICE_RE = re.compile(
 )
 
 
+# Ongetoetste observatie over de website/online-aanwezigheid van de prospect.
+# 'jullie/uw site' etc. — NIET 'hun online aanwezigheid' (over concurrenten = ok).
+_WEBSITE_CLAIM_RE = re.compile(
+    r"(zag ik|viel me op|jullie (site|website|online presence|online aanwezigheid|pagina)|"
+    r"uw (site|website|online)|geen (chatbot|whatsapp|online.?boeking)|verouderd|"
+    r"niet mobiel|laadt traag)",
+    re.IGNORECASE,
+)
+
+
+def strip_unverified_claims(text: str | None) -> str:
+    """Verwijder zinnen met een ONGETOETSTE claim over de website/online-
+    aanwezigheid van de prospect. Claude kan die verzinnen; ze horen uitsluitend
+    uit de geverifieerde pick_safe_observation-route. De review-gegronde zinnen
+    (feiten) blijven staan.
+    """
+    t = (text or "").strip()
+    if not t:
+        return t
+    sents = re.split(r"(?<=[.!?])\s+", t)
+    kept = [s for s in sents if not _WEBSITE_CLAIM_RE.search(s)]
+    return " ".join(kept).strip()
+
+
 def validate_opener_sendable(text: str | None) -> tuple[bool, str]:
     """Fail-closed QA op een REEDS GENORMALISEERDE opener.
 
