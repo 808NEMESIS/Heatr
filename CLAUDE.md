@@ -34,19 +34,20 @@ Warmr is de motor onder de motorkap. De gebruiker ziet Heatr. Heatr roept Warmr 
 
 ---
 
-## Eerste doelsectoren
+## Doelsectoren
 
-**Sector 1 — Alternatieve Zorg**
-Fysiotherapeuten, osteopaten, acupuncturisten, homeopaten, psychologen (privépraktijk), coaches, diëtisten, energetisch therapeuten, manueel therapeuten.
-- 1-5 medewerkers, eigenaar = behandelaar = beslisser
-- Email: info@ of naam@praktijk.nl
-- KvK SBI: 86.90, 86.21, 86.22, 86.23, 85.59
+Bron van waarheid = `config/sectors.py` (`ACTIVE_SECTORS` + `get_active_sectors()`). Sectornamen NOOIT hardcoden — altijd via de config.
 
-**Sector 2 — Cosmetische Klinieken**
-Botox/filler klinieken, laserklinieken, huidtherapiepraktijken, schoonheidsklinieken premium.
-- 2-15 medewerkers, eigenaar bereikbaar
-- Instagram aanwezigheid = positief signaal
-- KvK SBI: 86.21, 96.02, 96.01
+**Actief (`ACTIVE_SECTORS`):**
+- `cosmetische_behandelaars` — botox/filler, laser, huidtherapie, plastisch chirurg, haartransplantatie, permanente cosmetiek, bodycontouring, schoonheidssalons. 11 subcategorieën, 7 SBI-codes. Instagram = positief signaal. **Primaire ICP.**
+- `chiropractoren` — chiro/manueel. Klein, 0 SBI-codes (KvK opt-in uit).
+
+**Inactief maar in de data (~390 legacy-leads):**
+- `alternatieve_geneeskunde` — acupunctuur, osteopathie, natuurgeneeskunde, coaching e.d. Gedeactiveerd 2026-05-20; leads scoren nog wel door hetzelfde pad.
+
+**Verwijderd uit ICP (2026-07):** `makelaars`, `bouwbedrijven` — `get_sector()` raist ValueError → `icp_match=0` (worden niet benaderd). Oude leads staan er nog.
+
+Discovery deelt een sector op in subcategorieën (elk een scherpe Google Maps-query, bv. `botox kliniek {stad}`) — zie `POST /search` + `get_subcategory_keywords()`. Doelprofiel: 1-15 medewerkers, eigenaar = beslisser, email info@ of naam@praktijk.nl.
 
 ---
 
@@ -60,12 +61,13 @@ Botox/filler klinieken, laserklinieken, huidtherapiepraktijken, schoonheidsklini
 | Browser | Playwright (async, headless Chromium) |
 | HTTP | httpx (async) |
 | Screenshots | Playwright naar Supabase Storage |
-| Vision analyse | Claude Sonnet (website screenshots) |
-| Email verificatie | Eigen SMTP + MX via dnspython |
+| Vision analyse | Claude Sonnet (website screenshots) — draait NIET inline (zie website-intelligence) |
+| Email verificatie | **Externe API (Bouncer, EU/GDPR)** — eigen SMTP kan niet (host blokkeert uitgaand IPv4:25) |
 | AI enrichment | Claude Haiku (bulk), Claude Sonnet (vision + diepte) |
 | Warmr koppeling | httpx naar Warmr publieke API |
+| Workers | launchd-daemons: `nl.aerys.heatr.{scraping,enrichment,website}-worker` + `.api` |
 | Proxy | Gebouwd, standaard uitgeschakeld |
-| Kosten doel | ~€10-15/maand (Claude API) |
+| Kosten doel | ~€10-15/maand (Claude + Bouncer) |
 
 ---
 
@@ -109,21 +111,33 @@ Botox/filler klinieken, laserklinieken, huidtherapiepraktijken, schoonheidsklini
 │   ├── sequence_builder.py
 │   ├── campaign_launcher.py
 │   └── review_email_generator.py
-├── queue/
-│   ├── scraping_queue.py
-│   ├── enrichment_queue.py
-│   └── website_analysis_queue.py
+├── job_queue/                     # (heet job_queue, NIET queue)
+│   ├── scraping_queue.py          #   scrape → companies_raw → auto-promote naar leads
+│   ├── enrichment_queue.py        #   per-stap loop, per-stap timeout, completed_with_errors
+│   ├── website_analysis_queue.py  #   losgekoppelde zware Vision-analyse (eigen worker)
+│   └── inbox_recovery.py
+├── enrichment/
+│   ├── email_waterfall.py · email_verifier.py · verify_api.py   # verify_api = Bouncer
+│   ├── company_enrichment.py      #   opener-generatie + normalisatie + QA-gate
+│   ├── owner_extractor.py · lead_qualifier.py                    # qualify_and_create_lead
 ├── integrations/
-│   └── warmr_client.py
+│   └── warmr_client.py · reply_classifier.py
 ├── config/
-│   ├── sectors.py
-│   └── scoring_weights.py
+│   ├── sectors.py · scoring_weights.py (LEAD_SCORING_WEIGHTS = DODE code)
+│   └── database.py                #   heatr_-prefix wrapper: .table("leads") → heatr_leads
+├── scripts/                       #   run_*_worker.py, reverify_email_full.py, rescore_leads_full.py,
+│                                  #   promote_companies_to_leads.py, regenerate_openers.py,
+│                                  #   pipeline_health.py, batch_readiness_report.py, canary_preview.py
+├── deployment/launchd/            #   *.plist voor de workers (survives reboot)
+├── frontend-next/                 #   React + Vite (NIET losse .html) — src/pages/*.tsx
 └── utils/
-    ├── proxy_manager.py
-    ├── rate_limiter.py
-    ├── deduplicator.py
-    └── playwright_helpers.py
+    ├── text_normalizer.py         #   normalisatie + validate_opener_sendable (QA-gate)
+    ├── pipeline_ops.py · pipeline_metrics.py · launch_readiness.py
+    ├── email_sendability.py · deduplicator.py · rate_limiter.py
+    └── proxy_manager.py · playwright_helpers.py
 ```
+
+Alle Supabase-tabellen hebben prefix `heatr_` via `config/database.py`. Migraties draait de gebruiker zelf in de Supabase SQL-editor (MCP heeft geen prod-toegang).
 
 ---
 
@@ -147,15 +161,22 @@ PROXY_ENABLED=false
 PROXY_URL=http://user:pass@proxy.host:port
 PROXY_COUNTRY=NL
 EMAIL_VERIFY_TIMEOUT=10
+EMAIL_VERIFY_PROVIDER=bouncer                    # externe verify-API; 'none' = uit
+BOUNCER_API_KEY=                                 # usebouncer.com (EU/GDPR) — SMTP-host blokkeert :25
 MAX_CONCURRENT_ENRICHMENTS=5
+ENRICHMENT_STEP_TIMEOUT=120                      # harde per-stap timeout (async hangs)
+WEBSITE_ANALYSIS_TIMEOUT=180                     # per website-analyse (aparte worker)
+HEATR_ENRICHMENT_DAEMON=true                     # worker blijft draaien bij lege queue
+HEATR_WEBSITE_DAEMON=true
 CATCHALL_CHECK_ENABLED=true
 PAGESPEED_API_KEY=your_google_pagespeed_api_key
 SCREENSHOT_ENABLED=true
 COMPETITOR_ANALYSIS_ENABLED=true
 COMPETITOR_COUNT=3
-MIN_SCORE_FOR_WARMR=65
-MIN_ICP_MATCH_FOR_WARMR=0.6
+MIN_SCORE_FOR_WARMR=55                           # herijkt 2026-07 na icp-normalisatie (was 65)
+MIN_ICP_MATCH_FOR_WARMR=0.50                     # herijkt 2026-07 (was 0.6)
 MIN_WEBSITE_SCORE_FOR_OPPORTUNITY=50
+HEATR_ALLOW_RISKY_EMAILS=true                    # 'risky' alleen sendable mét verification_method
 AUTO_PUSH_TO_WARMR=false
 GDPR_MODE=strict
 DEFAULT_WORKSPACE_ID=aerys
@@ -184,6 +205,8 @@ Endpoints met `Depends(require_service_key)` ipv `get_workspace` accepteren ALLE
 ## Email discovery waterval
 
 Stopt bij eerste succes. Verwachte coverage >80%.
+
+> **Verificatie (2026-07):** de eigen SMTP-verifier is niet functioneel — de host blokkeert uitgaand IPv4:25, en de doelgroep is grotendeels IPv4-only NL-MX. Verificatie loopt daarom via een **externe API (`enrichment/verify_api.py`, Bouncer)**: `verify_email` probeert de API eerst en is **fail-closed** (bij API-fout → `not_checked`, geen SMTP-fallback). Massa-herverificatie: `scripts/reverify_email_full.py`. `is_sendable` accepteert 'risky' alleen mét `verification_method ∈ {smtp, bouncer_api}`.
 
 ```
 Stap 1 — Website scraper
@@ -312,33 +335,25 @@ Verstuurd via warme Warmr inbox.
 
 ---
 
-## Lead scoring factoren
+## Lead scoring
 
-```python
-LEAD_SCORING_FACTORS = {
-    'has_valid_email': 25,
-    'email_type_role': 8,
-    'email_discovery_website': 5,
-    'website_quality': 8,
-    'has_kvk_data': 7,
-    'company_size_fit': 8,
-    'google_rating_above_4': 8,
-    'google_review_count': 5,
-    'has_contact_name': 5,
-    'cms_detected': 4,
-    'has_instagram': 4,
-    'has_online_booking': 5,
-    'tracking_tools_detected': 3,
-    'gdpr_safe': 3,
-    'catchall_penalty': -10,
-}
-# Website score beinvloedt lead score NIET direct
-# Slechte website = juist goede kans voor Aerys
-```
+> ⚠️ `LEAD_SCORING_FACTORS` / `LEAD_SCORING_WEIGHTS` (config/scoring_weights.py) is **DODE code** — niet gebruikt. Het echte model staat in `scoring/lead_scoring.py`.
+
+**4-dimensie model (`compute_lead_score`, totaal 0-100):**
+- `fit_score` (0-40) = `int(icp_match * 40)` + review-count-bonus. Komt volledig uit **icp_match** (+ reviews).
+- `data_quality_score` (0-20) — verificatie-confidence.
+- `reachability_score` (0-25) — email-status, contact, telefoon, gdpr.
+- `personalization_potential` (0-15) — hooks/observations (de facto ~0, datagap).
+
+**`icp_match` (`scoring/icp_matcher.py compute_icp_match`, puur):** genormaliseerd over de ÉVALUEERBARE componenten (SBI + company-size tellen alleen mee als de data bestaat — KvK is opt-in uit). Keyword-saturatie op 5 absolute matches. Leest `kvk_sbi_code` (niet het phantom `sbi_code`). Vóór de fix (2026-07) capte icp op ~0.45 en score op ~51 → gate 65/0.6 onhaalbaar; nu p50≈0.56.
+
+**Launch-gate:** `score ≥ MIN_SCORE_FOR_WARMR` (55) én `icp_match ≥ MIN_ICP_MATCH_FOR_WARMR` (0.50). Volledige readiness (compliance/completeness/cooldown) via `utils/launch_readiness.assess_launch_readiness`. Website-score beïnvloedt de lead-score NIET (slechte site = juist een Aerys-kans). Herscore-runner: `scripts/rescore_leads_full.py`.
 
 ---
 
 ## Frontend paginas (MVP)
+
+> **Realiteit (2026-07):** de frontend is `frontend-next/` (**React + Vite + TanStack Query**, `src/pages/*.tsx` — Zoeken, Leads, LeadDetail, WebsiteKansen, Campagnes, CampagneLaunch, Inbox, CRM, Analytics, Control). Draait onder `/heatr/*`, praat met de API via `/api`-proxy. De losse `.html`-lijst hieronder is de oude MVP-schets — de intentie/vlakverdeling klopt nog, de bestandsvorm niet.
 
 Design: licht, clean, lichtpaarse gradient accenten. Fonts: Fraunces (headings) + Plus Jakarta Sans (UI). Zelfde taal als Warmr.
 
@@ -414,29 +429,36 @@ GET  /sectors                    → beschikbare sectoren
 
 ---
 
-## Huidige status
+## Operationeel (hands-off pijplijn, onder launchd)
 
-- [ ] Supabase schema gemigreerd
-- [ ] Sector configs geladen
-- [ ] google_maps_scraper.py gebouwd
-- [ ] website_scraper.py gebouwd (NL logica)
-- [ ] google_search_scraper.py gebouwd (email fallback)
-- [ ] kvk_scraper.py gebouwd
-- [ ] directory_scraper.py gebouwd
-- [ ] email_waterfall.py orkestreert alle stappen
-- [ ] email_verifier.py met catch-all detectie
-- [ ] company_enrichment.py met Claude Haiku
-- [ ] website_intelligence/ volledig gebouwd
-- [ ] lead_scoring.py gebouwd
-- [ ] website_scorer.py gebouwd
-- [ ] opportunity_classifier.py gebouwd
-- [ ] icp_matcher.py gebouwd
-- [ ] feedback_processor.py gebouwd
-- [ ] warmr_client.py gebouwd en getest
-- [ ] review_email_generator.py gebouwd
-- [ ] FastAPI compleet
-- [ ] Frontend gebouwd (alle paginas)
-- [ ] End-to-end test: Google Maps → enrich → website analyse → Warmr
+```
+scrape (google_maps)            → companies_raw
+   ↓  qualify_and_create_lead   (na elke scrape, in scraping_queue)
+leads (status='discovered')
+   ↓  enrichment-worker         (per-stap timeout, completed_with_errors bij fouten)
+      email-waterval → Bouncer-verify → owner → company_enrichment (opener+QA) → scoring → inbox_selection
+leads (status='enriched', score/icp gezet)
+   ↓  launch-gate (55/0.50) + readiness
+verzendbaar   → (nog GEEN sends; kill-switch ENABLE_CAMPAIGN_SENDS=false)
+```
+
+- **`website_intelligence` (Vision) is LOSGEKOPPELD** van de inline enrichment (blokkeerde de single-threaded worker synchroon) → draait in `website_analysis_queue` via `scripts/run_website_worker.py`.
+- **Fail-closed content-gates** (geen stille naden): e-mail (Bouncer + sendability), lead-kwalificatie (icp/score), **opener** (`validate_opener_sendable`: afgekapt / te kort / kliniek-stem / titel-aanhef / ongetoetste-website-claim → niet opgeslagen).
+- **Observability:** `GET /analytics/ops-health` + `scripts/pipeline_health.py` (stall-detectie), `batch_readiness_report.py`, `canary_preview.py`.
+- **Inbox:** `GET /reply-inbox` (frontend-contract) + filter-tabs; webhook zet crm_stage `gereageerd`/`verloren` (NIET `beantwoord`/`afgesloten` — bestaan niet in de frontend-enum). Reply-classifier via cron.
+
+## Huidige status (2026-07-15)
+
+Kernpijplijn discovery→enrich→score **operationeel** met echte data (workspace `aerys`, ~900 leads). Belangrijkste feiten voor een volgende sessie:
+
+- **E-mail:** 493 valid via Bouncer; verifier fail-closed. ✅
+- **Scoring:** icp-normalisatie gefixt, drempels 55/0.50; ~250 launchbaar. ✅
+- **Discovery→leads:** promotie gewired + workers onder launchd (survives reboot). ✅
+- **Openers:** 88% was afgekapt (stale, oude max_tokens) → geregenereerd + QA-gate → 98% verzendklaar. ✅
+- **Nog open / bewust NIET gedaan:** géén productie-mail (kill-switch aan); migraties 029-031 draait de gebruiker in Supabase; personalisatie-dimensie (hooks) is de facto dood (datagap); de diepe sync-block in `analyze_website` is geïsoleerd, niet opgelost; A3-sequence/canary wacht op expliciete go.
+- **Migraties niet zelf uitvoerbaar:** MCP zit op een andere org — DDL plakt de gebruiker in de Supabase SQL-editor.
+
+ Maak fixes klein/afzonderlijk testbaar; workspace-safe; idempotent; bewijs runtime-gedrag met tests + gecontroleerde prod-data. Geen sends zonder expliciete go.
 
 ---
 
