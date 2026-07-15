@@ -46,6 +46,25 @@ def _normalize_name(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
+# Titels/aanhef die geen voornaam zijn — NIET de tussenvoegsels (van/de/der)
+# die bij een achternaam horen.
+_NAME_TITLES = {"dr", "drs", "ir", "prof", "mr", "mevr", "mw", "dhr", "hr",
+                "ing", "mevrouw", "meneer", "de heer"}
+
+
+def strip_name_titles(name: str | None) -> str:
+    """Verwijder leidende titels ('Dr.', 'Drs.', 'Ir.') uit een naam.
+
+    Root cause 2026-07-15: contact_first_name werd soms 'Dr.'/'Drs.' omdat de
+    extractie een titel als voornaam nam. Een titel-only naam wordt "" → de
+    caller behandelt dat als 'geen voornaam bekend'.
+    """
+    tokens = (name or "").split()
+    while tokens and tokens[0].strip().lower().rstrip(".") in _NAME_TITLES:
+        tokens.pop(0)
+    return " ".join(tokens).strip()
+
+
 def name_in_source(name: str | None, page_text: str | None) -> bool:
     """True als de (voor)naam aantoonbaar in de brontekst voorkomt.
 
@@ -189,10 +208,10 @@ async def extract_team_from_page_text(
     for item in parsed[:10]:
         if not isinstance(item, dict):
             continue
-        name = (item.get("name") or "").strip()
+        name = strip_name_titles((item.get("name") or "").strip())
         if not name or len(name) < 3:
             continue
-        first_name = (item.get("first_name") or "").strip()
+        first_name = strip_name_titles((item.get("first_name") or "").strip())
         role = (item.get("role") or "").strip().lower()
         is_owner_flag = bool(item.get("is_owner"))
         # Auto-promote to owner if role matches
@@ -200,7 +219,7 @@ async def extract_team_from_page_text(
             is_owner_flag = True
         cleaned.append({
             "name": name,
-            "first_name": first_name or name.split()[0] if name else "",
+            "first_name": first_name or (name.split()[0] if name else ""),
             "last_name": item.get("last_name"),
             "role": item.get("role"),
             "is_owner": is_owner_flag,

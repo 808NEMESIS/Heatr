@@ -28,3 +28,12 @@ def test_confidence_floor_is_reasonable():
 
 def test_case_and_whitespace_insensitive():
     assert name_in_source("  mieke   kuipers ", PAGE) is True
+
+
+def test_strip_name_titles():
+    from enrichment.owner_extractor import strip_name_titles
+    assert strip_name_titles("Dr. Sami Jansen") == "Sami Jansen"
+    assert strip_name_titles("Drs.") == ""          # titel-only → geen naam
+    assert strip_name_titles("Ir. van der Knaap") == "van der Knaap"
+    assert strip_name_titles("Sami") == "Sami"
+    assert strip_name_titles("van der Berg") == "van der Berg"  # tussenvoegsel blijft

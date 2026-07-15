@@ -83,3 +83,30 @@ def test_orphan_bold_marker_stripped():
     out, ok, _ = N(raw, max_sentences=3)
     assert ok and not out.startswith("*")
     assert out.startswith("Met 50 reviews")
+
+
+from utils.text_normalizer import validate_opener_sendable as VOS
+
+
+def test_qa_accepts_good_opener():
+    ok, r = VOS("Kliniek X staat op 49 reviews met een 4.9. Dat bouw je niet met standaardwerk.")
+    assert ok and r == "ok"
+
+
+def test_qa_rejects_truncated():
+    ok, r = VOS("Kliniek X staat op 49 reviews met een 4.9 en dat niveau van klantentevre")
+    assert not ok and r == "truncated"
+
+
+def test_qa_rejects_too_short():
+    assert VOS("Mooi werk.")[1] == "too_short"
+
+
+def test_qa_rejects_clinic_voice():
+    ok, r = VOS("Dat blijkt uit de positieve feedback van onze cliënten in Amsterdam vandaag.")
+    assert not ok and r == "clinic_voice"
+
+
+def test_qa_rejects_title_greeting():
+    ok, r = VOS("Dr. staat op 49 reviews met een mooie score en veel tevreden patiënten hier.")
+    assert not ok and r == "title_as_greeting"

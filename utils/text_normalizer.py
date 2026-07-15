@@ -42,6 +42,40 @@ _PREAMBLE_RE = re.compile(
 _HR_RE = re.compile(r"^\s*([-*_]\s*){3,}$")
 
 
+# --- Opener-QA (fail-closed) -------------------------------------------------
+# Titels die geen aanhef/naam zijn.
+_OPENER_TITLES = {"dr", "dr.", "drs", "drs.", "ir", "ir.", "prof", "prof.", "mr", "mr."}
+# Kliniek-stem: de opener is geschreven vanuit Aerys náár de prospect; als hij de
+# stem van de prospect aanneemt ('onze cliënten', 'hebben we', 'in gesprek over
+# een samenwerking') is dat een fout.
+_CLINIC_VOICE_RE = re.compile(
+    r"\bonze (cli[eë]nt|pati[eë]nt|klant)|\bhebben we\b|\bwij bieden\b|"
+    r"\bwaarom we\b|\bwe graag\b|\bons bedrijf\b|in gesprek (gaan|over een samenwerking)",
+    re.IGNORECASE,
+)
+
+
+def validate_opener_sendable(text: str | None) -> tuple[bool, str]:
+    """Fail-closed QA op een REEDS GENORMALISEERDE opener.
+
+    Voorkomt dat structureel-kapotte output stil als verzendbaar veld wordt
+    opgeslagen (root cause 2026-07-15: 88% afgekapte openers gingen ongemerkt
+    door). Returns (ok, reason); ok=False → NIET opslaan als productie-opener.
+    reason ∈ ok | too_short | truncated | title_as_greeting | clinic_voice.
+    """
+    t = (text or "").strip()
+    if len(t) < 15 or len(t.split()) < 4:
+        return False, "too_short"
+    if t[-1] not in ".!?\"”’)":
+        return False, "truncated"
+    firstword = t.split()[0].strip().rstrip(",").lower()
+    if firstword in _OPENER_TITLES:
+        return False, "title_as_greeting"
+    if _CLINIC_VOICE_RE.search(t):
+        return False, "clinic_voice"
+    return True, "ok"
+
+
 def _strip_inline_markup(line: str) -> str:
     line = re.sub(r"^#{1,6}\s*", "", line)          # headers
     line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)      # **bold**

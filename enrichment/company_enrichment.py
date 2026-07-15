@@ -237,11 +237,18 @@ async def enrich_company(
     # --- Normaliseer vrije Claude-tekst vóór opslag (P1/C2) -----------------
     # Ruwe output werd ongeschoond opgeslagen → 89% markdown/meta-vervuild.
     # Corrupte output (refusal/leeg) wordt NIET als productieveld opgeslagen.
-    from utils.text_normalizer import normalize_generated_text
+    from utils.text_normalizer import normalize_generated_text, validate_opener_sendable
     opener_clean, opener_ok, opener_reason = normalize_generated_text(
         result.get("personalized_opener"), max_sentences=3)
     summary_clean, summary_ok, _ = normalize_generated_text(
         result.get("company_summary"), max_sentences=3)
+    # QA-gate (fail-closed): ook een schoongemaakte opener moet verzendbaar zijn
+    # (niet afgekapt, geen kliniek-stem, niet te kort) — anders NIET opslaan, zodat
+    # kapotte output nooit stil een 'productie-opener' wordt (root cause 2026-07-15).
+    if opener_ok:
+        opener_ok, qa_reason = validate_opener_sendable(opener_clean)
+        if not opener_ok:
+            opener_reason = f"qa:{qa_reason}"
     if not opener_ok:
         logger.warning("company_enrichment: opener afgekeurd (%s) voor lead %s — niet opgeslagen",
                        opener_reason, lead_id)
