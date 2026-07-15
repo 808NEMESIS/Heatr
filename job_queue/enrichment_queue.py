@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
 _WORKER_SLEEP_SECONDS = 10
+# Harde per-stap timeout: een trage/hangende website (Playwright/httpx zonder
+# eigen timeout) mag de single-threaded worker niet blokkeren. Bij overschrijding
+# faalt alleen díe stap (geregistreerd als steps_failed → completed_with_errors)
+# en gaat de lead door met de volgende stap. Env-instelbaar.
+_STEP_TIMEOUT_SECONDS = int(os.getenv("ENRICHMENT_STEP_TIMEOUT", "120"))
 _INBOX_CACHE_KEY = "warmr_inboxes_cache"
 _INBOX_CACHE_MINUTES = 15
 
@@ -332,15 +337,18 @@ async def run_enrichment_for_lead(
 
         try:
             logger.debug("Running enrichment step: %s for lead %s", step_name, lead_id)
-            await _run_step(
-                step_name=step_name,
-                lead_id=lead_id,
-                workspace_id=workspace_id,
-                lead_country=lead_country,
-                supabase_client=supabase_client,
-                anthropic_client=anthropic_client,
-                warmr_client=warmr_client,
-                accumulator=accumulator,
+            await asyncio.wait_for(
+                _run_step(
+                    step_name=step_name,
+                    lead_id=lead_id,
+                    workspace_id=workspace_id,
+                    lead_country=lead_country,
+                    supabase_client=supabase_client,
+                    anthropic_client=anthropic_client,
+                    warmr_client=warmr_client,
+                    accumulator=accumulator,
+                ),
+                timeout=_STEP_TIMEOUT_SECONDS,
             )
 
             # Fase 4 PR 17: stap voltooid → voortgang persistent maken.
@@ -352,6 +360,16 @@ async def run_enrichment_for_lead(
                 email_status = await _get_lead_field(lead_id, "email_status", supabase_client)
                 if email_status == "valid":
                     await _boost_job_priority(job_id, priority=2, supabase_client=supabase_client)
+
+        except asyncio.TimeoutError:
+            # Harde timeout: de stap hing langer dan _STEP_TIMEOUT_SECONDS (bv.
+            # een trage website). Registreer als mislukt en ga door — nooit de
+            # worker laten blokkeren op één lead.
+            logger.warning(
+                "Enrichment step %s TIMEOUT (>%ds) voor lead %s — overgeslagen",
+                step_name, _STEP_TIMEOUT_SECONDS, lead_id,
+            )
+            steps_failed.append({"step": step_name, "error": f"timeout>{_STEP_TIMEOUT_SECONDS}s"})
 
         except Exception as e:
             logger.warning(

@@ -105,6 +105,36 @@ async def test_failed_step_not_marked_completed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_hanging_step_times_out_and_pipeline_continues(monkeypatch):
+    """Een stap die blijft hangen (trage website) wordt na de per-stap timeout
+    afgekapt; de lead gaat door met de volgende stap i.p.v. de worker te
+    blokkeren. De getimede stap komt NIET in steps_completed."""
+    import asyncio as _asyncio
+    monkeypatch.delenv("COST_GUARD_DISABLED", raising=False)
+    monkeypatch.setattr(eq, "_STEP_TIMEOUT_SECONDS", 0.2)  # bij import gelezen → patch attribuut
+    db = _db()
+
+    async def slow(**kwargs):
+        if kwargs["step_name"] == "owner_extract":
+            await _asyncio.sleep(5)  # langer dan de timeout → moet afgekapt worden
+
+    p1, p2, p3 = _patches(AsyncMock(side_effect=slow))
+    with p1, p2, p3:
+        # mag niet blokkeren — moet ruim binnen de sleep(5) klaar zijn
+        await _asyncio.wait_for(
+            eq.run_enrichment_for_lead(
+                job=_job(), supabase_client=db,
+                anthropic_client=MagicMock(), warmr_client=MagicMock(),
+            ),
+            timeout=3,
+        )
+    updates = [c.args[0] for c in db.table.return_value.update.call_args_list
+               if c.args and "steps_completed" in c.args[0]]
+    assert updates[-1]["steps_completed"] == ["website", "scoring"]
+    assert "owner_extract" not in updates[-1]["steps_completed"]
+
+
+@pytest.mark.asyncio
 async def test_spent_carryover_blocks_over_budget_retry(monkeypatch):
     """Het per-lead-plafond overleeft de restart: een job die vóór de crash
     het budget al opbrandde, krijgt bij retry GEEN vers budget."""
