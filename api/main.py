@@ -651,6 +651,56 @@ def _inbound_summary(data: dict) -> str:
     return "\n".join(lines) if lines else "(geen scan-details meegestuurd)"
 
 
+async def _enrich_inbound_website(domain: str) -> str:
+    """Snelle website-enrichment: favicon + tech-stack detectie.
+
+    Retourneert leesbare samenvattingsregel voor crm_notes; failsafe (lege string bij error).
+    """
+    if not domain:
+        return ""
+
+    try:
+        import httpx
+
+        # Timeout kort (1s totaal) om de inbound-response niet te vertragen.
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            # HEAD-request naar domein (tech-stack markers in headers/redirect)
+            try:
+                resp = await client.head(f"https://{domain}", follow_redirects=True)
+                server_header = (resp.headers.get("Server") or "").lower()
+                x_powered_by = (resp.headers.get("X-Powered-By") or "").lower()
+
+                # Tech detectie
+                tech_marks = []
+                if "wix" in server_header or "wix" in x_powered_by:
+                    tech_marks.append("Wix")
+                if "wordpress" in server_header or "wp-" in x_powered_by:
+                    tech_marks.append("WordPress")
+                if any(m in server_header for m in ["shopify", "shopifycdn"]):
+                    tech_marks.append("Shopify")
+                if "cloudflare" in server_header:
+                    tech_marks.append("Cloudflare")
+
+                # Favicon (URL afleiding)
+                favicon_url = f"https://{domain}/favicon.ico"
+
+                # Bouw samenvattingsregel
+                parts = [f"Website: https://{domain}"]
+                if tech_marks:
+                    parts.append(f"Tech: {', '.join(tech_marks)}")
+                parts.append(f"Favicon: {favicon_url}")
+                return " · ".join(parts)
+            except (httpx.TimeoutException, httpx.ConnectError):
+                # Timeout/geen connectie: fallback
+                return f"Website: https://{domain} (niet bereikbaar)"
+    except ImportError:
+        pass  # httpx niet beschikbaar; fallback
+    except Exception as e:
+        logger.debug(f"Enrichment for {domain} failed: {e}")
+
+    return f"Website: https://{domain}"
+
+
 @app.post("/leads/inbound")
 async def inbound_lead(
     body: InboundLead,
@@ -663,6 +713,9 @@ async def inbound_lead(
     lead in de CRM (crm_stage 'gereageerd'), NIET in de koude Warmr-flow:
     email_status='valid' (self-provided) valt buiten de Warmr-eligibility.
     Bestaat de e-mail/het domein al, dan mergen we op de bestaande lead.
+
+    Enrichment: quick website-scan (tech-stack, favicon) synchrone integratie;
+    deep enrichment (KvK, company-data) async via job_queue.
     """
     from utils.deduplicator import is_duplicate_entity, normalize_domain
 
@@ -690,7 +743,14 @@ async def inbound_lead(
     opt_in = bool((body.consent or {}).get("contactOptIn"))
 
     summary = _inbound_summary(data)
-    note = f"Inbound via website ({body.source}).\n{summary}"
+
+    # Quick enrichment: tech-stack + favicon
+    enrichment = await _enrich_inbound_website(domain) if domain else ""
+
+    note_parts = [f"Inbound via website ({body.source}).", summary]
+    if enrichment:
+        note_parts.append(enrichment)
+    note = "\n".join(note_parts)
     now = datetime.now(timezone.utc).isoformat()
 
     # Dedup: e-mail eerst (sterkste inbound-signaal), dan domein/naam.
@@ -738,6 +798,13 @@ async def inbound_lead(
             db, workspace_id, lead_id, "note_added",
             "Inbound Praktijk-Check ontvangen", summary,
         )
+
+        # Queue deep enrichment (async: KvK, company-data, scoring)
+        try:
+            from job_queue.enrichment_queue import queue_lead_for_enrichment
+            await queue_lead_for_enrichment(supabase_client=db, workspace_id=workspace_id, lead_id=lead_id)
+        except Exception as e:
+            logger.debug(f"Failed to queue deep enrichment for {lead_id}: {e}")
 
     return {"ok": True, "lead_id": lead_id, "action": action}
 

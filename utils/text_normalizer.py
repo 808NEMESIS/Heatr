@@ -30,6 +30,14 @@ _LABEL_RE = re.compile(
 _AANHEF_RE = re.compile(
     r"^\s*(\*+\s*)?(beste|hoi|hallo|geachte|dag)\b.*$", re.IGNORECASE,
 )
+# Conversationele preamble: korte kop-regel die eindigt op ':' en een generator-
+# woord bevat ('Hier is een openingszin voor je email:', 'Mogelijke openingszin:').
+_PREAMBLE_RE = re.compile(
+    r"^\s*.{0,60}\b(openingszin|opener|voorstel|e-?mail|mail)\b.{0,30}:\s*[\"'']?\s*$",
+    re.IGNORECASE,
+)
+# Horizontale regel (--- *** ___) die Claude als scheider tussen preamble en tekst zet.
+_HR_RE = re.compile(r"^\s*([-*_]\s*){3,}$")
 
 
 def _strip_inline_markup(line: str) -> str:
@@ -38,6 +46,11 @@ def _strip_inline_markup(line: str) -> str:
     line = re.sub(r"__(.+?)__", r"\1", line)          # __bold__
     line = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", line)  # *italic*
     line = re.sub(r"`+", "", line)                    # inline code
+    # Onafgesloten/over-regels-lopende bold-markers (bv. Claude opent '**' maar
+    # sluit pas veel later of niet) laat de gepaarde regex staan → hard weg.
+    line = line.replace("**", "").replace("__", "")
+    # Losse emphasis-tekens aan het regelbegin (orphan '*'/'_').
+    line = re.sub(r"^\s*[*_]+\s*", "", line)
     return line.strip()
 
 
@@ -71,7 +84,8 @@ def normalize_generated_text(
         # voor een opener/summary → droppen. Idem lege regels, meta-labels
         # ('Openingszin:') en aanhef-preambles ('Beste X,').
         if (not first or first.startswith("#")
-                or _LABEL_RE.match(first) or _AANHEF_RE.match(first)):
+                or _LABEL_RE.match(first) or _AANHEF_RE.match(first)
+                or _PREAMBLE_RE.match(first) or _HR_RE.match(first)):
             lines.pop(0)
             continue
         break
@@ -79,6 +93,8 @@ def normalize_generated_text(
     lines = [_strip_inline_markup(ln) for ln in lines]
     cleaned = "\n".join(ln for ln in lines).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)  # collapse lege regels
+    # Wrap-quotes rond de hele opener ("...") — strip openings-/sluitquote.
+    cleaned = cleaned.strip().strip('"').strip("'").strip('""').strip("''").strip()
 
     if not cleaned:
         return "", False, "empty_after_clean"
