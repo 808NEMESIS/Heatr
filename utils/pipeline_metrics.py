@@ -157,18 +157,22 @@ async def collect_pipeline_health(
     except Exception:
         funnel["data_verified"] = 0
 
-    # --- Scored above 65 ---
+    # --- Scored above de launch-drempel ---
+    # Env-drempel i.p.v. hardcoded 65 (die hoorde bij het oude scoring-model;
+    # sinds de icp-normalisatie 2026-07 staat de gate op MIN_SCORE_FOR_WARMR=55).
+    import os as _os
+    min_score = int(_os.getenv("MIN_SCORE_FOR_WARMR", "55"))
     try:
         res = supabase_client.table("leads").select("id", count="exact").eq(
             "workspace_id", workspace_id,
-        ).gte("created_at", cutoff).gte("score", 65).execute()
-        funnel["scored_above_65"] = res.count or 0
+        ).gte("created_at", cutoff).gte("score", min_score).execute()
+        funnel["scored_above_gate"] = res.count or 0
     except Exception:
-        funnel["scored_above_65"] = 0
+        funnel["scored_above_gate"] = 0
 
     drop_off["scoring"] = {
-        "dropped": funnel["contact_found"] - funnel["scored_above_65"],
-        "pct": _pct(funnel["contact_found"] - funnel["scored_above_65"], funnel["contact_found"]),
+        "dropped": funnel["contact_found"] - funnel["scored_above_gate"],
+        "pct": _pct(funnel["contact_found"] - funnel["scored_above_gate"], funnel["contact_found"]),
     }
 
     # --- Pushed to Warmr ---

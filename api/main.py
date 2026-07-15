@@ -3182,6 +3182,22 @@ async def analytics_enrichment_coverage(
     }
 
 
+@app.get("/analytics/ops-health")
+async def analytics_ops_health(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Operationele pijplijn-gezondheid in één blik: queue-diepte, vastgelopen
+    jobs, worker-heartbeat en expliciete STALL-detectie (utils.pipeline_ops).
+
+    Returns {status: healthy|degraded|stalled, alerts: [...], snapshot: {...}}.
+    Complementair aan /analytics/queue-health (retry/step-detail) en
+    /analytics/pipeline (conversie). Cron-baar als stall-alarm.
+    """
+    from utils.pipeline_ops import ops_health
+    return await ops_health(workspace_id, db)
+
+
 @app.get("/analytics/queue-health")
 async def analytics_queue_health(
     workspace_id: str = Depends(get_workspace),
