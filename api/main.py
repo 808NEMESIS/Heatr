@@ -385,6 +385,11 @@ class CallSendRequest(BaseModel):
     dry_run: bool = False               # render+upload, geen Warmr-push (test zonder send)
 
 
+class CallRetargetRequest(BaseModel):
+    dry_run: bool = False               # genereer+QA, geen Warmr-push
+    force: bool = False                 # negeer retarget_due_at (operator-override)
+
+
 class CollectMetricsRequest(BaseModel):
     target_date: str | None = None  # YYYY-MM-DD, defaults to today
 
@@ -2583,6 +2588,127 @@ async def send_call_report(
             "retarget_status": updates.get("retarget_status")}
 
 
+def _retarget_max_attempts(outcome: str) -> int:
+    """Max pogingen voor een uitkomst: cadans-config, geplafonneerd door de env-cap."""
+    from config.retarget_cadence import cadence_for
+    cad = cadence_for(outcome) or {}
+    per_outcome = int(cad.get("max_attempts") or 0)
+    cap = int(os.getenv("RETARGET_MAX_ATTEMPTS", "2"))
+    return min(per_outcome, cap) if per_outcome else cap
+
+
+@app.post("/calls/{call_id}/retarget")
+async def retarget_call(
+    call_id: str,
+    body: CallRetargetRequest,
+    workspace_id: str = Depends(require_service_key),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Verstuur een retarget-mail voor een afgesloten gesprek (cadans).
+
+    Service-only + dubbel op slot (CHECKUP_REPORT_ENABLED + dispatcher). De
+    variant (with_report/no_report) wordt HARD gekozen op report_status; de
+    QA-gate is fail-closed (o.a. hard rule 1: geen rapport-verwijzing tenzij
+    report_status='sent'). Na een geslaagde push: poging+1, en bij het bereiken
+    van max_attempts -> retarget_status='exhausted', anders opnieuw ingepland.
+    """
+    if os.getenv("CHECKUP_REPORT_ENABLED", "false").lower() != "true":
+        raise HTTPException(status_code=403, detail="Check-up sends staan uit (CHECKUP_REPORT_ENABLED=false).")
+
+    from calls.call_records import get_call_record
+    from calls.retarget_generator import generate_retarget_mail, validate_retarget_sendable
+
+    record = await get_call_record(db, workspace_id, call_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="call not found")
+    if record.get("retarget_status") != "scheduled":
+        raise HTTPException(status_code=409,
+                            detail=f"Geen geplande retarget (retarget_status={record.get('retarget_status')}).")
+
+    due = record.get("retarget_due_at")
+    if not body.force and due and due > _now_iso():
+        raise HTTPException(status_code=409, detail=f"Retarget nog niet due (gepland {due}).")
+
+    outcome = record.get("outcome") or ""
+    max_attempts = _retarget_max_attempts(outcome)
+    attempt = int(record.get("retarget_attempt") or 0)
+    if attempt >= max_attempts:
+        db.table("call_records").update({"retarget_status": "exhausted", "updated_at": _now_iso()}) \
+            .eq("id", call_id).eq("workspace_id", workspace_id).execute()
+        raise HTTPException(status_code=409, detail="Max pogingen bereikt (exhausted).")
+
+    lead_id = record.get("lead_id")
+    if not lead_id:
+        raise HTTPException(status_code=409, detail="Gesprek is niet aan een lead gekoppeld.")
+    lead = (db.table("leads").select("*").eq("id", lead_id)
+            .eq("workspace_id", workspace_id).maybe_single().execute()).data
+    if not lead:
+        raise HTTPException(status_code=404, detail="Gekoppelde lead niet gevonden.")
+    if not (lead.get("email") or "").strip():
+        raise HTTPException(status_code=409, detail="Lead heeft geen e-mailadres.")
+
+    mail = await generate_retarget_mail(record, lead, supabase_client=db)
+    if mail.get("error") or not mail.get("body"):
+        raise HTTPException(status_code=502, detail=f"Retarget-generatie faalde: {mail.get('error')}")
+    ok, reason = validate_retarget_sendable(mail["body"], mail["variant"], record.get("report_status"))
+    if not ok:
+        raise HTTPException(status_code=422, detail=f"Retarget QA-gate afgekeurd: {reason}")
+
+    if body.dry_run:
+        return {"dry_run": True, "variant": mail["variant"], "attempt_would_be": attempt + 1,
+                "subject": mail["subject"], "body": mail["body"]}
+
+    from integrations.warmr_client import WarmrClient
+    from utils.outbound_dispatcher import dispatch_outbound, DispatchHalted
+    client = WarmrClient()
+    inboxes = await client.get_ready_inboxes()
+    if not inboxes:
+        raise HTTPException(status_code=503, detail="Geen Warmr-inbox beschikbaar.")
+    campaign_id = os.getenv("CHECKUP_WARMR_CAMPAIGN_ID") or inboxes[0]["id"]
+
+    try:
+        disp = await dispatch_outbound(
+            kind="warmr_push",
+            idempotency_key=f"retarget:{call_id}:{attempt + 1}",
+            actor="operator",
+            lead=lead,
+            send=lambda: client.push_lead(
+                lead, campaign_id=campaign_id, preferred_inbox_id=inboxes[0]["id"],
+                custom_subject=mail["subject"], custom_body=mail["body"],
+            ),
+            supabase_client=db,
+            workspace_id=workspace_id,
+            metadata={"endpoint": "/calls/{id}/retarget", "call_id": call_id,
+                      "variant": mail["variant"], "attempt": attempt + 1},
+        )
+    except DispatchHalted as e:
+        raise HTTPException(status_code=403, detail=f"Send geweigerd: {e}")
+    if disp.skipped_duplicate:
+        raise HTTPException(status_code=409, detail="Deze retarget-poging is al verstuurd (dedup).")
+    if not disp.executed:
+        raise HTTPException(status_code=502, detail="Warmr-push niet uitgevoerd.")
+
+    new_attempt = attempt + 1
+    updates = {"retarget_attempt": new_attempt, "retarget_last_sent_at": _now_iso(),
+               "updated_at": _now_iso()}
+    if new_attempt >= max_attempts:
+        updates["retarget_status"] = "exhausted"
+        updates["retarget_due_at"] = None
+    else:
+        updates.update(_schedule_retarget_fields(outcome, record.get("timing_target_date")))
+        # use_target_date is verbruikt; de volgende poging is puur op interval.
+        if updates.get("retarget_due_at") == record.get("timing_target_date"):
+            from config.retarget_cadence import cadence_for
+            days = int((cadence_for(outcome) or {}).get("days") or 0)
+            updates["retarget_due_at"] = (
+                (datetime.now(timezone.utc) + timedelta(days=days)).isoformat() if days else None)
+    db.table("call_records").update(updates).eq("id", call_id).eq("workspace_id", workspace_id).execute()
+    _insert_timeline_event(db, workspace_id, lead_id, "retarget_sent",
+                           f"Retarget verstuurd (poging {new_attempt}, {mail['variant']})")
+    return {"retarget_status": updates["retarget_status"] if "retarget_status" in updates else "scheduled",
+            "attempt": new_attempt, "variant": mail["variant"]}
+
+
 # =============================================================================
 # ANALYTICS
 # =============================================================================
@@ -3874,6 +4000,20 @@ async def get_sendability_config() -> dict:
 # WEBHOOKS — Warmr
 # =============================================================================
 
+def _mark_retarget_replied(db: Client, workspace_id: str, heatr_lead_id: str) -> None:
+    """Zet een lopende check-up retarget-flow op 'replied' bij een reply.
+
+    Een reply na een rapport-send of retarget betekent dat de flow z'n werk deed:
+    stop 'm. Fail-soft — de lead-level crm_stage is al gezet (eerste linie).
+    """
+    try:
+        db.table("call_records").update({"retarget_status": "replied", "updated_at": _now_iso()}) \
+            .eq("workspace_id", workspace_id).eq("lead_id", heatr_lead_id) \
+            .in_("retarget_status", ["scheduled", "exhausted"]).execute()
+    except Exception as e:
+        logger.warning("_mark_retarget_replied faalde (lead=%s): %s", heatr_lead_id, e)
+
+
 def _register_suppression_from_webhook(
     db: Client,
     heatr_lead_id: str,
@@ -4030,6 +4170,7 @@ async def warmr_webhook(
         if event_type in ("interested", "lead.interested"):
             db.table("leads").update({"crm_stage": "gereageerd"}).eq(
                 "id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
+            _mark_retarget_replied(db, workspace_id, heatr_lead_id)
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "reply_received",
@@ -4042,6 +4183,7 @@ async def warmr_webhook(
             # beantwoorders in een onzichtbare kolom belandden.
             db.table("leads").update({"crm_stage": "gereageerd"}).eq(
                 "id", heatr_lead_id).eq("workspace_id", workspace_id).execute()
+            _mark_retarget_replied(db, workspace_id, heatr_lead_id)
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "reply_received",

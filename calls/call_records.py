@@ -133,6 +133,24 @@ async def list_unmatched(supabase_client: Any, workspace_id: str) -> list[dict]:
     return await list_call_records(supabase_client, workspace_id, match_status="unmatched", limit=200)
 
 
+async def list_due_retargets(supabase_client: Any, workspace_id: str, limit: int = 100) -> list[dict]:
+    """Gesprekken met een retarget die nu verstuurd mag worden.
+
+    retarget_status='scheduled' EN retarget_due_at <= nu. Event-getriggerde
+    cadans (no_value) heeft retarget_due_at NULL en valt hier bewust buiten (de
+    <= vergelijking is onwaar voor NULL) — die wacht op de event-hook, niet op tijd.
+    """
+    try:
+        return (supabase_client.table("call_records").select("*")
+                .eq("workspace_id", workspace_id)
+                .eq("retarget_status", "scheduled")
+                .lte("retarget_due_at", _now())
+                .order("retarget_due_at").limit(limit).execute().data or [])
+    except Exception as e:
+        logger.error("list_due_retargets faalde (ws=%s): %s", workspace_id, e)
+        return []
+
+
 async def match_call_record(
     supabase_client: Any, workspace_id: str, call_id: str, lead_id: str,
 ) -> dict | None:
