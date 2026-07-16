@@ -355,6 +355,32 @@ class DealCreate(BaseModel):
     notes: str | None = None
 
 
+# --- Check-up follow-up (calls) ---------------------------------------------
+class CallCreate(BaseModel):
+    transcript: str
+    call_date: str
+    participants: list | None = None
+    duration_minutes: int | None = None
+    zoom_meeting_id: str | None = None
+    lead_id: str | None = None          # optioneel: direct koppelen (anders unmatched)
+
+
+class CallMatch(BaseModel):
+    lead_id: str
+
+
+class CallOutcome(BaseModel):
+    outcome: str                        # won | timing | no_value | stalled | hard_no
+    outcome_note: str | None = None
+    timing_target_date: str | None = None
+    checkup_data: dict | None = None
+
+
+class CallReportPatch(BaseModel):
+    action: str                         # approve | discard
+    report_html: str | None = None      # bewerkte versie bij approve (gate 2)
+
+
 class CollectMetricsRequest(BaseModel):
     target_date: str | None = None  # YYYY-MM-DD, defaults to today
 
@@ -2200,6 +2226,213 @@ async def list_reply_inbox(
             "company_name": company_by_lead.get(row.get("lead_id")),
         })
     return {"replies": replies}
+
+
+# =============================================================================
+# CHECK-UP FOLLOW-UP (calls) — JWT-paden (CRUD + gate 1 uitkomst + gate 2 rapport).
+# Verzenden en retarget zitten op de service-key (verderop).
+# =============================================================================
+
+@app.post("/calls")
+async def create_call(
+    body: CallCreate,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Maak handmatig een gesprekrecord aan. Met lead_id → direct gekoppeld
+    (manually_matched), anders unmatched (fail-closed)."""
+    from calls.call_records import create_call_record
+    match_status = "manually_matched" if body.lead_id else "unmatched"
+    record = await create_call_record(
+        db, workspace_id, transcript=body.transcript, call_date=body.call_date,
+        participants=body.participants, duration_minutes=body.duration_minutes,
+        zoom_meeting_id=body.zoom_meeting_id, transcript_source="manual",
+        lead_id=body.lead_id, match_status=match_status,
+    )
+    if not record:
+        raise HTTPException(status_code=500, detail="create_failed")
+    return record
+
+
+@app.get("/calls")
+async def list_calls(
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Lijst gesprekken met optionele filters (report_status/outcome/match_status)."""
+    from calls.call_records import list_call_records
+    p = dict(request.query_params)
+    calls = await list_call_records(
+        db, workspace_id, report_status=p.get("report_status"),
+        outcome=p.get("outcome"), match_status=p.get("match_status"),
+        limit=min(int(p.get("limit", 50)), 200),
+    )
+    return {"calls": calls}
+
+
+@app.get("/calls/unmatched")
+async def list_calls_unmatched(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """De fallback-lijst: gesprekken zonder gekoppelde lead."""
+    from calls.call_records import list_unmatched
+    return {"calls": await list_unmatched(db, workspace_id)}
+
+
+@app.get("/calls/{call_id}")
+async def get_call(
+    call_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Volledig gesprekrecord."""
+    from calls.call_records import get_call_record
+    record = await get_call_record(db, workspace_id, call_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="call not found")
+    return record
+
+
+@app.patch("/calls/{call_id}/match")
+async def match_call(
+    call_id: str,
+    body: CallMatch,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Koppel een gesprek handmatig aan een lead (fail-closed: alleen exact)."""
+    from calls.call_records import match_call_record
+    record = await match_call_record(db, workspace_id, call_id, body.lead_id)
+    if not record:
+        raise HTTPException(status_code=400, detail="match_failed (lead niet in workspace?)")
+    return record
+
+
+@app.patch("/calls/{call_id}/outcome")
+async def set_call_outcome(
+    call_id: str,
+    body: CallOutcome,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Gate 1 — de operator kiest de uitkomst + vult (optioneel) checkup_data.
+    won→gewonnen, hard_no→verloren (geen rapport/cadans)."""
+    from calls.call_records import set_outcome, VALID_OUTCOMES
+    if body.outcome not in VALID_OUTCOMES:
+        raise HTTPException(status_code=422, detail=f"outcome moet uit {VALID_OUTCOMES}")
+    record = await set_outcome(
+        db, workspace_id, call_id, body.outcome,
+        outcome_note=body.outcome_note, timing_target_date=body.timing_target_date,
+        checkup_data=body.checkup_data,
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="call not found")
+    return record
+
+
+@app.post("/calls/{call_id}/generate-report")
+async def generate_call_report(
+    call_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Genereer het check-up rapport (Sonnet + QA-gate). Vereist een gekoppelde
+    lead met checkup_data — anders report_status='skipped'. Faalt de QA-gate,
+    dan report_status='pending' + reden (fail-closed, niet opgeslagen)."""
+    from calls.call_records import get_call_record
+    from calls.report_generator import generate_checkup_report, validate_report_sendable
+
+    record = await get_call_record(db, workspace_id, call_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="call not found")
+    lead_id = record.get("lead_id")
+    if not lead_id:
+        raise HTTPException(status_code=400, detail="call niet gekoppeld aan lead")
+
+    lead = (db.table("leads").select("*").eq("id", lead_id)
+            .eq("workspace_id", workspace_id).maybe_single().execute()).data or {}
+    checkup = lead.get("checkup_data") or {}
+    if not checkup:
+        # Regel 4: geen rapport zonder cijfers → alleen de cadans loopt.
+        db.table("call_records").update({"report_status": "skipped"}).eq("id", call_id).eq("workspace_id", workspace_id).execute()
+        return {"report_status": "skipped", "reason": "no_checkup_data"}
+
+    wi = (db.table("website_intelligence").select("*").eq("lead_id", lead_id)
+          .eq("workspace_id", workspace_id).maybe_single().execute()).data or {}
+
+    import anthropic
+    anth = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    out = await generate_checkup_report(
+        lead=lead, checkup_data=checkup, transcript=record.get("transcript") or "",
+        website_intelligence=wi, anthropic_client=anth, supabase_client=db,
+    )
+    if out.get("error"):
+        raise HTTPException(status_code=502, detail=f"generatie faalde: {out['error']}")
+
+    ok, reason = validate_report_sendable(out["report_html"], checkup, wi, findings=out["report_findings"])
+    if not ok:
+        logger.warning("checkup: QA-gate afgekeurd voor call %s: %s", call_id, reason)
+        return {"report_status": "pending", "qa_failed": reason}
+
+    db.table("call_records").update({
+        "report_findings": out["report_findings"], "report_html": out["report_html"],
+        "report_status": "generated", "updated_at": _now_iso(),
+    }).eq("id", call_id).eq("workspace_id", workspace_id).execute()
+    return {"report_status": "generated", "report_findings": out["report_findings"],
+            "report_html": out["report_html"], "cost_eur": out["cost_eur"]}
+
+
+@app.patch("/calls/{call_id}/report")
+async def patch_call_report(
+    call_id: str,
+    body: CallReportPatch,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Gate 2 — de operator geeft vrij of gooit weg.
+
+    approve: report_status='approved' (+ eventueel bewerkte report_html). De
+    QA-gate draait óók hier opnieuw (fail-closed: ook een menselijke edit mag
+    geen ongegrond getal / pitch / streepje bevatten). discard: terug naar
+    'pending', rapport weggegooid.
+    """
+    from calls.call_records import get_call_record
+    from calls.report_generator import validate_report_sendable
+
+    record = await get_call_record(db, workspace_id, call_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="call not found")
+
+    if body.action == "discard":
+        db.table("call_records").update({
+            "report_status": "pending", "report_html": None, "report_findings": None,
+            "updated_at": _now_iso(),
+        }).eq("id", call_id).eq("workspace_id", workspace_id).execute()
+        return {"report_status": "pending"}
+
+    if body.action != "approve":
+        raise HTTPException(status_code=422, detail="action moet 'approve' of 'discard' zijn")
+
+    final_html = body.report_html if body.report_html is not None else record.get("report_html")
+    if not final_html:
+        raise HTTPException(status_code=400, detail="geen rapport om vrij te geven")
+
+    lead_id = record.get("lead_id")
+    lead = (db.table("leads").select("checkup_data").eq("id", lead_id)
+            .eq("workspace_id", workspace_id).maybe_single().execute()).data or {} if lead_id else {}
+    wi = (db.table("website_intelligence").select("*").eq("lead_id", lead_id)
+          .eq("workspace_id", workspace_id).maybe_single().execute()).data or {} if lead_id else {}
+    ok, reason = validate_report_sendable(final_html, lead.get("checkup_data") or {}, wi,
+                                          findings=record.get("report_findings"))
+    if not ok:
+        raise HTTPException(status_code=422, detail=f"QA-gate afgekeurd: {reason}")
+
+    db.table("call_records").update({
+        "report_html": final_html, "report_status": "approved", "updated_at": _now_iso(),
+    }).eq("id", call_id).eq("workspace_id", workspace_id).execute()
+    return {"report_status": "approved"}
 
 
 # =============================================================================
