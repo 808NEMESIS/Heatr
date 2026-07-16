@@ -39,6 +39,9 @@ _COST_PER_M_OUTPUT = _PRICING["output_per_m_eur"]
 
 _MAX_WORDS = 400
 _REQUIRED_FINDINGS = 3
+# Kalender-/percentage-constanten die in een rekensom horen (52 weken, 12
+# maanden, 100 procent, …) — geen 'claim', dus niet als ongegrond getal flaggen.
+_ARITHMETIC_CONSTANTS = {4, 7, 12, 24, 30, 52, 60, 100, 365, 1000}
 
 # Woorden die een dienst/pitch aanprijzen — verboden in het rapport.
 _PITCH_RE = re.compile(
@@ -84,33 +87,25 @@ def _collect_source_numbers(checkup_data: dict | None, website_intelligence: dic
     return nums
 
 
-def _derivable_numbers(source: set[float]) -> set[int]:
-    """Getallen die uit de bron af te leiden zijn via een conservatieve rekensom:
-    bronwaarden zelf, hun %-vorm (×100), week→maand→jaar-multiples (×4/12/52), en
-    producten/sommen van 2-3 bronwaarden (evt. × één multiplier). Zo blijft een
-    échte 'onze rekensom' toegestaan, terwijl een verzonnen statistiek opvalt.
 
-    Bewust ruim (het menselijke vrijgeef-gate is de echte bewaker); dit vangt de
-    grove verzinsels ('gemiddeld 30% van klinieken…') die niet uit de bron komen.
-    """
-    base = {n for n in source if n}
-    mults = {1, 4, 12, 52, 100}
-    vals: set[float] = set()
-    b = list(base)
-    # enkelvoudig + multiplier
-    for x in b:
-        for m in mults:
-            vals.add(x * m)
-    # paren en triples (evt. × multiplier)
-    for i in range(len(b)):
-        for j in range(len(b)):
-            p = b[i] * b[j]
-            vals.add(p)
-            for m in mults:
-                vals.add(p * m)
-            for k in range(len(b)):
-                vals.add(p * b[k])
-    return {int(round(v)) for v in vals if v}
+
+def _numbers(text: str) -> list[int]:
+    """Betekenisvolle getallen uit tekst: >=10, geen jaartal, geen kalender-
+    constante. Duizend-scheidingstekens (12.000) worden samengevoegd."""
+    out: list[int] = []
+    for raw in re.findall(r"\d[\d.\s]*\d|\d", text or ""):
+        digits = re.sub(r"[.\s]", "", raw)
+        if not digits.isdigit():
+            continue
+        n = int(digits)
+        if n < 10 or 2000 <= n <= 2035 or n in _ARITHMETIC_CONSTANTS:
+            continue
+        out.append(n)
+    return out
+
+
+def _grounded(n: int, allowed: set[int]) -> bool:
+    return any(abs(n - a) <= max(1, a * 0.02) for a in allowed)
 
 
 def validate_report_sendable(
@@ -121,15 +116,27 @@ def validate_report_sendable(
 ) -> tuple[bool, str]:
     """Fail-closed QA op een gegenereerd rapport. Returns (ok, reason).
 
-    Weigert bij: getal dat niet uit checkup_data/website-intelligence af te leiden
-    is, pitch-woorden, liggend/gedachtestreepje, ≠3 bevindingen, of >400 woorden.
-    ok=False → NIET opslaan, report_status blijft 'pending'.
-    reason ∈ ok | empty | dash | pitch | too_long | finding_count | ungrounded_number:N.
+    Getal-grounding — alleen FEITEN, niet rekensommen. Een platte getal-check op
+    alle getallen is onhoudbaar: rekensommen ronden tussenstappen af (12 × 0,20 =
+    2,4 → 'twee' × 700 = 1.400) en zijn dan geen exact product meer van de bron.
+    Daarom:
+      - FEITEN (findings[].fact) = CLAIMS → moeten een bron-getal zijn
+        (checkup_data / website-intelligence / %-vorm). Zo valt een verzonnen
+        '47% van klinieken' of een uit de lucht gegrepen statistiek op.
+      - REKENSOMMEN (findings[].cost) = zichtbaar doorgerekend en gaan naar het
+        menselijke vrijgeef-gate → hier GEEN getal-check (wel dash/pitch).
+    Bewust afwijkend van de letterlijke spec ('elk getal moet in checkup_data
+    staan'), omdat die zichzelf tegenspreekt met 'hun getallen, onze rekensom'.
+    Zonder `findings` (bv. losse HTML) vervalt de feit-check; dash/pitch/telling
+    blijven, en het menselijke gate blijft de eindbewaker.
+
+    Weigert verder bij pitch-woorden, liggend/gedachtestreepje, ≠3 bevindingen,
+    >400 woorden. ok=False → niet opslaan, report_status blijft 'pending'.
+    reason ∈ ok | empty | dash | pitch | too_long | finding_count | ungrounded_fact:N.
     """
     html = (report_html or "").strip()
     if not html:
         return False, "empty"
-
     text = re.sub(r"<[^>]+>", " ", html)  # tags weg voor tekst-checks
 
     if _DASH_RE.search(text):
@@ -143,19 +150,16 @@ def validate_report_sendable(
     if n_findings != _REQUIRED_FINDINGS:
         return False, "finding_count"
 
-    # Getal-grounding — elk 'betekenisvol' getal (>=10, geen jaartal) moet uit de
-    # bron af te leiden zijn. Kleine getallen (ordinalen 1-9) en jaartallen slaan
-    # we over.
-    allowed = _derivable_numbers(_collect_source_numbers(checkup_data, website_intelligence))
-    for raw in re.findall(r"\d[\d.\s]*\d|\d", text):
-        digits = re.sub(r"[.\s]", "", raw)
-        if not digits.isdigit():
-            continue
-        n = int(digits)
-        if n < 10 or 2000 <= n <= 2035:
-            continue
-        if not any(abs(n - a) <= max(1, a * 0.02) for a in allowed):
-            return False, f"ungrounded_number:{n}"
+    if findings:
+        source = _collect_source_numbers(checkup_data, website_intelligence)
+        # In een FEIT toegestaan: bronwaarde zelf of z'n %-vorm (0.20 → 20).
+        fact_allowed = {int(round(s)) for s in source} | {int(round(s * 100)) for s in source}
+        for f in findings:
+            if not isinstance(f, dict):
+                continue
+            for n in _numbers(str(f.get("fact") or "")):
+                if not _grounded(n, fact_allowed):
+                    return False, f"ungrounded_fact:{n}"
 
     return True, "ok"
 
