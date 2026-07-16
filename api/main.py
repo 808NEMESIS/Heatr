@@ -2264,10 +2264,21 @@ async def list_calls(
     from calls.call_records import list_call_records
     p = dict(request.query_params)
     calls = await list_call_records(
-        db, workspace_id, report_status=p.get("report_status"),
+        db, workspace_id, lead_id=p.get("lead_id"), report_status=p.get("report_status"),
         outcome=p.get("outcome"), match_status=p.get("match_status"),
         limit=min(int(p.get("limit", 50)), 200),
     )
+    # Verrijk met company_name (batch) — geen FK-embed, zoals /reply-inbox.
+    lead_ids = sorted({c["lead_id"] for c in calls if c.get("lead_id")})
+    if lead_ids:
+        try:
+            lres = (db.table("leads").select("id, company_name")
+                    .eq("workspace_id", workspace_id).in_("id", lead_ids).execute())
+            by_id = {l["id"]: l.get("company_name") for l in (lres.data or [])}
+            for c in calls:
+                c["company_name"] = by_id.get(c.get("lead_id"))
+        except Exception as e:
+            logger.warning("list_calls: company_name-lookup faalde: %s", e)
     return {"calls": calls}
 
 

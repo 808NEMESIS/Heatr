@@ -11,6 +11,7 @@ import {
   Upload,
   BarChart3,
   Activity,
+  Phone,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -34,6 +35,7 @@ const NAV = [
   { to: '/inbox', icon: Inbox, label: 'Inbox', badge: 'inbox' as const },
   { to: '/crm', icon: Workflow, label: 'CRM' },
   { to: '/crm/activity', icon: Kanban, label: 'CRM activity', badge: 'recontact' as const },
+  { to: '/gesprekken', icon: Phone, label: 'Gesprekken' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/control', icon: Activity, label: 'Control' },
 ];

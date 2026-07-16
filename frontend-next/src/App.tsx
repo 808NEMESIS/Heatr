@@ -16,6 +16,7 @@ import { CampagnesPage } from '@/pages/Campagnes';
 import { CampagneLaunchPage } from '@/pages/CampagneLaunch';
 import { LeadsImportPage } from '@/pages/LeadsImport';
 import { CRMActivityPage } from '@/pages/CRMActivity';
+import { GesprekkenPage } from '@/pages/Gesprekken';
 import { AnalyticsPage } from '@/pages/Analytics';
 import { ControlPage } from '@/pages/Control';
 import { AuthGate } from '@/components/AuthGate';
@@ -62,6 +63,7 @@ export default function App() {
               <Route path="/inbox" element={<InboxPage />} />
               <Route path="/crm" element={<CRMPage />} />
               <Route path="/crm/activity" element={<CRMActivityPage />} />
+              <Route path="/gesprekken" element={<GesprekkenPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
               <Route path="/control" element={<ControlPage />} />
             </Route>

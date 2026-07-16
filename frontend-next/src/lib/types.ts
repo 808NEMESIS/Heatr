@@ -80,8 +80,63 @@ export interface Lead {
   archetype_reason?: string | null;
   archetype_confidence?: number | null;
   is_test_lead?: boolean | null;
+  last_call_at?: string | null;
+  last_call_outcome?: CallOutcome | string | null;
+  checkup_data?: CheckupData | null;
   created_at: string;
   updated_at?: string | null;
+}
+
+// --- Check-up follow-up (migratie 032) --------------------------------------
+export type CallOutcome = 'won' | 'timing' | 'no_value' | 'stalled' | 'hard_no';
+export type ReportStatus = 'pending' | 'generated' | 'approved' | 'sent' | 'skipped';
+export type RetargetStatus = 'none' | 'scheduled' | 'sent' | 'replied' | 'exhausted';
+export type MatchStatus = 'unmatched' | 'matched' | 'manually_matched';
+
+export interface CheckupData {
+  unanswered_inbound_per_week?: number;
+  response_time_hours?: number;
+  value_per_new_patient?: number;
+  conversion_estimate?: number;
+  no_shows_per_month?: number;
+  hours_reception_per_week?: number;
+  reviews_per_month?: number;
+  treatments_per_month?: number;
+  source?: string;
+  captured_at?: string;
+}
+
+export interface ReportFinding {
+  title?: string;
+  fact?: string;
+  cost?: string;
+}
+
+export interface CallRecord {
+  id: string;
+  workspace_id: string;
+  lead_id: string | null;
+  call_date: string;
+  duration_minutes: number | null;
+  transcript: string;
+  participants: unknown[] | null;
+  transcript_source: string;
+  match_status: MatchStatus;
+  outcome: CallOutcome | null;
+  outcome_note: string | null;
+  outcome_set_at: string | null;
+  timing_target_date: string | null;
+  report_findings: ReportFinding[] | null;
+  report_html: string | null;
+  report_status: ReportStatus;
+  report_sent_at: string | null;
+  retarget_due_at: string | null;
+  retarget_status: RetargetStatus;
+  retarget_attempt: number;
+  retarget_last_sent_at: string | null;
+  company_name?: string | null;   // join-veld in de Gesprekken-lijst
+  created_at: string;
+  updated_at: string;
 }
 
 // Koop-archetypes — bepaalt Mail 1 tone (zie enrichment/archetype_classifier.py)

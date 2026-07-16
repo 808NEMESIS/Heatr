@@ -107,13 +107,15 @@ async def get_call_record(supabase_client: Any, workspace_id: str, call_id: str)
 
 async def list_call_records(
     supabase_client: Any, workspace_id: str, *,
-    report_status: str | None = None, outcome: str | None = None,
-    match_status: str | None = None, limit: int = 50,
+    lead_id: str | None = None, report_status: str | None = None,
+    outcome: str | None = None, match_status: str | None = None, limit: int = 50,
 ) -> list[dict]:
     """Lijst gesprekrecords met optionele filters, nieuwste eerst."""
     try:
         q = (supabase_client.table("call_records").select("*")
              .eq("workspace_id", workspace_id))
+        if lead_id:
+            q = q.eq("lead_id", lead_id)
         if report_status:
             q = q.eq("report_status", report_status)
         if outcome:

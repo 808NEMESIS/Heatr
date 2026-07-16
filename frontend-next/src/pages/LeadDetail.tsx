@@ -9,6 +9,7 @@ import { SECTOR_LABEL } from '@/lib/types';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { GesprekView } from '@/components/calls/GesprekView';
 
 interface Contact { id: string; name?: string; email?: string; role?: string; source?: string; is_primary?: boolean; confidence?: number; why_chosen?: string; }
 interface TimelineEvent { id: string; event_type: string; title: string; body?: string; created_at: string; }
@@ -159,6 +160,7 @@ export function LeadDetailPage() {
           <TabsTrigger value="website">Website</TabsTrigger>
           <TabsTrigger value="contacts">Contacts ({contacts?.contacts?.length || 0})</TabsTrigger>
           <TabsTrigger value="thread">Thread</TabsTrigger>
+          <TabsTrigger value="gesprek">Gesprek</TabsTrigger>
           <TabsTrigger value="run">Run</TabsTrigger>
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
         </TabsList>
@@ -399,6 +401,10 @@ export function LeadDetailPage() {
 
         <TabsContent value="thread" className="mt-5">
           <ThreadView leadId={id!} />
+        </TabsContent>
+
+        <TabsContent value="gesprek" className="mt-5">
+          <GesprekView leadId={id!} />
         </TabsContent>
 
         <TabsContent value="run" className="mt-5">

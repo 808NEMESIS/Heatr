@@ -37,6 +37,15 @@ interface Task {
   leads?: { company_name?: string; city?: string };
 }
 
+// Gesprek-uitkomst → badge (check-up follow-up, migratie 032)
+const CALL_OUTCOME_META: Record<string, { label: string; variant: 'success' | 'warning' | 'neutral' | 'danger' }> = {
+  won: { label: 'Gewonnen', variant: 'success' },
+  timing: { label: 'Timing', variant: 'warning' },
+  no_value: { label: 'Geen waarde', variant: 'neutral' },
+  stalled: { label: 'Vastgelopen', variant: 'warning' },
+  hard_no: { label: 'Harde nee', variant: 'danger' },
+};
+
 interface Stage {
   key: string;
   label: string;
@@ -421,6 +430,7 @@ function LijstView() {
             <th className="text-left px-4 py-3 text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Bedrijf</th>
             <th className="text-left px-4 py-3 text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Stage</th>
             <th className="text-left px-4 py-3 text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Score</th>
+            <th className="text-left px-4 py-3 text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Gesprek</th>
             <th className="text-left px-4 py-3 text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">Laatste activiteit</th>
           </tr>
         </thead>
@@ -437,6 +447,18 @@ function LijstView() {
                 <Badge variant="neutral">{STAGES.find((s) => s.key === l.crm_stage)?.label || l.crm_stage}</Badge>
               </td>
               <td className="px-4 py-3 tabular-nums">{l.score ?? '—'}</td>
+              <td className="px-4 py-3">
+                {l.last_call_outcome ? (
+                  <span className="text-xs text-[var(--color-stone-500)]">
+                    <Badge variant={CALL_OUTCOME_META[l.last_call_outcome]?.variant || 'neutral'}>
+                      {CALL_OUTCOME_META[l.last_call_outcome]?.label || l.last_call_outcome}
+                    </Badge>
+                    {l.last_call_at && <span className="ml-1.5">{fmtRelative(l.last_call_at)}</span>}
+                  </span>
+                ) : (
+                  <span className="text-xs text-[var(--color-stone-300)]">—</span>
+                )}
+              </td>
               <td className="px-4 py-3 text-xs text-[var(--color-stone-500)]">
                 <Clock className="inline h-3 w-3 mr-1" />
                 {fmtRelative(l.updated_at || l.created_at)}
