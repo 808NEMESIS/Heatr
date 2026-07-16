@@ -10,6 +10,7 @@ Session 5 + 6 + 7 endpoints included.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets as _secrets
@@ -28,7 +29,7 @@ except ImportError:  # dotenv is een dep (requirements.txt); defensief voor kale
     pass
 
 import jwt as _jwt
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -4393,6 +4394,51 @@ async def warmr_webhook(
         error=None if audit_logged else "één of meer audit-writes faalden (zie logs)",
     )
     return {"ok": audit_logged, "audit_logged": audit_logged, "event_id": event_id}
+
+
+# =============================================================================
+# ZOOM WEBHOOK (gebouwd, UIT tot ZOOM_WEBHOOK_SECRET gezet is)
+# =============================================================================
+
+@app.post("/webhooks/zoom")
+async def zoom_webhook(request: Request, background: BackgroundTasks) -> dict:
+    """Ontvang Zoom recording/transcript-events -> gesprekrecord.
+
+    UIT tot ZOOM_WEBHOOK_SECRET gezet is (dan 404). Geen X-API-Key/JWT: Zoom
+    authenticeert met HMAC (x-zm-signature), fail-closed geverifieerd. De URL-
+    validatie-handshake wordt vóór de HMAC-check afgehandeld. Zware verwerking
+    (VTT-download, matching, insert) draait als background-task zodat we binnen
+    Zoom's 3s-window 200 teruggeven.
+    """
+    from calls.zoom_webhook import (
+        zoom_enabled, verify_signature, url_validation_response, process_recording,
+    )
+    if not zoom_enabled():
+        raise HTTPException(status_code=404, detail="Zoom-webhook staat uit (ZOOM_WEBHOOK_SECRET niet gezet).")
+
+    raw = await request.body()
+    try:
+        payload = json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="ongeldige JSON")
+
+    # URL-validatie-handshake (Zoom stuurt dit bij het instellen van de endpoint).
+    if payload.get("event") == "endpoint.url_validation":
+        plain = ((payload.get("payload") or {}).get("plainToken")) or ""
+        return url_validation_response(plain)
+
+    # HMAC — fail-closed.
+    ts = request.headers.get("x-zm-request-timestamp", "")
+    sig = request.headers.get("x-zm-signature", "")
+    if not verify_signature(ts, raw, sig):
+        raise HTTPException(status_code=401, detail="ongeldige Zoom-signature")
+
+    event = payload.get("event") or ""
+    if event in ("recording.transcript_completed", "recording.completed"):
+        workspace_id = os.getenv("DEFAULT_WORKSPACE_ID", "aerys")
+        background.add_task(process_recording, payload.get("payload") or {}, workspace_id)
+        return {"ok": True, "queued": True, "event": event}
+    return {"ok": True, "ignored": event}
 
 
 # =============================================================================
