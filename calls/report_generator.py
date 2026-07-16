@@ -168,6 +168,35 @@ def validate_report_sendable(
 # Rapport-generatie (Sonnet)
 # =============================================================================
 
+def build_cover_mail(lead: dict, report_url: str) -> dict:
+    """Bouw de begeleidende mail bij het rapport: 3 regels, droog, één vraag.
+
+    Deterministisch (geen model): de kern zit in het rapport, de mail wijst er
+    alleen naar. Geen streepjes, geen superlatief, geen claim buiten "ik heb een
+    check-up gemaakt" (verifieerbaar: report_status wordt pas 'sent' na verzending).
+
+    Let op: of Warmr deze body honoreert hangt af van de campagne-template. Zet
+    daarom `report_url` ook als custom_field ({{report_url}}) mee. Deze tekst is
+    tevens het voorbeeld voor de Warmr-side check-up-template.
+
+    Args:
+        lead: heatr_leads-dict (company_name, contact_first_name).
+        report_url: signed URL naar de PDF.
+
+    Returns:
+        {"subject": str, "body": str}.
+    """
+    company = (lead.get("company_name") or "jullie praktijk").strip()
+    first = (lead.get("contact_first_name") or "").strip()
+    greet = f"Hoi {first}," if first else "Hoi,"
+    body = (
+        f"{greet}\n\n"
+        f"Na ons gesprek heb ik de check-up van {company} op een pagina gezet: {report_url}\n\n"
+        f"Eén vraag: is dit het bekijken waard voor jullie?"
+    )
+    return {"subject": f"check-up {company}", "body": body}
+
+
 def _render_report_html(company_name: str, city: str, findings: list[dict]) -> str:
     """Render de 3 bevindingen tot een schoon HTML-document (bron voor de PDF).
 

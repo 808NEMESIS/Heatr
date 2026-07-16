@@ -269,14 +269,30 @@ function ReportSection({ call, leadId }: { call: CallRecord; leadId: string }) {
           className={_input + ' mt-2 h-auto py-2 font-mono text-xs'} />
       </details>
 
-      <div className="flex gap-2">
-        <Button disabled={patch.isPending} onClick={() => patch.mutate({ action: 'approve', report_html: editHtml ?? undefined })}>
-          Vrijgeven
-        </Button>
-        <Button variant="outline" disabled={patch.isPending} onClick={() => patch.mutate({ action: 'discard' })}>
-          Weggooien
-        </Button>
-      </div>
+      {call.report_status === 'approved' ? (
+        <div className="rounded-md border border-[var(--color-ivory-200)] bg-[var(--color-ivory-50)] p-3">
+          <p className="text-xs text-[var(--color-stone-600)]">
+            Vrijgegeven. Versturen loopt bewust niet via de browser maar via de dispatcher (service-key):
+          </p>
+          <code className="mt-1 block text-xs text-[var(--color-stone-500)]">
+            python3 scripts/send_checkup_report.py {call.id} --dry-run
+          </code>
+          <div className="mt-3">
+            <Button variant="outline" size="sm" disabled={patch.isPending} onClick={() => patch.mutate({ action: 'discard' })}>
+              Intrekken
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Button disabled={patch.isPending} onClick={() => patch.mutate({ action: 'approve', report_html: editHtml ?? undefined })}>
+            Vrijgeven
+          </Button>
+          <Button variant="outline" disabled={patch.isPending} onClick={() => patch.mutate({ action: 'discard' })}>
+            Weggooien
+          </Button>
+        </div>
+      )}
       {patch.isError && <p className="mt-2 text-xs text-[var(--color-danger)]">{(patch.error as Error)?.message}</p>}
     </Card>
   );
@@ -290,7 +306,7 @@ function CadenceStatus({ call }: { call: CallRecord }) {
     <Card className="p-4 text-sm">
       <span className={_label}>Retarget</span>
       <div className="mt-1 flex items-center gap-3 text-[var(--color-stone-600)]">
-        <Badge variant={call.retarget_status === 'replied' ? 'success' : call.retarget_status === 'exhausted' ? 'neutral' : 'info'}>
+        <Badge variant={call.retarget_status === 'replied' ? 'success' : call.retarget_status === 'exhausted' ? 'neutral' : 'accent'}>
           {label[call.retarget_status] ?? call.retarget_status}
         </Badge>
         {call.retarget_due_at && <span>gepland {fmtRelative(call.retarget_due_at)}</span>}

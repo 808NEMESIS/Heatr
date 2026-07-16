@@ -381,6 +381,10 @@ class CallReportPatch(BaseModel):
     report_html: str | None = None      # bewerkte versie bij approve (gate 2)
 
 
+class CallSendRequest(BaseModel):
+    dry_run: bool = False               # render+upload, geen Warmr-push (test zonder send)
+
+
 class CollectMetricsRequest(BaseModel):
     target_date: str | None = None  # YYYY-MM-DD, defaults to today
 
@@ -2444,6 +2448,139 @@ async def patch_call_report(
         "report_html": final_html, "report_status": "approved", "updated_at": _now_iso(),
     }).eq("id", call_id).eq("workspace_id", workspace_id).execute()
     return {"report_status": "approved"}
+
+
+def _schedule_retarget_fields(outcome: str, timing_target_date: str | None) -> dict:
+    """Bepaal retarget_due_at/status uit de cadans-config (config/retarget_cadence).
+
+    Date-based (timing/stalled) -> concrete due_at; event-triggered (no_value) ->
+    geen datum, status 'scheduled' (de event-hook beslist); geen cadans -> niets.
+    Puur; geen side-effects.
+    """
+    from config.retarget_cadence import cadence_for
+    cad = cadence_for(outcome)
+    if not cad:
+        return {}
+    if cad.get("event_triggered"):
+        return {"retarget_status": "scheduled", "retarget_due_at": None}
+    days = int(cad.get("days") or 0)
+    due = None
+    if cad.get("use_target_date") and timing_target_date:
+        due = timing_target_date
+    elif days > 0:
+        due = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    return {"retarget_status": "scheduled", "retarget_due_at": due}
+
+
+@app.post("/calls/{call_id}/send-report")
+async def send_call_report(
+    call_id: str,
+    body: CallSendRequest,
+    workspace_id: str = Depends(require_service_key),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Verstuur het goedgekeurde check-up rapport (PDF-link via Warmr).
+
+    Service-only (nooit browser: dit is een send). Dubbel op slot:
+      1. feature-gate CHECKUP_REPORT_ENABLED,
+      2. de dispatcher zelf gate't op ENABLE_PROSPECT_SENDS.
+
+    Fail-closed precondities: report_status MOET 'approved' zijn (menselijke gate
+    2 gepasseerd), de call moet gekoppeld zijn aan een lead mét e-mail. Warmr kan
+    geen bijlage -> de PDF wordt gerenderd (Chromium), geüpload naar Storage
+    (signed URL) en als link meegegeven. report_status wordt pas 'sent' ná een
+    geslaagde push (dat is de verifieerbare voorwaarde voor de latere retarget).
+    """
+    if os.getenv("CHECKUP_REPORT_ENABLED", "false").lower() != "true":
+        raise HTTPException(
+            status_code=403,
+            detail="Check-up sends staan uit (CHECKUP_REPORT_ENABLED=false).",
+        )
+
+    from calls.call_records import get_call_record
+    from calls.report_pdf import render_report_pdf, upload_report_pdf
+    from calls.report_generator import build_cover_mail
+
+    record = await get_call_record(db, workspace_id, call_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="call not found")
+    if record.get("report_status") != "approved":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Rapport is niet vrijgegeven (report_status={record.get('report_status')}). "
+                   f"Gate 2 (vrijgeven) moet eerst.",
+        )
+    if record.get("report_sent_at"):
+        raise HTTPException(status_code=409, detail="Rapport is al verstuurd.")
+
+    lead_id = record.get("lead_id")
+    if not lead_id:
+        raise HTTPException(status_code=409, detail="Gesprek is niet aan een lead gekoppeld.")
+    lead = (db.table("leads").select("*").eq("id", lead_id)
+            .eq("workspace_id", workspace_id).maybe_single().execute()).data
+    if not lead:
+        raise HTTPException(status_code=404, detail="Gekoppelde lead niet gevonden.")
+    if not (lead.get("email") or "").strip():
+        raise HTTPException(status_code=409, detail="Lead heeft geen e-mailadres.")
+
+    report_html = record.get("report_html")
+    if not report_html:
+        raise HTTPException(status_code=409, detail="Geen report_html om te versturen.")
+
+    # PDF renderen + hosten (signed URL). Faalt dit -> status ongewijzigd.
+    try:
+        pdf_bytes = await render_report_pdf(report_html, lead.get("company_name") or "")
+        report_url = await upload_report_pdf(pdf_bytes, call_id, db)
+    except Exception as e:  # noqa: BLE001
+        logger.error("send-report: PDF-pijplijn faalde (call=%s): %s", call_id, e)
+        raise HTTPException(status_code=500, detail=f"PDF-pijplijn faalde: {e}")
+
+    cover = build_cover_mail(lead, report_url)
+
+    # dry_run: alles behalve de push (test de render+URL+covertekst zonder te sturen).
+    if body.dry_run:
+        return {"dry_run": True, "report_url": report_url, "cover": cover,
+                "pdf_bytes": len(pdf_bytes)}
+
+    from integrations.warmr_client import WarmrClient
+    from utils.outbound_dispatcher import dispatch_outbound, DispatchHalted
+    client = WarmrClient()
+    inboxes = await client.get_ready_inboxes()
+    if not inboxes:
+        raise HTTPException(status_code=503, detail="Geen Warmr-inbox beschikbaar.")
+    # Warmr-side check-up-campagne indien geconfigureerd; anders de ready inbox
+    # (zoals send-review-email). De cover-body draagt de report_url (Warmr kan
+    # geen bijlage); push_lead zet 'm in payload.custom_fields.custom_body.
+    campaign_id = os.getenv("CHECKUP_WARMR_CAMPAIGN_ID") or inboxes[0]["id"]
+
+    try:
+        disp = await dispatch_outbound(
+            kind="warmr_push",
+            idempotency_key=f"checkup-report:{call_id}",
+            actor="operator",
+            lead=lead,
+            send=lambda: client.push_lead(
+                lead, campaign_id=campaign_id, preferred_inbox_id=inboxes[0]["id"],
+                custom_subject=cover["subject"], custom_body=cover["body"],
+            ),
+            supabase_client=db,
+            workspace_id=workspace_id,
+            metadata={"endpoint": "/calls/{id}/send-report", "call_id": call_id},
+        )
+    except DispatchHalted as e:
+        raise HTTPException(status_code=403, detail=f"Send geweigerd: {e}")
+    if disp.skipped_duplicate:
+        raise HTTPException(status_code=409, detail="Rapport is al verstuurd (dispatcher-dedup).")
+    if not disp.executed:
+        raise HTTPException(status_code=502, detail="Warmr-push niet uitgevoerd.")
+
+    updates = {"report_status": "sent", "report_sent_at": _now_iso(), "updated_at": _now_iso()}
+    updates.update(_schedule_retarget_fields(record.get("outcome") or "", record.get("timing_target_date")))
+    db.table("call_records").update(updates).eq("id", call_id).eq("workspace_id", workspace_id).execute()
+    _insert_timeline_event(db, workspace_id, lead_id, "checkup_report_sent",
+                           "Check-up rapport verstuurd via Warmr")
+    return {"report_status": "sent", "report_url": report_url,
+            "retarget_status": updates.get("retarget_status")}
 
 
 # =============================================================================
