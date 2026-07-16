@@ -57,6 +57,9 @@ _HEATR_TABLES = {
     # 'domain_cache' ontbrak → catch-all-write faalde stil (PGRST205).
     "email_verifications",
     "domain_cache",
+    # Check-up follow-up (migration 032) — anders queryt de wrapper de
+    # ongeprefixte (niet-bestaande) call_records → PGRST205.
+    "call_records",
 }
 
 
