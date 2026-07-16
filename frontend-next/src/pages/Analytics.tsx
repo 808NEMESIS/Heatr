@@ -14,6 +14,28 @@ interface WebsiteAgg {
   conversion_count: number;
 }
 
+interface CallsAgg {
+  total_calls: number;
+  funnel: {
+    by_outcome: Record<string, number>;
+    unmatched: number;
+    reports: Record<string, number>;
+    retargets: Record<string, number>;
+  };
+  learning: {
+    engaged_total: number;
+    reply_rate_per_outcome: Record<string, { engaged: number; replied: number; reply_rate_pct: number }>;
+    reply_per_attempt: Record<string, number>;
+    days_to_reply_per_outcome: Record<string, number>;
+    finding_types_in_replies: Record<string, number>;
+  };
+}
+
+const OUTCOME_NL: Record<string, string> = {
+  won: 'Gewonnen', timing: 'Timing', no_value: 'Geen waarde', stalled: 'Vastgelopen',
+  hard_no: 'Harde nee', onbekend: 'Onbekend',
+};
+
 export function AnalyticsPage() {
   const { data: pipe } = useQuery({
     queryKey: ['analytics-pipeline'],
@@ -26,6 +48,10 @@ export function AnalyticsPage() {
   const { data: cost } = useQuery({
     queryKey: ['enrichment-cost-7'],
     queryFn: () => api.get<EnrichmentCost>('/analytics/enrichment-cost?days=30').catch(() => null),
+  });
+  const { data: calls } = useQuery({
+    queryKey: ['analytics-calls'],
+    queryFn: () => api.get<CallsAgg>('/analytics/calls').catch(() => null),
   });
 
   return (
@@ -170,6 +196,72 @@ export function AnalyticsPage() {
           )}
         </Card>
       </section>
+
+      {/* Check-up follow-up */}
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold mb-3">Check-up follow-up</h3>
+        <Card className="p-6">
+          {!calls || calls.total_calls === 0 ? (
+            <p className="text-sm text-[var(--color-stone-500)]">
+              Nog geen gesprekken. De leerlus (reply-rate per uitkomst, per poging, en welke
+              bevindingen replies opleveren) vult zich zodra check-ups verstuurd worden.
+            </p>
+          ) : (
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <div className="text-xs uppercase tracking-wider font-semibold text-[var(--color-stone-500)] mb-2">Funnel</div>
+                <div className="space-y-1.5 text-sm">
+                  <TallyRow label="Gesprekken" value={calls.total_calls} />
+                  <TallyRow label="Niet gekoppeld" value={calls.funnel.unmatched} />
+                  <TallyRow label="Rapport verstuurd" value={calls.funnel.reports.sent || 0} />
+                  <TallyRow label="Rapport overgeslagen" value={calls.funnel.reports.skipped || 0} />
+                  <TallyRow label="Retarget gepland" value={calls.funnel.retargets.scheduled || 0} />
+                  <TallyRow label="Retarget beantwoord" value={calls.funnel.retargets.replied || 0} />
+                  <TallyRow label="Retarget afgerond" value={calls.funnel.retargets.exhausted || 0} />
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wider font-semibold text-[var(--color-stone-500)] mb-2">Leerlus · reply-rate per uitkomst</div>
+                {Object.keys(calls.learning.reply_rate_per_outcome).length === 0 ? (
+                  <p className="text-sm text-[var(--color-stone-400)]">Nog geen verstuurde follow-ups.</p>
+                ) : (
+                  <div className="space-y-1.5 text-sm">
+                    {Object.entries(calls.learning.reply_rate_per_outcome).map(([o, s]) => (
+                      <div key={o} className="flex items-center justify-between gap-3">
+                        <span>{OUTCOME_NL[o] || o}</span>
+                        <span className="tabular-nums text-[var(--color-stone-500)]">
+                          {s.replied}/{s.engaged} · {s.reply_rate_pct}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {Object.keys(calls.learning.finding_types_in_replies).length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-xs uppercase tracking-wider font-semibold text-[var(--color-stone-500)] mb-2">Bevindingen die replies opleveren</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Object.entries(calls.learning.finding_types_in_replies).map(([t, n]) => (
+                        <span key={t} className="rounded-full bg-[var(--color-blush-100)] text-[var(--color-blush-700)] px-2.5 py-0.5 text-xs">
+                          {t} · {n}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+function TallyRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[var(--color-stone-600)]">{label}</span>
+      <span className="tabular-nums font-medium">{fmtInt(value)}</span>
     </div>
   );
 }

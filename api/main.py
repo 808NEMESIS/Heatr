@@ -2803,6 +2803,98 @@ async def analytics_website(
     }
 
 
+@app.get("/analytics/calls")
+async def analytics_calls(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Check-up funnel + leerlus.
+
+    De leerlus voedt (handmatig, voorlopig) config/retarget_cadence: welke uitkomst
+    en welke poging leveren replies, en welke bevinding-typen zitten in de replies.
+    Reply-tijdstip is bij benadering (updated_at op het moment dat de webhook de
+    flow op 'replied' zette; daarna muteert de record niet meer).
+    """
+    res = (db.table("call_records").select(
+        "outcome, match_status, report_status, report_findings, report_sent_at, "
+        "retarget_status, retarget_attempt, retarget_last_sent_at, updated_at")
+        .eq("workspace_id", workspace_id).execute())
+    rows = res.data or []
+    total = len(rows)
+
+    def _tally(key: str) -> dict:
+        out: dict[str, int] = {}
+        for r in rows:
+            out[r.get(key) or "onbekend"] = out.get(r.get(key) or "onbekend", 0) + 1
+        return out
+
+    # Records die daadwerkelijk de outbound-lus in gingen (rapport verstuurd of
+    # minstens één retarget) — de noemer voor reply-rates.
+    engaged = [r for r in rows if r.get("report_status") == "sent" or int(r.get("retarget_attempt") or 0) > 0]
+
+    reply_per_outcome: dict[str, dict] = {}
+    for r in engaged:
+        o = r.get("outcome") or "onbekend"
+        b = reply_per_outcome.setdefault(o, {"engaged": 0, "replied": 0})
+        b["engaged"] += 1
+        if r.get("retarget_status") == "replied":
+            b["replied"] += 1
+    for o, b in reply_per_outcome.items():
+        b["reply_rate_pct"] = round(b["replied"] / b["engaged"] * 100, 1) if b["engaged"] else 0.0
+
+    # Reply per poging: bij welke retarget-poging kwam de reply.
+    reply_per_attempt: dict[str, int] = {}
+    for r in rows:
+        if r.get("retarget_status") == "replied":
+            a = str(r.get("retarget_attempt") or 0)
+            reply_per_attempt[a] = reply_per_attempt.get(a, 0) + 1
+
+    # Dagen-tot-reply per uitkomst (benadering: updated_at - report_sent_at).
+    from datetime import datetime as _dt
+    def _parse(ts):
+        try:
+            return _dt.fromisoformat(str(ts).replace("Z", "+00:00"))
+        except Exception:
+            return None
+    days_acc: dict[str, list] = {}
+    for r in rows:
+        if r.get("retarget_status") != "replied":
+            continue
+        start = _parse(r.get("report_sent_at") or r.get("retarget_last_sent_at"))
+        end = _parse(r.get("updated_at"))
+        if start and end and end >= start:
+            days_acc.setdefault(r.get("outcome") or "onbekend", []).append((end - start).total_seconds() / 86400)
+    days_to_reply = {o: round(sum(v) / len(v), 1) for o, v in days_acc.items() if v}
+
+    # Bevinding-typen in replies: welke pijn, benoemd, correleert met een reply.
+    finding_types_replied: dict[str, int] = {}
+    for r in rows:
+        if r.get("retarget_status") != "replied":
+            continue
+        for f in (r.get("report_findings") or []):
+            if isinstance(f, dict) and f.get("title"):
+                t = str(f["title"]).strip()
+                finding_types_replied[t] = finding_types_replied.get(t, 0) + 1
+
+    return {
+        "total_calls": total,
+        "funnel": {
+            "by_outcome": _tally("outcome"),
+            "unmatched": sum(1 for r in rows if r.get("match_status") == "unmatched"),
+            "reports": _tally("report_status"),
+            "retargets": _tally("retarget_status"),
+        },
+        "learning": {
+            "engaged_total": len(engaged),
+            "reply_rate_per_outcome": reply_per_outcome,
+            "reply_per_attempt": reply_per_attempt,
+            "days_to_reply_per_outcome": days_to_reply,
+            "finding_types_in_replies": dict(sorted(
+                finding_types_replied.items(), key=lambda kv: kv[1], reverse=True)),
+        },
+    }
+
+
 @app.get("/analytics/enrichment-cost")
 async def analytics_enrichment_cost(
     days: int = 7,
