@@ -37,7 +37,6 @@ async def analyze_website(
     workspace_id: str,
     supabase_client: Any,
     anthropic_client: Any,
-    enable_vision: bool = False,
     *,
     accumulator: LeadCostAccumulator | None = None,
 ) -> dict[str, Any]:
@@ -54,7 +53,6 @@ async def analyze_website(
         workspace_id: Workspace slug.
         supabase_client: Supabase client.
         anthropic_client: Anthropic client for Claude calls.
-        enable_vision: Whether to run Sonnet Vision analysis (expensive).
 
     Returns:
         Complete website intelligence dict.
@@ -113,28 +111,26 @@ async def analyze_website(
     result["technical"] = technical
     result["technical_score"] = technical["technical_score"]
 
-    # --- Layer 2: Visual (max 25 pts) — optional, expensive ---
-    # PR2.5: passes technical_score so visual_analyzer can skip Vision on
-    # already-healthy sites (no Aerys-websitebouw pitch opportunity).
-    # De screenshot komt uit capture_site (één capture-pad); Vision captured niet zelf.
-    visual_score = None
-    if enable_vision and page_html:
-        try:
-            from website_intelligence.visual_analyzer import analyze_visual
-            visual = await analyze_visual(
-                domain, workspace_id, supabase_client, anthropic_client,
-                sector=sector,
-                technical_score=result["technical_score"],
-                screenshot_b64=capture.get("screenshot_desktop_b64"),
-                screenshot_media_type="image/webp",
-            )
-            result["visual"] = visual
-            visual_score = visual.get("overall_score")
-            result["visual_score"] = visual_score
-        except Exception as e:
-            logger.warning("Visual analysis failed for %s: %s", domain, e)
-            result["visual_score"] = None
-    else:
+    # --- Layer 2: Visual (max 25 pts) via Claude Sonnet Vision ---
+    # Draait op de desktop+mobiel screenshots uit capture_site (één capture-pad).
+    # visual_analyzer skipt zelf op SCREENSHOT_ENABLED=false of een technisch al
+    # sterke site (kostencontrole) -> dan blijft visual_score None en sluit de
+    # normalisatie de laag uit (geen stille deflatie van de totaalscore).
+    visual_overall = None
+    try:
+        from website_intelligence.visual_analyzer import analyze_visual
+        visual = await analyze_visual(
+            domain, workspace_id, supabase_client, anthropic_client,
+            sector=sector,
+            technical_score=result["technical_score"],
+            screenshot_desktop_b64=capture.get("screenshot_desktop_b64"),
+            screenshot_mobile_b64=capture.get("screenshot_mobile_b64"),
+        )
+        result["visual"] = visual
+        result["visual_score"] = visual.get("visual_score")   # 0-25 punten (of None)
+        visual_overall = visual.get("overall_score")           # 0-10, voor opportunity
+    except Exception as e:
+        logger.warning("Visual analysis failed for %s: %s", domain, e)
         result["visual_score"] = None
 
     # --- Layer 3: Conversion (max 30 pts) ---
@@ -153,14 +149,23 @@ async def analyze_website(
     result["sector_specific"] = sector_result
     result["sector_score"] = sector_result["sector_score"]
 
-    # --- Total score ---
-    total = (
-        result["technical_score"]
-        + (result["visual_score"] or 0)
-        + result["conversion_score"]
-        + result["sector_score"]
-    )
-    result["total_score"] = min(total, 100)
+    # --- Total score — genormaliseerd over de BEHAALDE noemer ---
+    # Optellen alsof alle lagen meedoen deflateert de score zodra er één ontbreekt
+    # (Vision skipt/faalt). Daarom: normaliseer over de max-punten van de lagen die
+    # daadwerkelijk bijdroegen. Zonder visual -> denom 70; mét visual -> 95.
+    _layers = [
+        ("technical", result["technical_score"], 25),
+        ("conversion", result["conversion_score"], 30),
+        ("sector", result["sector_score"], 15),
+    ]
+    _visual_included = result.get("visual_score") is not None
+    if _visual_included:
+        _layers.append(("visual", result["visual_score"], 25))
+    _achieved = sum(s for _, s, _ in _layers)
+    _denom = sum(m for _, _, m in _layers)
+    result["total_score"] = round(_achieved / _denom * 100) if _denom else 0
+    result["score_denominator"] = _denom
+    result["visual_included"] = _visual_included
 
     # --- Layer 5: Personalization extraction ---
     personalization = await extract_personalization(
@@ -183,7 +188,7 @@ async def analyze_website(
         technical_result=technical,
         conversion_result=conversion,
         sector_result=sector_result,
-        visual_score=visual_score,
+        visual_score=visual_overall,   # 0-10 overall — de <4-check verwacht die schaal
     )
     result["opportunities"] = opportunities
 
@@ -210,6 +215,18 @@ async def analyze_website(
         }, on_conflict="lead_id").execute()
     except Exception as e:
         logger.error("Failed to store website_intelligence for %s: %s", lead_id, e)
+
+    # --- Persisteer de normalisatie-noemer APART (migratie-veilig, 034) ---
+    # De genormaliseerde total_score staat al in de upsert (bestaande kolom).
+    # score_denominator + visual_included zijn nieuw: aparte update zodat een
+    # ontbrekende migratie 034 alleen dit blok raakt, niet de score-write.
+    try:
+        supabase_client.table("website_intelligence").update({
+            "score_denominator": result.get("score_denominator"),
+            "visual_included": result.get("visual_included"),
+        }).eq("lead_id", lead_id).eq("workspace_id", workspace_id).execute()
+    except Exception as e:
+        logger.warning("analyze_website: score-noemer opslaan faalde voor %s: %s", lead_id, e)
 
     # --- Persisteer capture-velden APART (migratie-veilig) ---
     # Aparte update i.p.v. in de score-upsert hierboven: als migratie 033 nog niet

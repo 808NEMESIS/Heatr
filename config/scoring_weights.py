@@ -142,14 +142,20 @@ WEBSITE_SCORING_WEIGHTS: dict[str, dict] = {
 
     # -------------------------------------------------------------------------
     # Layer 2 — Visual via Claude Sonnet Vision (max 25 pts)
-    # Playwright takes full-page screenshot → uploaded to Supabase Storage →
-    # Claude Sonnet Vision analyses it with the sector-specific prompt.
+    # capture_site levert de desktop+mobiel screenshots → Claude Sonnet Vision
+    # scoort de vier dimensies hieronder (elk 1-10), gewogen naar punten.
+    # GEÏMPLEMENTEERD in website_intelligence/visual_analyzer.py:
+    #   _VISUAL_WEIGHTS + _calculate_visual_score (som van (dim/10)*max_points).
+    # De Nederlandse JSON-keys van de prompt mappen 1-op-1 op deze dimensies:
+    #   overall_impression=algemene_indruk, professional_photography=professionele_fotografie,
+    #   typography=typografie, color_coherence=kleurgebruik.
+    # (Vóór 2026-07 gebruikte de code alleen overall/10*25 — die drift is hiermee weg.)
     # -------------------------------------------------------------------------
     "visual": {
         "max_points": 25,
 
         "overall_impression": 10,
-        # Claude Vision score 0-10 for general modern & professional look.
+        # Claude Vision score 0-10 for general modern & professional look (desktop+mobile).
         # Highest weight because first impressions determine if visitors stay.
 
         "professional_photography": 5,

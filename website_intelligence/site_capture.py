@@ -173,8 +173,8 @@ async def capture_site(
                     result["screenshot_desktop_hash"] = hashlib.sha256(webp).hexdigest()
                     result["screenshot_desktop_url"] = _upload_webp(supabase_client, f"{domain}/desktop.webp", webp)
                     result["_desktop_webp_bytes"] = len(webp)
-                    # In-memory (niet gepersisteerd) — voor hergebruik door Vision
-                    # in dezelfde run als enable_vision aan zou staan.
+                    # In-memory (niet gepersisteerd) — Vision (Laag 2) hergebruikt
+                    # deze bytes in dezelfde run i.p.v. zelf te capturen.
                     result["screenshot_desktop_b64"] = base64.b64encode(webp).decode("ascii")
                 except Exception as e:
                     logger.warning("site_capture: desktop-screenshot faalde %s: %s", domain, e)
@@ -190,6 +190,7 @@ async def capture_site(
                     result["screenshot_mobile_hash"] = hashlib.sha256(mwebp).hexdigest()
                     result["screenshot_mobile_url"] = _upload_webp(supabase_client, f"{domain}/mobile.webp", mwebp)
                     result["_mobile_webp_bytes"] = len(mwebp)
+                    result["screenshot_mobile_b64"] = base64.b64encode(mwebp).decode("ascii")
                 except Exception as e:
                     logger.warning("site_capture: mobiel-screenshot faalde %s: %s", domain, e)
                 finally:

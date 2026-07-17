@@ -23,6 +23,16 @@ import os
 from typing import Any
 
 from utils.vision_cache import get_cached_vision, store_vision_result
+from utils.rate_limiter import wait_for_token
+
+# Gewogen visuele dimensies — gelijk aan config/scoring_weights.py VISUAL (max 25).
+# Eén reproduceerbaar oordeel per as i.p.v. één gestalt-"overall".
+_VISUAL_WEIGHTS = {
+    "algemene_indruk": 10,
+    "professionele_fotografie": 5,
+    "typografie": 5,
+    "kleurgebruik": 5,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -41,24 +51,27 @@ async def analyze_visual(
     anthropic_client: Any,
     sector: str = "",
     technical_score: int = 0,
-    screenshot_b64: str | None = None,
-    screenshot_media_type: str = "image/png",
+    screenshot_desktop_b64: str | None = None,
+    screenshot_mobile_b64: str | None = None,
 ) -> dict[str, Any]:
     """
-    Take screenshot + run Claude Sonnet Vision analysis.
+    Claude Sonnet Vision op de desktop + mobiel screenshot uit capture_site.
 
-    Returns dict with 8 dimension scores (1-10), overall_score,
-    top_strengths, top_improvements, visual_score (0-25).
+    Returns dict met de 4 gewogen dimensies (algemene_indruk, professionele_
+    fotografie, typografie, kleurgebruik; elk 1-10), overall_score (0-10, =
+    algemene_indruk), top_strengths, top_improvements, en visual_score (0-25,
+    gewogen som — None als Vision niet draaide of de parse faalde, zodat de
+    normalisatie de laag correct uitsluit).
 
     Skips Vision when:
       - SCREENSHOT_ENABLED=false
-      - technical_score >= _VISION_SKIP_TECH_THRESHOLD (site te goed)
-      - Screenshot grab faalt
-    On cache hit (same PNG bytes as before): return cached result, no API call.
+      - technical_score >= _VISION_SKIP_TECH_THRESHOLD (site technisch al sterk)
+      - geen desktop-screenshot aangereikt
+    Cache-hit (zelfde desktop+mobiel-bytes): gecached resultaat, geen API-call.
     """
     result: dict[str, Any] = {
         "overall_score": None,
-        "visual_score": 0,
+        "visual_score": None,
         "dimensions": {},
         "top_strengths": [],
         "top_improvements": [],
@@ -80,15 +93,17 @@ async def analyze_visual(
         result["skipped_reason"] = f"technical_score_above_threshold:{technical_score}"
         return result
 
-    # Screenshot komt uit capture_site (het enige capture-pad) — Vision captured
-    # en uploadt niet meer zelf. Geen screenshot -> geen Vision.
-    if not screenshot_b64:
+    # Screenshots komen uit capture_site (het enige capture-pad). Minimaal de
+    # desktop is nodig; mobiel wordt meegestuurd als 'ie er is.
+    if not screenshot_desktop_b64:
         result["skipped_reason"] = "no_screenshot"
         return result
 
-    # Cache check (SHA-256 van de screenshot-bytes)
+    # Cache-key = gecombineerde desktop+mobiel-bytes (beide beelden bepalen het
+    # oordeel, dus beide in de sleutel). Gelijke hash -> geen nieuwe call.
+    cache_key = (screenshot_desktop_b64 or "") + "|" + (screenshot_mobile_b64 or "")
     try:
-        cached = await get_cached_vision(screenshot_b64, supabase_client)
+        cached = await get_cached_vision(cache_key, supabase_client)
     except Exception as e:
         logger.debug("visual_analyzer: cache lookup errored: %s", e)
         cached = None
@@ -111,50 +126,62 @@ async def analyze_visual(
 
     prompt = (
         f"Je bent een senior webdesigner gespecialiseerd in {sector_context}.\n"
-        "Analyseer deze website screenshot.\n\n"
-        "Geef per onderdeel score 1-10 + één concrete zin:\n"
-        "1. ALGEMENE INDRUK — modern en professioneel in 2024?\n"
-        "2. TYPOGRAFIE — leesbaar, modern, consistente hiërarchie?\n"
-        "3. KLEURGEBRUIK — past bij de sector? Coherent?\n"
-        "4. WITRUIMTE — genoeg ademruimte? Gebalanceerd?\n"
-        "5. AFBEELDINGEN — professioneel? Echte foto's of stock?\n"
-        "6. VERTROUWENSSIGNALEN — reviews, certificaten, team zichtbaar?\n"
-        "7. MOBIELE INDRUK — ziet het responsive-vriendelijk uit?\n"
-        "8. SECTOR AUTHENTICITEIT — past dit bij de sector?\n\n"
-        "Daarna:\n"
-        "- TOP 3 STERKSTE PUNTEN (bullet list)\n"
-        "- TOP 3 VERBETERPUNTEN (concreet en actionable)\n"
-        "- OVERALL SCORE: gewogen gemiddelde 1-10\n\n"
-        "Antwoord in het Nederlands. Wees direct en eerlijk."
+        "Je krijgt twee screenshots van dezelfde website: eerst DESKTOP, dan MOBIEL.\n"
+        "Beoordeel de site op vier onderdelen, elk een geheel getal 1-10. Weeg\n"
+        "desktop én mobiel mee — mobiel telt zwaar, de meeste bezoekers zijn mobiel.\n\n"
+        "1. ALGEMENE INDRUK — modern en professioneel, desktop én mobiel? Oogt het responsive?\n"
+        "2. PROFESSIONELE FOTOGRAFIE — echte, professionele foto's of goedkope stock?\n"
+        "3. TYPOGRAFIE — leesbaar, modern, consistente hiërarchie?\n"
+        "4. KLEURGEBRUIK — past bij de sector en coherent toegepast?\n\n"
+        "Return ALLEEN JSON (geen andere tekst):\n"
+        '{"algemene_indruk": N, "professionele_fotografie": N, "typografie": N, '
+        '"kleurgebruik": N, "sterkste_punten": ["...", "...", "..."], '
+        '"verbeterpunten": ["...", "...", "..."]}\n'
+        "Elke N is een geheel getal 1-10. Wees direct en eerlijk, in het Nederlands."
     )
 
     try:
+        # Vision-calls door de claude_sonnet rate-limiter (bucket bestond, nul
+        # consumers). RuntimeError bij >120s -> valt in de except hieronder =>
+        # visual_score None (fail-soft, normalisatie sluit de laag uit).
+        await wait_for_token("claude_sonnet", supabase_client)
+
+        desktop_img = _fit_for_vision(screenshot_desktop_b64)
+        mobile_img = _fit_for_vision(screenshot_mobile_b64)
+        content: list = [
+            {"type": "text", "text": "DESKTOP:"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/webp", "data": desktop_img}},
+        ]
+        if mobile_img:
+            content.append({"type": "text", "text": "MOBIEL:"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/webp", "data": mobile_img}})
+        content.append({"type": "text", "text": prompt})
+
         message = await anthropic_client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=800,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": screenshot_media_type, "data": screenshot_b64}},
-                    {"type": "text", "text": prompt},
-                ],
-            }],
+            messages=[{"role": "user", "content": content}],
         )
 
         response_text = message.content[0].text
         parsed = _parse_vision_response(response_text)
-        parsed["visual_score"] = _calculate_visual_score(parsed.get("overall_score") or 5)
+        if not parsed.get("dimensions"):
+            # Onparseerbaar -> geen betrouwbare score. Laat visual_score None
+            # zodat de normalisatie de laag uitsluit i.p.v. een 0 door te rekenen.
+            result["skipped_reason"] = "parse_failed"
+            return result
+        parsed["visual_score"] = _calculate_visual_score(parsed)
         parsed["skipped_reason"] = None
         parsed["cache_hit"] = False
         result = parsed
 
-        # Store in cache for future re-enrichments / sibling leads on same site
+        # Cache op de gecombineerde desktop+mobiel-key.
         try:
             usage = getattr(message, "usage", None)
             in_tok = getattr(usage, "input_tokens", 0) or 0
             out_tok = getattr(usage, "output_tokens", 0) or 0
             await store_vision_result(
-                screenshot_b64, domain, result, in_tok, out_tok, supabase_client,
+                cache_key, domain, result, in_tok, out_tok, supabase_client,
             )
         except Exception as e:
             logger.debug("visual_analyzer: cache store failed for %s: %s", domain, e)
@@ -165,56 +192,89 @@ async def analyze_visual(
     return result
 
 
-def _calculate_visual_score(overall_1_to_10: int) -> int:
-    """Convert 1-10 overall score to 0-25 point scale."""
-    # Linear mapping: 1→0, 5→12, 10→25
-    return min(25, max(0, int((overall_1_to_10 / 10) * 25)))
+_VISION_MAX_DIM = 7999  # Claude Vision weigert beelden >8000px per dimensie
+
+
+def _fit_for_vision(b64: str | None) -> str | None:
+    """Verklein een WebP-b64 zodat de langste zijde <=7999px is (Claude-limiet).
+
+    De full-page screenshots in Storage blijven onaangetast; alleen het beeld dat
+    naar de Vision-API gaat wordt indien nodig geschaald. Claude verkleint intern
+    toch naar ~1568px, dus dit kost geen detail dat Vision zou gebruiken.
+    """
+    if not b64:
+        return b64
+    from io import BytesIO
+    import base64 as _b64
+    from PIL import Image
+    try:
+        raw = _b64.b64decode(b64)
+        with Image.open(BytesIO(raw)) as img:
+            w, h = img.size
+            if max(w, h) <= _VISION_MAX_DIM:
+                return b64
+            scale = _VISION_MAX_DIM / max(w, h)
+            img = img.convert("RGB").resize((max(1, int(w * scale)), max(1, int(h * scale))))
+            out = BytesIO()
+            img.save(out, format="WEBP", quality=80, method=6)
+            return _b64.b64encode(out.getvalue()).decode("ascii")
+    except Exception:
+        return b64  # laat de API desnoods zelf oordelen
+
+
+def _calculate_visual_score(parsed: dict[str, Any]) -> int:
+    """Gewogen som van de 4 dimensies -> 0-25 punten (config/scoring_weights VISUAL).
+
+    Elke dimensie is 1-10; punten = (dim/10) * max_points. Ontbrekende dimensies
+    tellen als 0 (JSON hoort alle vier te leveren).
+    """
+    dims = parsed.get("dimensions") or {}
+    pts = 0.0
+    for name, maxpts in _VISUAL_WEIGHTS.items():
+        v = dims.get(name)
+        if v is not None:
+            pts += (v / 10.0) * maxpts
+    return int(round(min(25.0, pts)))
 
 
 def _parse_vision_response(text: str) -> dict[str, Any]:
-    """Parse Claude's vision response into structured data."""
+    """Parse de JSON-Vision-respons naar de 4 dimensies + strengths/improvements.
+
+    JSON i.p.v. proza-regex: reproduceerbaarder, en de audit (stap 2) steunt op
+    reproduceerbaarheid. overall_score = de algemene_indruk-dimensie (0-10), voor
+    de opportunity_classifier `visual_score < 4`-check.
+    """
+    import json
     import re
 
     result: dict[str, Any] = {
         "dimensions": {},
         "top_strengths": [],
         "top_improvements": [],
-        "overall_score": 5,
+        "overall_score": None,
         "raw_analysis": text,
     }
 
-    # Extract scores (pattern: "N. LABEL — ... score: X/10" or just "X/10")
-    dimension_names = [
-        "algemene indruk", "typografie", "kleurgebruik", "witruimte",
-        "afbeeldingen", "vertrouwenssignalen", "mobiele indruk", "sector authenticiteit",
-    ]
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-z]*\n?", "", t)
+        t = re.sub(r"\n?```$", "", t)
+    try:
+        data = json.loads(t)
+    except (json.JSONDecodeError, ValueError):
+        return result  # geen dimensions -> caller behandelt als parse_failed
 
-    for dim in dimension_names:
-        pattern = rf"{dim}.*?(\d+)\s*/\s*10"
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            result["dimensions"][dim] = int(match.group(1))
+    def _clamp(v: Any) -> int | None:
+        try:
+            return max(1, min(10, int(round(float(v)))))
+        except (TypeError, ValueError):
+            return None
 
-    # Extract overall score
-    overall_match = re.search(r"overall\s*(?:score)?[:\s]*(\d+(?:\.\d+)?)\s*/\s*10", text, re.IGNORECASE)
-    if overall_match:
-        result["overall_score"] = int(float(overall_match.group(1)))
-
-    # Extract strengths and improvements (bullet points after headers)
-    strengths_match = re.search(r"(?:sterkste punten|strengths)[:\s]*\n((?:[-•*]\s*.+\n?){1,5})", text, re.IGNORECASE)
-    if strengths_match:
-        result["top_strengths"] = [
-            line.lstrip("-•* ").strip()
-            for line in strengths_match.group(1).strip().split("\n")
-            if line.strip()
-        ][:3]
-
-    improvements_match = re.search(r"(?:verbeterpunten|improvements)[:\s]*\n((?:[-•*]\s*.+\n?){1,5})", text, re.IGNORECASE)
-    if improvements_match:
-        result["top_improvements"] = [
-            line.lstrip("-•* ").strip()
-            for line in improvements_match.group(1).strip().split("\n")
-            if line.strip()
-        ][:3]
-
+    for name in _VISUAL_WEIGHTS:
+        cv = _clamp(data.get(name))
+        if cv is not None:
+            result["dimensions"][name] = cv
+    result["overall_score"] = result["dimensions"].get("algemene_indruk")
+    result["top_strengths"] = [str(x).strip() for x in (data.get("sterkste_punten") or []) if str(x).strip()][:3]
+    result["top_improvements"] = [str(x).strip() for x in (data.get("verbeterpunten") or []) if str(x).strip()][:3]
     return result
