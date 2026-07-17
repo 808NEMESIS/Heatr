@@ -986,6 +986,34 @@ async def get_lead_website(
     return res.data or {}
 
 
+@app.post("/leads/{lead_id}/audit")
+async def run_lead_audit(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Tier 1 prospect-facing audit voor één lead (gratis checks, geen Places).
+
+    Leest bestaande data + één lichte homepage-fetch, schrijft append-only naar
+    heatr_audit_reports. Raakt website_intelligence-scoring niet aan.
+    """
+    from audit.scorer import score_lead, persist_audit_report
+    lead = (db.table("leads").select("*").eq("id", lead_id)
+            .eq("workspace_id", workspace_id).maybe_single().execute()).data
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not (lead.get("domain") or "").strip():
+        raise HTTPException(status_code=409, detail="Lead heeft geen domein om te auditen.")
+    report = await score_lead(lead, db, tier=1)
+    saved = await persist_audit_report(report, db)
+    return {"ok": True, "version": (saved or {}).get("version"),
+            "score_normalized": report["score_normalized"],
+            "score_capped_by": report["score_capped_by"],
+            "is_empty_site": report["is_empty_site"],
+            "scored_layers": report["scored_layers"],
+            "findings": report["findings"]}
+
+
 @app.post("/leads/{lead_id}/send-review-email")
 async def send_review_email(
     lead_id: str,
