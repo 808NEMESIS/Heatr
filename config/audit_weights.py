@@ -122,3 +122,22 @@ def category_max(sector: str) -> dict[str, int]:
 
 def total_max(sector: str) -> int:
     return sum(category_max(sector).values())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LET OP — de twee niches zitten NIET op dezelfde absolute schaal:
+#
+#     cosmetische_behandelaars : max 108 punten
+#     chiropractoren           : max 107 punten
+#
+# Beide wijken af van de 110 uit de spec-tabel: het enige gat is Lead Conversion
+# (spec-header 34, items sommen tot 32 cosmetiek / 31 chiro — de missende punten
+# staan in geen enkel item). De 1 punt verschil tussen de niches komt doordat
+# chiro `consult_intake` (3) inruilt voor `vergoeding_aanvullend` (2).
+#
+# De NORMALISATIE (score_normalized = achieved / max * 100) vangt dit op — een
+# 80/108 en een 80/107 worden allebei ~74-75. Maar reken NOOIT een cosmetiek- en
+# een chiro-score tegen elkaar op absolute punten (score_total), alleen op de
+# genormaliseerde 0-100. Wie category_max/total_max negeert en 110 aanneemt,
+# zit er dus 2-3 punten naast.
+# ─────────────────────────────────────────────────────────────────────────────

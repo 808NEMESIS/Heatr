@@ -69,7 +69,8 @@ async def _run(limit: int | None, dry_run: bool, process_all: bool) -> int:
             if report["is_empty_site"]:
                 empty += 1
             print(f"  [{i}/{len(todo)}] {lead['domain']:28} score={report['score_normalized']:>3} "
-                  f"cap={report['score_capped_by'] or '-'} lagen={len(report['scored_layers'])} ({time.monotonic()-t:.1f}s)")
+                  f"noemer={report['score_denominator']:>3} nm={len(report['not_measurable']):>2} "
+                  f"cap={report['score_capped_by'] or '-'} ({time.monotonic()-t:.1f}s)")
         except Exception as e:
             failed += 1
             print(f"  [{i}/{len(todo)}] {lead.get('domain'):28} FOUT: {str(e)[:60]}")

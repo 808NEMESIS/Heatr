@@ -142,6 +142,7 @@ async def score_lead(lead: dict, sb: Any, *, tier: int = 1, places: dict | None 
         "scored_layers": scored_layers,
         "categories": cats,
         "findings": findings,
+        "not_measurable": [f["check_id"] for f in findings if f["status"] == "not_measurable"],
         "screenshot_desktop_url": ctx.wi.get("screenshot_desktop_url"),
         "screenshot_mobile_url": ctx.wi.get("screenshot_mobile_url"),
         "content_hash": ctx.wi.get("dom_text_hash"),
