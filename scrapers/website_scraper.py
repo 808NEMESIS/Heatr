@@ -167,11 +167,13 @@ async def scrape_website(
     pages_visited = 0
     all_emails: list[str] = []
     contact_page_urls: list[str] = []
+    homepage_headers: dict = {}  # hoofddocument-response-headers (instrumentatie #3)
 
     # -------------------------------------------------------------------------
     # Layer 1: httpx (fast path)
     # -------------------------------------------------------------------------
     html, headers = await fetch_page_httpx(homepage_url)
+    homepage_headers = headers  # instrumentatie #3
     pages_visited += 1
 
     use_playwright = _should_use_playwright(html)
@@ -202,9 +204,9 @@ async def scrape_website(
         async with async_playwright() as playwright:
             browser, context = await new_browser_context(playwright)
             try:
-                pw_html = await fetch_page_playwright(homepage_url, context)
+                pw_html, homepage_headers = await fetch_page_playwright(homepage_url, context)
                 pages_visited += 1
-                _merge_extractions(result, pw_html, {}, homepage_url)
+                _merge_extractions(result, pw_html, homepage_headers, homepage_url)
                 all_emails.extend(extract_emails_from_html(pw_html))
                 contact_page_urls = find_contact_page_links(pw_html, homepage_url)
 
@@ -213,7 +215,7 @@ async def scrape_website(
                     if pages_visited >= _MAX_PAGES_PER_DOMAIN:
                         break
                     try:
-                        sub_html = await fetch_page_playwright(contact_url, context)
+                        sub_html, _sub_headers = await fetch_page_playwright(contact_url, context)
                         pages_visited += 1
                         _merge_extractions(result, sub_html, {}, contact_url)
                         all_emails.extend(extract_emails_from_html(sub_html))
@@ -260,6 +262,9 @@ async def scrape_website(
             "cms": result["cms"],
             "tracking_tools": result["tracking_tools"],
             "contact_name_raw": result.get("contact_name"),
+            # Volledige hoofddocument-response-headers (instrumentatie #3).
+            "response_headers": homepage_headers,
+            "has_cookie_banner": result.get("has_cookie_banner", False),
         },
         succeeded=bool(safe_emails),
         supabase_client=supabase_client,
@@ -311,41 +316,49 @@ async def fetch_page_httpx(url: str) -> tuple[str, dict]:
         return "", {}
 
 
-async def fetch_page_playwright(url: str, context: BrowserContext) -> str:
-    """Fetch a page via Playwright and return the fully-rendered HTML.
+async def fetch_page_playwright(url: str, context: BrowserContext) -> tuple[str, dict]:
+    """Fetch a page via Playwright and return (rendered HTML, response headers).
 
     Waits for ``networkidle`` so JS-rendered content is visible in the DOM.
-    Timeout: 15 seconds. Returns empty string on error.
+    Timeout: 15 seconds. Returns ("", {}) on error.
 
     Args:
         url: Full URL to fetch.
         context: Existing Playwright BrowserContext (reused across subpages).
 
     Returns:
-        Full HTML string of the rendered page, or "" on error/timeout.
+        Tuple of (HTML string, hoofddocument-response-headers dict). Vroeger gaf
+        dit pad alleen HTML terug en {} als headers; nu worden de headers wél
+        uitgelezen (crawl-instrumentatie #3).
     """
     try:
         page = await context.new_page()
         try:
-            await page.goto(
+            response = await page.goto(
                 url,
                 wait_until="networkidle",
                 timeout=_PAGE_TIMEOUT_MS,
             )
             html = await page.content()
-            return html
+            headers: dict = {}
+            if response is not None:
+                try:
+                    headers = dict(await response.all_headers())
+                except Exception:
+                    headers = {}
+            return html, headers
         except Exception as e:
             logger.debug("Playwright fetch failed for %s: %s", url, e)
             # Try to get whatever content loaded before the timeout
             try:
-                return await page.content()
+                return await page.content(), {}
             except Exception:
-                return ""
+                return "", {}
         finally:
             await page.close()
     except Exception as e:
         logger.debug("Playwright page open failed for %s: %s", url, e)
-        return ""
+        return "", {}
 
 
 # =============================================================================

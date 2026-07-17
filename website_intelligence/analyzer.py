@@ -92,6 +92,22 @@ async def analyze_website(
         except Exception:
             pass
 
+    # --- Crawl-instrumentatie (ONGATED, los van enable_vision) ---
+    # Het ENIGE capture-pad: screenshots (desktop+mobiel), pre/post-consent
+    # netwerkgedrag en content-hashes. Draait altijd, ook met enable_vision=False.
+    # Fail-soft en score-neutraal (aparte kolommen + aparte writes verderop). Staat
+    # vóór Laag 2 zodat Vision (indien ooit aan) de screenshot hergebruikt i.p.v.
+    # zelf te capturen.
+    capture: dict[str, Any] = {}
+    try:
+        from website_intelligence.site_capture import capture_site
+        capture = await capture_site(domain, lead_id, workspace_id, supabase_client)
+        if capture.get("error"):
+            logger.warning("analyze_website: capture voor %s met fout: %s", domain, capture["error"])
+    except Exception as e:
+        logger.warning("analyze_website: capture_site faalde voor %s: %s", domain, e)
+    result["capture"] = capture
+
     # --- Layer 1: Technical (max 25 pts) ---
     technical = await check_technical(domain, supabase_client)
     result["technical"] = technical
@@ -100,6 +116,7 @@ async def analyze_website(
     # --- Layer 2: Visual (max 25 pts) — optional, expensive ---
     # PR2.5: passes technical_score so visual_analyzer can skip Vision on
     # already-healthy sites (no Aerys-websitebouw pitch opportunity).
+    # De screenshot komt uit capture_site (één capture-pad); Vision captured niet zelf.
     visual_score = None
     if enable_vision and page_html:
         try:
@@ -108,6 +125,8 @@ async def analyze_website(
                 domain, workspace_id, supabase_client, anthropic_client,
                 sector=sector,
                 technical_score=result["technical_score"],
+                screenshot_b64=capture.get("screenshot_desktop_b64"),
+                screenshot_media_type="image/webp",
             )
             result["visual"] = visual
             visual_score = visual.get("overall_score")
@@ -191,6 +210,33 @@ async def analyze_website(
         }, on_conflict="lead_id").execute()
     except Exception as e:
         logger.error("Failed to store website_intelligence for %s: %s", lead_id, e)
+
+    # --- Persisteer capture-velden APART (migratie-veilig) ---
+    # Aparte update i.p.v. in de score-upsert hierboven: als migratie 033 nog niet
+    # gedraaid is, faalt alleen dit blok (fail-soft) en blijft de score-write heel.
+    if capture and not capture.get("error"):
+        try:
+            supabase_client.table("website_intelligence").update({
+                "screenshot_desktop_url": capture.get("screenshot_desktop_url"),
+                "screenshot_mobile_url": capture.get("screenshot_mobile_url"),
+                "screenshot_desktop_hash": capture.get("screenshot_desktop_hash"),
+                "screenshot_mobile_hash": capture.get("screenshot_mobile_hash"),
+                "dom_text_hash": capture.get("dom_text_hash"),
+                "capture_timings": capture.get("timings"),
+            }).eq("lead_id", lead_id).eq("workspace_id", workspace_id).execute()
+        except Exception as e:
+            logger.warning("analyze_website: capture-velden opslaan faalde voor %s: %s", lead_id, e)
+
+        # Netwerk-log is APPEND-ONLY (before/after op de tracking-check).
+        if capture.get("network"):
+            try:
+                supabase_client.table("website_network_log").insert({
+                    "workspace_id": workspace_id, "lead_id": lead_id, "domain": domain,
+                    "dom_text_hash": capture.get("dom_text_hash"),
+                    "requests": capture["network"], "summary": capture.get("network_summary"),
+                }).execute()
+            except Exception as e:
+                logger.warning("analyze_website: network-log opslaan faalde voor %s: %s", lead_id, e)
 
     # --- Update lead with website score + personalization data ---
     try:

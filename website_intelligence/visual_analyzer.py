@@ -18,7 +18,6 @@ brengt dat structureel terug naar ~€0.005 gemiddeld bij normale flow en naar
 """
 from __future__ import annotations
 
-import base64
 import logging
 import os
 from typing import Any
@@ -42,6 +41,8 @@ async def analyze_visual(
     anthropic_client: Any,
     sector: str = "",
     technical_score: int = 0,
+    screenshot_b64: str | None = None,
+    screenshot_media_type: str = "image/png",
 ) -> dict[str, Any]:
     """
     Take screenshot + run Claude Sonnet Vision analysis.
@@ -79,13 +80,13 @@ async def analyze_visual(
         result["skipped_reason"] = f"technical_score_above_threshold:{technical_score}"
         return result
 
-    # Take screenshot
-    screenshot_b64 = await _take_screenshot(domain)
+    # Screenshot komt uit capture_site (het enige capture-pad) — Vision captured
+    # en uploadt niet meer zelf. Geen screenshot -> geen Vision.
     if not screenshot_b64:
-        result["skipped_reason"] = "screenshot_failed"
+        result["skipped_reason"] = "no_screenshot"
         return result
 
-    # Cache check (SHA-256 of PNG bytes)
+    # Cache check (SHA-256 van de screenshot-bytes)
     try:
         cached = await get_cached_vision(screenshot_b64, supabase_client)
     except Exception as e:
@@ -95,17 +96,6 @@ async def analyze_visual(
     if cached:
         cached["cache_hit"] = True
         return cached
-
-    # Upload to Supabase Storage
-    try:
-        path = f"{domain}.png"
-        file_bytes = base64.b64decode(screenshot_b64)
-        supabase_client.storage.from_(STORAGE_BUCKET).upload(
-            path, file_bytes,
-            file_options={"content-type": "image/png", "upsert": "true"},
-        )
-    except Exception as e:
-        logger.debug("Screenshot upload failed for %s (may already exist): %s", domain, e)
 
     # Claude Sonnet Vision analysis
     sector_context = {
@@ -145,7 +135,7 @@ async def analyze_visual(
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": screenshot_b64}},
+                    {"type": "image", "source": {"type": "base64", "media_type": screenshot_media_type, "data": screenshot_b64}},
                     {"type": "text", "text": prompt},
                 ],
             }],
@@ -173,41 +163,6 @@ async def analyze_visual(
         logger.error("Claude Vision analysis failed for %s: %s", domain, e)
 
     return result
-
-
-async def _take_screenshot(domain: str) -> str | None:
-    """Take a full-page screenshot via Playwright. Returns base64 string or None.
-
-    RECOVERY-FIX: `new_browser_context` is GEEN context-manager en vereist een
-    `playwright`-arg (playwright_helpers.py:169). De oude
-    `async with new_browser_context() as (browser, context)` gooide direct een
-    TypeError → screenshot faalde altijd → Laag 2 (Vision, 25pt) was dood. Nu
-    de correcte factory-pattern met async_playwright + cleanup, gelijk aan de
-    scrapers.
-    """
-    import asyncio
-    from playwright.async_api import async_playwright
-    from utils.playwright_helpers import new_browser_context
-
-    browser = None
-    try:
-        async with async_playwright() as playwright:
-            browser, context = await new_browser_context(playwright)
-            page = await context.new_page()
-            await page.set_viewport_size({"width": 1280, "height": 720})
-            await page.goto(f"https://{domain}", wait_until="networkidle", timeout=20_000)
-            await asyncio.sleep(2)
-            screenshot = await page.screenshot(full_page=True, type="png")
-            return base64.b64encode(screenshot).decode("utf-8")
-    except Exception as e:
-        logger.warning("Screenshot failed for %s: %s", domain, e)
-        return None
-    finally:
-        if browser is not None:
-            try:
-                await browser.close()
-            except Exception:
-                pass
 
 
 def _calculate_visual_score(overall_1_to_10: int) -> int:

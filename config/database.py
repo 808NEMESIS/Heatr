@@ -60,6 +60,9 @@ _HEATR_TABLES = {
     # Check-up follow-up (migration 032) — anders queryt de wrapper de
     # ongeprefixte (niet-bestaande) call_records → PGRST205.
     "call_records",
+    # Crawl-instrumentatie (migration 033) — append-only netwerk-log voor de
+    # pre/post-consent tracking-check.
+    "website_network_log",
 }
 
 

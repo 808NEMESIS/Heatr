@@ -447,6 +447,9 @@ async def _run_step(
                 patch["has_online_booking"] = True
             if website_data.get("has_whatsapp"):
                 patch["has_whatsapp"] = True
+            # Expliciet True/False: de AFWEZIGHEID van een banner is zelf een
+            # signaal (tracking zonder consent). Instrumentatie #4.
+            patch["has_cookie_banner"] = bool(website_data.get("has_cookie_banner"))
             if website_data.get("phone"):
                 patch["phone"] = website_data["phone"]
             if website_data.get("tracking_tools"):

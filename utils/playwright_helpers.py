@@ -20,7 +20,6 @@ import asyncio
 import os
 import random
 import re
-from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -169,6 +168,7 @@ async def random_mouse_movement(page: Page) -> None:
 async def new_browser_context(
     playwright: Playwright,
     proxy: Optional[dict] = None,
+    capture_network: bool = False,
 ) -> tuple[Browser, BrowserContext]:
     """Create a new Playwright browser + context with full anti-detection settings.
 
@@ -230,67 +230,101 @@ async def new_browser_context(
         Object.defineProperty(navigator, 'languages', {get: () => ['nl-NL', 'nl', 'en']});
     """)
 
+    # Optionele netwerk-capture: listeners op de context, log als attribuut.
+    # De caller leest `context.heatr_network_log` (lijst van ruwe entries met een
+    # monotone t_request/t_response; timing t.o.v. navigatiestart + fase bepaalt
+    # de caller, zie website_intelligence/site_capture.py).
+    if capture_network:
+        import time as _time
+        log: list[dict] = []
+        reqmap: dict = {}
+
+        def _on_request(req) -> None:
+            entry = {
+                "url": req.url,
+                "method": req.method,
+                "resource_type": req.resource_type,
+                "t_request": _time.monotonic(),
+                "status": None,
+                "failed": False,
+            }
+            reqmap[req] = entry
+            log.append(entry)
+
+        def _on_response(resp) -> None:
+            e = reqmap.get(resp.request)
+            if e is not None:
+                e["status"] = resp.status
+                e["t_response"] = _time.monotonic()
+
+        def _on_failed(req) -> None:
+            e = reqmap.get(req)
+            if e is not None:
+                e["failed"] = True
+
+        context.on("request", _on_request)
+        context.on("response", _on_response)
+        context.on("requestfailed", _on_failed)
+        context.heatr_network_log = log  # type: ignore[attr-defined]
+
     return browser, context
 
 
-async def take_screenshot(page: Page, domain: str) -> str:
-    """Take a full-page screenshot and save it to /tmp/screenshots/{domain}.png.
+async def mobile_context(
+    browser: Browser,
+    playwright: Playwright,
+    device_name: str = "iPhone 13",
+) -> BrowserContext:
+    """Maak een MOBIELE context op een bestaande browser via een device-descriptor.
 
-    Args:
-        page: Active Playwright Page instance (must already be on target URL).
-        domain: Clean domain string used as filename (e.g. 'example.nl').
-
-    Returns:
-        Local file path string (e.g. '/tmp/screenshots/example.nl.png').
+    Gebruikt de Playwright-device (juiste user agent, device_scale_factor,
+    is_mobile, has_touch) — niet alleen een viewport, anders serveert de site de
+    desktopvariant en meet je niets. Valt terug op een handmatige 390x844-config
+    als de descriptor ontbreekt.
     """
-    screenshots_dir = Path("/tmp/screenshots")
-    screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-    # Sanitise domain for use as filename
-    safe_filename = re.sub(r"[^a-zA-Z0-9._-]", "_", domain)
-    local_path = str(screenshots_dir / f"{safe_filename}.png")
-
-    await page.screenshot(path=local_path, full_page=True)
-    return local_path
-
-
-async def upload_screenshot_to_supabase(
-    local_path: str,
-    domain: str,
-    supabase_client,
-) -> str:
-    """Upload a screenshot file to Supabase Storage and return its public URL.
-
-    Args:
-        local_path: Absolute path to the local PNG file.
-        domain: Clean domain string (used as the storage object key).
-        supabase_client: Initialised supabase-py client instance.
-
-    Returns:
-        Public URL string of the uploaded screenshot.
-
-    Raises:
-        RuntimeError: If the upload fails (Supabase error propagated).
-    """
-    bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "screenshots")
-    object_key = f"screenshots/{domain}.png"
-
-    with open(local_path, "rb") as f:
-        data = f.read()
-
-    response = supabase_client.storage.from_(bucket).upload(
-        path=object_key,
-        file=data,
-        file_options={"content-type": "image/png", "upsert": "true"},
+    try:
+        device = dict(playwright.devices[device_name])
+        device.pop("default_browser_type", None)
+    except Exception:
+        device = {
+            "viewport": {"width": 390, "height": 844},
+            "device_scale_factor": 3,
+            "is_mobile": True,
+            "has_touch": True,
+            "user_agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 "
+                "Mobile/15E148 Safari/604.1"
+            ),
+        }
+    return await browser.new_context(
+        locale="nl-NL", timezone_id="Europe/Amsterdam", **device,
     )
 
-    if hasattr(response, "error") and response.error:
-        raise RuntimeError(f"Supabase upload failed for {domain}: {response.error}")
 
-    # Construct public URL
-    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    public_url = f"{supabase_url}/storage/v1/object/public/{bucket}/{object_key}"
-    return public_url
+_WEBP_MAX_DIM = 16383  # harde WebP-limiet; full-page mobiel (DSF 3) gaat er anders overheen
+
+
+def encode_webp(image_bytes: bytes, quality: int = 80) -> bytes:
+    """Converteer PNG/JPEG-bytes naar WebP — Playwright's screenshot doet geen WebP.
+
+    Bij duizend leads scheelt WebP q80 t.o.v. PNG gigabytes in Supabase Storage.
+    Een full-page screenshot kan langer zijn dan de WebP-max (16383px); dan wordt
+    de afbeelding proportioneel verkleind zodat de langste zijde past.
+    """
+    from io import BytesIO
+    from PIL import Image
+    with Image.open(BytesIO(image_bytes)) as img:
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+        w, h = img.size
+        longest = max(w, h)
+        if longest > _WEBP_MAX_DIM:
+            scale = _WEBP_MAX_DIM / longest
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+        out = BytesIO()
+        img.save(out, format="WEBP", quality=quality, method=6)
+        return out.getvalue()
 
 
 # =============================================================================
