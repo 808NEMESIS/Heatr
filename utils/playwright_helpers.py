@@ -314,6 +314,10 @@ def encode_webp(image_bytes: bytes, quality: int = 80) -> bytes:
     """
     from io import BytesIO
     from PIL import Image
+    # Full-page screenshots van zeer lange pagina's kunnen >89M px zijn (Pillow's
+    # DecompressionBomb-grens). Verhoog de grens zodat die screenshots niet fail-
+    # soft sneuvelen; 500M px blijft een plafond tegen absurde input.
+    Image.MAX_IMAGE_PIXELS = 500_000_000
     with Image.open(BytesIO(image_bytes)) as img:
         if img.mode not in ("RGB", "RGBA"):
             img = img.convert("RGB")

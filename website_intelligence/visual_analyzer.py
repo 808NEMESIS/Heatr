@@ -207,6 +207,7 @@ def _fit_for_vision(b64: str | None) -> str | None:
     from io import BytesIO
     import base64 as _b64
     from PIL import Image
+    Image.MAX_IMAGE_PIXELS = 500_000_000  # zie utils.playwright_helpers.encode_webp
     try:
         raw = _b64.b64decode(b64)
         with Image.open(BytesIO(raw)) as img:

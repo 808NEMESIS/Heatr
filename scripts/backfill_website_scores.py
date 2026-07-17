@@ -40,17 +40,32 @@ def _anthropic():
     return anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 
-async def _run(limit: int | None, dry_run: bool) -> int:
+async def _run(limit: int | None, dry_run: bool, process_all: bool) -> int:
     from config.database import get_heatr_supabase
     sb = get_heatr_supabase()
 
-    q = (sb.table("leads").select("id, domain, sector")
-         .eq("workspace_id", WORKSPACE).not_.is_("domain", "null")
-         .order("score", desc=True))
+    all_leads = [
+        l for l in ((sb.table("leads").select("id, domain, sector")
+                     .eq("workspace_id", WORKSPACE).not_.is_("domain", "null")
+                     .order("score", desc=True).execute()).data or [])
+        if (l.get("domain") or "").strip()
+    ]
+
+    # Resume-veiligheid: sla leads over die al een score_denominator hebben (=
+    # reeds met de nieuwe logica herberekend). Een run van ~13u is zo hervatbaar
+    # en her-draaibaar. --all forceert opnieuw verwerken.
+    done: set = set()
+    if not process_all:
+        dres = (sb.table("website_intelligence").select("lead_id")
+                .eq("workspace_id", WORKSPACE)
+                .not_.is_("score_denominator", "null").execute()).data or []
+        done = {r["lead_id"] for r in dres if r.get("lead_id")}
+    leads = [l for l in all_leads if l["id"] not in done]
     if limit:
-        q = q.limit(limit)
-    leads = [l for l in (q.execute().data or []) if (l.get("domain") or "").strip()]
-    print(f"{len(leads)} leads met domein in workspace {WORKSPACE}.")
+        leads = leads[:limit]
+
+    print(f"{len(all_leads)} leads met domein; {len(done)} al gedaan; "
+          f"{len(leads)} te verwerken{f' (limit {limit})' if limit else ''}.")
     if dry_run:
         print("[dry-run] niets herberekend.")
         return 0
@@ -89,8 +104,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Herbereken website-scores mét Vision + normalisatie.")
     ap.add_argument("--dry-run", action="store_true", help="tel alleen, herbereken niet")
     ap.add_argument("--limit", type=int, default=None, help="max aantal leads (test)")
+    ap.add_argument("--all", action="store_true", help="ook al-verwerkte leads opnieuw (negeer resume)")
     args = ap.parse_args()
-    return asyncio.run(_run(args.limit, args.dry_run))
+    return asyncio.run(_run(args.limit, args.dry_run, args.all))
 
 
 if __name__ == "__main__":
