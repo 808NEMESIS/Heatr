@@ -63,6 +63,8 @@ _HEATR_TABLES = {
     # Crawl-instrumentatie (migration 033) — append-only netwerk-log voor de
     # pre/post-consent tracking-check.
     "website_network_log",
+    # Prospect-facing website-audit (migration 035) — append-only, versioned.
+    "audit_reports",
 }
 
 
