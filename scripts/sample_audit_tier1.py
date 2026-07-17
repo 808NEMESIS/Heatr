@@ -32,12 +32,19 @@ async def _run(n: int, sector: str | None) -> int:
     import config.audit_weights as W
     sb = get_heatr_supabase()
 
+    # Alleen leads die de backfill AF heeft (WI.score_denominator gezet) — zo test
+    # ik op complete data terwijl de backfill nog loopt.
+    done = (sb.table("website_intelligence").select("lead_id")
+            .eq("workspace_id", WORKSPACE).not_.is_("score_denominator", "null").execute()).data or []
+    done_ids = {r["lead_id"] for r in done if r.get("lead_id")}
+
     q = (sb.table("leads").select("*").eq("workspace_id", WORKSPACE)
          .not_.is_("domain", "null").order("score", desc=True))
     if sector:
         q = q.eq("sector", sector)
-    leads = [l for l in (q.limit(n * 2).execute().data or []) if (l.get("domain") or "").strip()][:n]
-    print(f"{len(leads)} leads in de steekproef.\n")
+    leads = [l for l in (q.limit(400).execute().data or [])
+             if (l.get("domain") or "").strip() and l["id"] in done_ids][:n]
+    print(f"{len(leads)} backfilled leads in de steekproef (van {len(done_ids)} af).\n")
 
     nm_counter: Counter = Counter()
     denoms = []

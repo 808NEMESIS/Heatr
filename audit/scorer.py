@@ -23,8 +23,13 @@ logger = logging.getLogger(__name__)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
-async def _fetch_html(domain: str) -> str:
-    """Lichte homepage-fetch (https, http-fallback) voor DOM-checks. Geen crawl."""
+async def _fetch_html(domain: str) -> tuple[str, dict]:
+    """Lichte homepage-fetch (https, http-fallback): (html, response_headers).
+
+    De headers uit deze fetch maken de security_headers-check meetbaar zónder
+    re-enrichment (die headers komen normaal uit scrape_website, dat bestaande
+    leads nog niet hadden).
+    """
     import httpx
     for scheme in ("https", "http"):
         try:
@@ -32,10 +37,10 @@ async def _fetch_html(domain: str) -> str:
                                          headers={"User-Agent": "Mozilla/5.0 (compatible; Heatr-Audit/1.0)"}) as cl:
                 r = await cl.get(f"{scheme}://{domain}")
                 if r.status_code == 200 and r.text:
-                    return r.text
+                    return r.text, dict(r.headers)
         except Exception:
             continue
-    return ""
+    return "", {}
 
 
 def _dom_text_len(html: str, page_text: str) -> int:
@@ -67,10 +72,10 @@ async def _load_context(lead: dict, sb: Any, *, tier: int, places: dict | None) 
         if row.get("source") == "website":
             response_headers = response_headers or rr.get("response_headers") or {}
 
-    html = await _fetch_html(domain)
+    html, fetched_headers = await _fetch_html(domain)
     return C.ScoreContext(lead=lead, wi=wi, network_requests=net_requests,
                           page_text=page_text, schema_org=schema_org,
-                          response_headers=response_headers, html=html,
+                          response_headers=fetched_headers or response_headers, html=html,
                           sector=lead.get("sector") or "", places=places)
 
 
