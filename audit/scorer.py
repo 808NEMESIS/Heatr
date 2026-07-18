@@ -156,7 +156,15 @@ async def score_lead(lead: dict, sb: Any, *, tier: int = 1, places: dict | None 
 
 
 async def persist_audit_report(report: dict, sb: Any, *, benchmark: dict | None = None) -> dict | None:
-    """Schrijf het report append-only met een oplopende version per lead."""
+    """Schrijf het report append-only met een oplopende version per lead.
+
+    LET OP benchmark (cohort-beslissing 2026-07): de data-gaten zijn COHORT-GEBONDEN
+    — oude leads (vóór 033) worden op minder checks gemeten dan nieuwe (has_cookie_
+    banner, response_headers, schema_org ontbreken). Voor de PER-LEAD-score prima
+    (normalisatie over de behaalde noemer). Voor de BENCHMARK niet: percentielen zijn
+    VOORLOPIG tot een re-enrichment-sweep het hele cohort op gelijke meetbaarheid
+    heeft gebracht. benchmark.py moet dit als 'provisional: true' markeren tot dan.
+    """
     ws, lead_id = report["workspace_id"], report["lead_id"]
     existing = (sb.table("audit_reports").select("version")
                 .eq("lead_id", lead_id).eq("workspace_id", ws)

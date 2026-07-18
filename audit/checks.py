@@ -175,15 +175,12 @@ def c_behandelaars_naam_foto_kwal(ctx):
                  bewijs=f"{len(named)} teamlid(en)" if named else None)
 
 def c_echte_praktijkfotos(ctx):
-    dims = (ctx.wi.get("claude_vision_analysis") or {}).get("dimensions") or {}
-    fo = dims.get("professionele_fotografie")
-    if fo is None:
-        return _f("echte_praktijkfotos", "social_proof", "not_measurable", 0, 2)
-    ok = fo >= 6
-    return _bool("echte_praktijkfotos", "social_proof", 2, ok,
-                 "De site gebruikt echte, professionele foto's.",
-                 "De foto's ogen als stock, niet als de eigen praktijk.",
-                 bewijs=f"fotografie-score {fo}/10")
+    # BEWUST always not_measurable (beslissing 2026-07): NIET dichten via de
+    # Vision-fotografie-dimensie. Die correleert bijna volledig met de andere drie
+    # dimensies — hij meet "ziet er goed uit", niet "heeft echte praktijkfoto's".
+    # Blijft not_measurable tot er een echte signaalbron is (bv. stock-image-
+    # herkenning / reverse-image). Geen valse fail, telt niet in de noemer.
+    return _f("echte_praktijkfotos", "social_proof", "not_measurable", 0, 2)
 
 
 # ── Local Trust ─────────────────────────────────────────────────────────────
@@ -383,7 +380,9 @@ def c_psi_mobile_50(ctx):
                  f"De mobiele site is traag (PSI {ps}, onder 50).", bewijs=f"psi_mobile={ps}")
 
 def c_lcp_onder_2_5(ctx):
-    # LCP wordt niet apart opgeslagen -> niet meetbaar zonder aparte meting.
+    # Nu not_measurable (LCP wordt niet apart opgeslagen). EERSTE INCREMENTELE
+    # VERBETERING (beslissing 2026-07): LCP zit al in de PageSpeed-respons — uit te
+    # lezen zonder re-crawl (we hebben PAGESPEED_API_KEY). Buiten deze run, laaghangend.
     return _f("lcp_onder_2_5", "technical", "not_measurable", 0, 2)
 
 def c_https_geldig_cert(ctx):
