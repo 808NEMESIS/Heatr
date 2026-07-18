@@ -2926,7 +2926,10 @@ async def analytics_website(
         "avg_website_score": round(sum(scores) / len(scores), 1),
         "score_distribution": buckets,
         "website_rebuild_count": sum(1 for r in rows if "website_rebuild" in (r.get("opportunity_types") or [])),
-        "conversion_count": sum(1 for r in rows if "conversion_optimisation" in (r.get("opportunity_types") or [])),
+        # Schuld-fix 2026-07-18: matchte op "conversion_optimisation", maar de
+        # classifier schrijft "conversie_optimalisatie" (opportunity_classifier.py:47)
+        # -> teller stond altijd op 0. De data is de bron van waarheid.
+        "conversion_count": sum(1 for r in rows if "conversie_optimalisatie" in (r.get("opportunity_types") or [])),
     }
 
 

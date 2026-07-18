@@ -67,6 +67,23 @@ async def main(days: int = 1) -> int:
     except Exception as ex:
         print(f"\n(conversie-funnel niet beschikbaar: {str(ex)[:80]})")
 
+    # Migratie-drift-check (schuld-fix 2026-07-18): 033 bleek maandenlang niet
+    # toegepast terwijl iedereen "gedraaid" aannam — fail-soft writes verborgen
+    # dat. Elke health-run checkt nu de migratiestaat mee (subprocess, zodat een
+    # check-fout de health-run zelf nooit breekt).
+    try:
+        import subprocess
+        vm = subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "verify_migrations.py"), "--check"],
+            capture_output=True, text=True, timeout=120,
+        )
+        print("── MIGRATIES ──")
+        print("  " + (vm.stdout.strip().replace("\n", "\n  ") or "(geen output)"))
+        if vm.returncode != 0:
+            print("  🔴 migratie-drift gedetecteerd — draai de ontbrekende migratie(s) in de Supabase SQL-editor")
+    except Exception as ex:
+        print(f"(migratie-check niet beschikbaar: {str(ex)[:80]})")
+
     print()
     return 2 if st == "stalled" else 0
 

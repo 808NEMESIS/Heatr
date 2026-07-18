@@ -156,6 +156,32 @@ On every boot, Heatr runs `utils/startup_validator.py`. Check logs for:
 
 You can also call `GET /health/startup` to re-run checks on demand.
 
+### 7a. Worker-host dependencies (launchd, macOS)
+
+De launchd-plists (`deployment/launchd/*.plist` + `launchd/*.plist`) draaien de
+workers met de **systeem-Python zonder venv**:
+`/Library/Developer/CommandLineTools/.../3.9/bin/python3`. Dependencies komen
+dus uit die interpreter z'n `--user` site-packages — NIET automatisch uit
+`requirements.txt`.
+
+**Les (2026-07):** `pillow` stond in requirements maar ontbrak in deze
+interpreter; screenshot-capture faalde daardoor **fail-soft en onopgemerkt**.
+
+Bij een verse host, herinstall of Python-update, altijd:
+
+```bash
+PY=/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3
+$PY -m pip install --user -r requirements.txt
+$PY -m playwright install chromium
+$PY scripts/verify_worker_deps.py    # bewijs: exit 0 = alles aanwezig
+```
+
+`scripts/verify_worker_deps.py` importeert alle runtime-kritische packages met
+de interpreter waarmee 'ie draait en faalt luid bij elk gat. Draai 'm ook na
+elke wijziging aan requirements.txt. Migratie-drift check je met
+`scripts/verify_migrations.py --check` (draait ook mee in
+`scripts/pipeline_health.py`).
+
 ---
 
 ## 8. Cost monitoring

@@ -6,8 +6,10 @@ prod-toegang), dus "gedraaid" is een aanname tot je het checkt. Deze tool
 parseert elke migrations/*.sql op de tabellen (CREATE TABLE) en kolommen
 (ALTER TABLE ADD COLUMN) die 'ie aanmaakt, en verifieert per stuk tegen de live DB.
 
-    python3 scripts/verify_migrations.py            # alle migraties
+    python3 scripts/verify_migrations.py            # alle migraties (uitgebreid)
     python3 scripts/verify_migrations.py 033 034    # alleen deze
+    python3 scripts/verify_migrations.py --check    # compact + exit 1 bij DEELS/AFWEZIG
+                                                    #   (voor ops/cron; pipeline_health draait dit mee)
 
 READ-ONLY. Beperking: checkt tabel- en kolom-BESTAAN (de drift die we zagen),
 niet elke DDL-vorm (indexes, constraints, functies, policies). Een tabel die
@@ -51,6 +53,8 @@ def _raw_client():
 
 def main() -> int:
     args = sys.argv[1:]
+    check_mode = "--check" in args
+    args = [a for a in args if a != "--check"]
     files = sorted(glob.glob(os.path.join(MIG_DIR, "*.sql")))
     if args:
         files = [f for f in files if any(a in os.path.basename(f) for a in args)]
@@ -87,17 +91,26 @@ def main() -> int:
         total = len(checks)
         status = "VOLLEDIG" if ok == total else ("DEELS" if ok else "AFWEZIG")
         (fully if ok == total else (empty if ok == 0 else partial)).append(name)
-        print(f"\n[{status}] {name}  ({ok}/{total})")
-        for label, v in checks:
-            if not v:
-                print(f"    ONTBREEKT: {label}")
+        if not check_mode:
+            print(f"\n[{status}] {name}  ({ok}/{total})")
+            for label, v in checks:
+                if not v:
+                    print(f"    ONTBREEKT: {label}")
+        elif ok != total:
+            missing = [label for label, v in checks if not v]
+            print(f"[{status}] {name}: {', '.join(missing)}")
 
-    print("\n" + "=" * 50)
+    if not check_mode:
+        print("\n" + "=" * 50)
     print(f"VOLLEDIG: {len(fully)}   DEELS: {len(partial)}   AFWEZIG: {len(empty)}")
-    if partial:
+    if partial and not check_mode:
         print("DEELS toegepast:", ", ".join(partial))
-    if empty:
+    if empty and not check_mode:
         print("NIET toegepast:", ", ".join(empty))
+    # --check: exit 1 zodra er iets DEELS of AFWEZIG is — voor cron/ops-gebruik,
+    # zodat "selectief toegepaste migraties" (de 033-les) niet stil blijft.
+    if check_mode and (partial or empty):
+        return 1
     return 0
 
 
