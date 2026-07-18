@@ -877,10 +877,28 @@ async def send_leads_to_warmr(
 
     # Compliance (gdpr_safe + status niet in BLOCKED_STATUSES) via dezelfde
     # gate als campaign-launch en review-email — één bron van waarheid.
+    #
+    # E-mail-gate via de CANONIEKE is_sendable (outreach-reparatie 2026-07-18).
+    # De oude literal ("verified","catch_all") matchte op waardes die niet in de
+    # data bestaan (echte waardes: valid/catchall_risky/...) → 0 leads passeerden.
+    # allow_risky=False + allow_role_emails=False = de eerste-campagne-keuze
+    # "alleen valid" (Sami 2026-07-18): 518 leads. Verruimen naar catchall_risky
+    # (+174, allemaal bouncer_api-geverifieerd) = deze twee args weghalen zodat
+    # het canonieke risky-regime (methode-eis + HEATR_ALLOW_RISKY_EMAILS) geldt.
+    # Opener-eis: mail 1 is "één observatie" — zonder opener geen mail (zelfde
+    # keuze als HARD_REQUIRED_FIELDS bij /campaigns/launch).
     from utils.enrichment_check import compliance_check
+    from utils.email_sendability import is_sendable
     eligible = [
         l for l in leads
-        if compliance_check(l)[0] and l.get("email_status") in ("verified", "catch_all") and (l.get("score") or 0) >= int(os.getenv("MIN_SCORE_FOR_WARMR", 65))
+        if compliance_check(l)[0]
+        and is_sendable(
+            l.get("email"), l.get("email_status"),
+            allow_risky=False, allow_role_emails=False,
+            verification_method=l.get("email_verification_method"),
+        )[0]
+        and (l.get("personalized_opener") or "").strip()
+        and (l.get("score") or 0) >= int(os.getenv("MIN_SCORE_FOR_WARMR", 65))
     ]
 
     # 90-dagen-cooldown afdwingen (recovery-fix): filter leads die binnen 90
@@ -1803,6 +1821,40 @@ async def launch_campaign(
             len(blocked_leads), len(leads),
         )
     leads = launchable_leads
+
+    # E-mail-sendability-gate (outreach-reparatie 2026-07-18). Dit pad had GÉÉN
+    # email-gate (de omgekeerde fout van /leads/send-to-warmr, dat op niet-
+    # bestaande waardes matchte en niemand doorliet) — een hard-bounced status
+    # werd al via BLOCKED_STATUSES gevangen, maar invalid/not_found/not_checked
+    # niet. Zelfde canonieke is_sendable + zelfde eerste-campagne-keuze "alleen
+    # valid" als /leads/send-to-warmr; verruimen = de twee args weghalen.
+    # Test-leads behouden hun bypass via is_test_lead (suppressie wint altijd).
+    from utils.email_sendability import is_sendable as _is_sendable
+    _email_blocked: list[dict] = []
+    _email_ok: list[dict] = []
+    for _l in leads:
+        _ok, _reason = _is_sendable(
+            _l.get("email"), _l.get("email_status"),
+            allow_risky=False, allow_role_emails=False,
+            is_test_lead=bool(_l.get("is_test_lead")),
+            verification_method=_l.get("email_verification_method"),
+        )
+        (_email_ok if _ok else _email_blocked).append(_l)
+    if _email_blocked:
+        logger.warning(
+            "campaigns/launch: %d/%d leads geweigerd door email-sendability",
+            len(_email_blocked), len(leads),
+        )
+    leads = _email_ok
+    if not leads:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "Geen enkele lead heeft een verzendbaar e-mailadres (gate: alleen 'valid')",
+                "email_blocked": len(_email_blocked),
+                "hint": "Controleer email_status; verruimen kan door de risky-regime-args in deze gate te versoepelen.",
+            },
+        )
 
     # 90-dagen-cooldown afdwingen vóór (re-)enrollment (recovery-fix). Dezelfde
     # gedeelde gate als SendingGuard: een lead die binnen 90 dagen een sequence

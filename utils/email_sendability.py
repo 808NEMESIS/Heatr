@@ -34,8 +34,12 @@ _NEVER_SENDABLE = {"not_found", "invalid", "bounced", "unsubscribed", "blocked"}
 # (fase 2-hotfix, audit v2 P0-2: de test-lead-bypass negeerde suppressie).
 _SUPPRESSED_STATUSES = {"bounced", "unsubscribed", "blocked"}
 
-# Statussen die afhankelijk van flag zijn
-_RISKY_STATUSES = {"risky", "catchall"}
+# Statussen die afhankelijk van flag zijn.
+# 'catchall_risky' is wat enrichment/verify_api.py (Bouncer) WERKELIJK schrijft
+# (verify_api.py:95) — ontbrak hier (outreach-reparatie 2026-07-18), waardoor
+# die leads niet het fail-closed risky-regime volgden maar doorvielen naar de
+# role-email-tak (info@ = sendable zónder methode-eis) of unknown_status.
+_RISKY_STATUSES = {"risky", "catchall", "catchall_risky"}
 
 
 def sendability_config() -> dict:

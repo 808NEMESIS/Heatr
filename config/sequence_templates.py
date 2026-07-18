@@ -581,15 +581,27 @@ def pick_brug(lead_signals: dict) -> str:
 
     Returns: 'website', 'workflow', or 'ai_audit'.
     Default voor twijfelgevallen of dunne data: 'ai_audit'.
+
+    Routeert op de GENORMALISEERDE leads.website_score (Sami-keuze, outreach-
+    reparatie 2026-07-18). De oude visual_score-tak is verwijderd: die was dood
+    op de call-site (de leads-rij heeft geen visual_score-kolom) en verwachtte
+    bovendien een 0-100-schaal terwijl website_intelligence.visual_score 0-25 is.
+
+    ⛔ DREMPEL GEBLOKKEERD OP DE BACKFILL-EINDSTAAT: de 50 hieronder is gekozen
+    op de PRE-normalisatie-schaal (mediaan ~37; <50 dekte ~89% van de leads).
+    Na de normalisatie + Vision schuift de mediaan naar ~50+ en betekent <50
+    iets heel anders. NIET LANCEREN vóór deze drempel herijkt is op de
+    post-backfill percentiel-verdeling (zelfde herijking als de opportunity-
+    drempels). Bewust geen nieuw getal gegokt.
     """
-    visual_score = lead_signals.get("visual_score")
-    if visual_score is None:
-        visual_score = lead_signals.get("website_score") or 100
+    site_score = lead_signals.get("website_score")
+    if site_score is None:
+        site_score = 100  # geen analyse -> geen website-punten (conservatief)
     website_age = lead_signals.get("website_age_years") or 0
     cms = (lead_signals.get("cms_detected") or "").strip()
 
     website_score = 0
-    if visual_score < 50:
+    if site_score < 50:
         website_score += 40
     if website_age >= 4:
         website_score += 30

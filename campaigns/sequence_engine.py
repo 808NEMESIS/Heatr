@@ -307,10 +307,21 @@ def inject_variables(text: str, lead: dict) -> str:
         # v3.2 — sector-impact frame + stad-of-sector fallback
         "{{stad_of_sector}}":          stad_of_sector,
         "{{sector_impact_frame}}":     pick_sector_impact_frame(lead.get("sector")),
-        # TODO LOOM/VIDEO — leeg in v1; handmatig pre-send invullen of via Loom-API later
+        # LOOM/VIDEO — geen kolom, geen invulmechanisme (outreach-reparatie
+        # 2026-07-18, Sami-keuze: Loom NIET in de eerste campagne). Het blok
+        # wordt hieronder CONDITIONEEL weggelaten als de link leeg is, zodat er
+        # geen kale regel in de mail belandt. Wel een link (kolom + mechanisme,
+        # aparte klus) -> rendert gewoon.
         "{{LOOM_LINK}}":               lead.get("loom_link") or "",
         "{{VIDEO_LINK}}":              lead.get("video_link") or "",
     }
+    # Conditionele blokken: een placeholder die op een eigen regel staat en leeg
+    # rendert wordt mét zijn witregel verwijderd i.p.v. een lege regel achter te
+    # laten ("{{LOOM_LINK}}\n\n" in de v3.1-bodies).
+    _conditional = ("{{LOOM_LINK}}", "{{VIDEO_LINK}}")
+    for placeholder in _conditional:
+        if not replacements.get(placeholder):
+            text = text.replace(placeholder + "\n\n", "").replace(placeholder + "\n", "")
     for placeholder, value in replacements.items():
         text = text.replace(placeholder, value or "")
     return text

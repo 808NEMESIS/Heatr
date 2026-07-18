@@ -171,12 +171,23 @@ def test_test_lead_does_not_bypass_compliance():
 
 def test_lead_complete_but_missing_recommended_warns():
     """Hard-required ok, maar contact_first_name ontbreekt → warning."""
-    lead = _base_lead(contact_first_name=None, personalized_opener=None, treatment_focus=None)
+    lead = _base_lead(contact_first_name=None, treatment_focus=None)
     out = check_lead_completeness(lead)
     assert out["is_complete"] is True
     assert out["blocked_reason"] is None
     assert "contact_first_name" in out["missing_recommended"]
-    assert "personalized_opener" in out["missing_recommended"]
+
+
+def test_missing_opener_blocks():
+    """Outreach-reparatie 2026-07-18: personalized_opener is HARD required.
+
+    Mail 1 is "één observatie, anders niets" — zonder opener zou {{opener}} als
+    lege string renderen en gaat er een mail met een leeg observatie-blok uit.
+    """
+    lead = _base_lead(personalized_opener=None)
+    out = check_lead_completeness(lead)
+    assert out["is_complete"] is False
+    assert "personalized_opener" in out["missing_required"]
 
 
 # ---------------------------------------------------------------------------
@@ -188,15 +199,17 @@ def test_filter_splits_complete_blocked_warnings():
         # Complete + alle recommended = launchable, no warning
         _base_lead(id="1"),
         # Complete + missing recommended = launchable + warning
-        _base_lead(id="2", contact_first_name=None, personalized_opener=None, treatment_focus=None),
+        _base_lead(id="2", contact_first_name=None, treatment_focus=None),
         # Missing required = blocked
         _base_lead(id="3", archetype=None),
         # Test-lead = launchable ondanks missing required (compliance groen)
         {"id": "4", "is_test_lead": True, "gdpr_safe": True, "status": "enriched"},
+        # Zonder opener = blocked (HARD sinds outreach-reparatie 2026-07-18)
+        _base_lead(id="5", personalized_opener=None),
     ]
     launchable, blocked, warnings = filter_launchable_leads(leads)
     assert {l["id"] for l in launchable} == {"1", "2", "4"}
-    assert {l["id"] for l in blocked} == {"3"}
+    assert {l["id"] for l in blocked} == {"3", "5"}
     assert {w["lead_id"] for w in warnings} == {"2", "4"}
 
 
@@ -231,8 +244,12 @@ def test_filter_attaches_completeness_to_lead():
 
 
 def test_constants_match_expected_field_names():
-    """Sanity: hard/soft sets + blocked statuses niet per ongeluk veranderd."""
-    assert HARD_REQUIRED_FIELDS == ("archetype", "score", "sector")
-    assert "personalized_opener" in SOFT_RECOMMENDED_FIELDS
+    """Sanity: hard/soft sets + blocked statuses niet per ongeluk veranderd.
+
+    personalized_opener is HARD sinds de outreach-reparatie 2026-07-18
+    (Sami-keuze: geen mail 1 met leeg observatie-blok).
+    """
+    assert HARD_REQUIRED_FIELDS == ("archetype", "score", "sector", "personalized_opener")
+    assert "personalized_opener" not in SOFT_RECOMMENDED_FIELDS
     assert "contact_first_name" in SOFT_RECOMMENDED_FIELDS
     assert BLOCKED_STATUSES == ("unsubscribed", "forgotten", "disqualified", "bounced")

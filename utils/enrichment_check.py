@@ -26,8 +26,13 @@ from __future__ import annotations
 
 from typing import Any
 
-# Velden die ALTIJD gevuld moeten zijn voor productie-launch
-HARD_REQUIRED_FIELDS = ("archetype", "score", "sector")
+# Velden die ALTIJD gevuld moeten zijn voor productie-launch.
+# personalized_opener is HARD sinds de outreach-reparatie (Sami-keuze
+# 2026-07-18): mail 1 is "één observatie, anders niets" — zonder opener rendert
+# {{opener}} als lege string en gaat er een mail uit met een leeg observatie-
+# blok. Geen mail is beter dan een lege. (Meetimpact: 1 van de 253 launchbare
+# leads viel hierdoor uit.) Test-leads bypassen dit zoals alle completeness.
+HARD_REQUIRED_FIELDS = ("archetype", "score", "sector", "personalized_opener")
 
 # Statussen waarbij een lead NOOIT verstuurd mag worden — geen enkele bypass,
 # ook niet voor test-leads. Unsubscribe/forget is een compliance-belofte aan
@@ -58,8 +63,8 @@ def compliance_check(lead: dict[str, Any]) -> tuple[bool, str | None]:
     return True, None
 
 # Velden die we WAARSCHUWEN over maar niet blokkeren
+# (personalized_opener is 2026-07-18 gepromoveerd naar HARD_REQUIRED_FIELDS)
 SOFT_RECOMMENDED_FIELDS = (
-    "personalized_opener",
     "contact_first_name",
     "treatment_focus",
 )

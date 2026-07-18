@@ -116,8 +116,18 @@ def test_risky_email_with_smtp_method_needs_review():
     assert any("bounce-risico" in r for r in out["reviews"])
 
 
-def test_missing_personalisation_needs_review():
+def test_missing_opener_blocks():
+    """Outreach-reparatie 2026-07-18: opener is HARD → blocked, niet needs_review.
+
+    Mail 1 zonder opener = leeg observatie-blok; geen mail is beter dan een lege.
+    """
     out = _verdict(_ready_lead(personalized_opener=None, contact_first_name=None))
+    assert out["verdict"] == "blocked"
+    assert any("personalized_opener" in b for b in out["blockers"])
+
+
+def test_missing_first_name_only_needs_review():
+    out = _verdict(_ready_lead(contact_first_name=None))
     assert out["verdict"] == "needs_review"
     assert any("personalisatie" in r for r in out["reviews"])
 

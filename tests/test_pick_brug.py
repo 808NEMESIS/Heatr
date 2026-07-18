@@ -22,9 +22,13 @@ from config.sequence_templates import (
 # ---------------------------------------------------------------------------
 
 def test_pick_brug_clear_website():
-    """Lage visual_score + oude site + Wix → website-pad."""
+    """Lage (genormaliseerde) website_score + oude site + Wix → website-pad.
+
+    Outreach-reparatie 2026-07-18: pick_brug routeert op leads.website_score
+    (Sami-keuze); de visual_score-tak was dood op de call-site en is verwijderd.
+    """
     lead = {
-        "visual_score": 30,         # +40
+        "website_score": 30,         # +40
         "website_age_years": 6,     # +30
         "cms_detected": "Wix",      # +20  → totaal 90
         "google_review_count": 12,  # workflow score laag
@@ -82,14 +86,14 @@ def test_pick_brug_lege_data_naar_ai_audit():
 def test_pick_brug_website_just_under_threshold():
     """website_score=60 (<70) → niet website. Geen workflow-signal → ai_audit."""
     lead = {
-        "visual_score": 30,        # +40
+        "website_score": 30,        # +40
         "website_age_years": 6,    # +30 → 70 — net op drempel
     }
     # 70 >= 70 én > workflow(0) → website
     assert pick_brug(lead) == "website"
 
     lead2 = {
-        "visual_score": 30,        # +40
+        "website_score": 30,        # +40
         "website_age_years": 3,    # geen 30 → 40
     }
     # 40 < 70 → ai_audit
@@ -100,7 +104,7 @@ def test_pick_brug_tie_workflow_wins_only_if_strictly_higher():
     """Als beide scores >= 70 maar gelijk → ai_audit (geen strikte winnaar)."""
     # Dit is een randgeval dat zelden voorkomt; gedrag verifiëren.
     lead = {
-        "visual_score": 30,                             # +40
+        "website_score": 30,                             # +40
         "website_age_years": 6,                         # +30 → website 70
         "google_review_count": 30,                      # +30
         "treatment_focus": ["a", "b", "c"],             # +30
