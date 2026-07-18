@@ -102,7 +102,7 @@ async def score_lead(lead: dict, sb: Any, *, tier: int = 1, places: dict | None 
     ctx = await _load_context(lead, sb, tier=tier, places=places)
 
     findings: list[dict] = []
-    for chk in W.checks_for_sector(sector):
+    for chk in W.checks_for_sector(sector, include_tier2=(tier == 2)):
         fn = C.CHECK_FUNCS.get(chk["check_id"])
         if not fn:
             continue

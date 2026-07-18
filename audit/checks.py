@@ -143,8 +143,11 @@ def c_reviews_zichtbaar(ctx):
                  "Er staan geen reviews op de site zelf.", bewijs=b)
 
 def c_google_rating_min(ctx):
-    r = ctx.lead.get("google_rating")
-    n = ctx.lead.get("google_review_count")
+    # Tier 2: Places is de bron (verser dan de Maps-scrape); tier 1 valt terug
+    # op de lead-velden uit de scrape.
+    p = ctx.places or {}
+    r = p.get("rating") if p.get("rating") is not None else ctx.lead.get("google_rating")
+    n = p.get("review_count") if p.get("review_count") is not None else ctx.lead.get("google_review_count")
     if r is None or n is None:
         return _f("google_rating_min", "social_proof", "not_measurable", 0, 4)
     ok = r >= 4.3 and n >= 20
@@ -152,6 +155,18 @@ def c_google_rating_min(ctx):
                  f"Sterke Google-reputatie: {r} met {n} reviews.",
                  f"Google-reputatie onder de norm ({r} / {n} reviews).",
                  bewijs=f"rating={r}, reviews={n}")
+
+def c_reviews_via_places(ctx):
+    """Tier 2: reviews via de Places API als bron. Zonder Places-data (tier 1,
+    geen key, place niet gevonden) -> not_measurable, uit de noemer."""
+    p = ctx.places or {}
+    if p.get("rating") is None or p.get("review_count") is None:
+        return _f("reviews_via_places", "social_proof", "not_measurable", 0, 5)
+    from audit.places import build_review_finding
+    on_site = bool(_txt_has(ctx.text_all, r"google\s+reviews", r"beoordelingen", r"\breviews?\b",
+                            r"testimonial", r"waardering"))
+    return build_review_finding(p, on_site_shown=on_site, sector=ctx.sector)
+
 
 def c_voor_na_galerij(ctx):
     b = _txt_has(ctx.text_all, r"voor[\s/-]*na", r"before[\s/-]*after", r"resultaten")
@@ -435,6 +450,7 @@ CHECK_FUNCS: dict[str, Callable[[ScoreContext], dict]] = {
     "vergoeding_aanvullend": c_vergoeding_aanvullend, "responstijd_belofte": c_responstijd_belofte,
     "live_chat": c_live_chat,
     "reviews_zichtbaar": c_reviews_zichtbaar, "google_rating_min": c_google_rating_min,
+    "reviews_via_places": c_reviews_via_places,
     "voor_na_galerij": c_voor_na_galerij, "patientverhalen": c_patientverhalen,
     "behandelaars_naam_foto_kwal": c_behandelaars_naam_foto_kwal, "echte_praktijkfotos": c_echte_praktijkfotos,
     "maps_embed_contact": c_maps_embed_contact, "adres_footer_volledig": c_adres_footer_volledig,

@@ -1007,14 +1007,23 @@ async def get_lead_website(
 @app.post("/leads/{lead_id}/audit")
 async def run_lead_audit(
     lead_id: str,
+    tier: int = 1,
     workspace_id: str = Depends(get_workspace),
     db: Client = Depends(get_supabase),
 ) -> dict:
-    """Tier 1 prospect-facing audit voor één lead (gratis checks, geen Places).
+    """Prospect-facing audit voor één lead. Append-only naar heatr_audit_reports.
 
-    Leest bestaande data + één lichte homepage-fetch, schrijft append-only naar
-    heatr_audit_reports. Raakt website_intelligence-scoring niet aan.
+    tier=1 (default): gratis checks, geen Places — leest bestaande data + één
+    lichte homepage-fetch. tier=2 (op verzoek, bij leadreactie): + Places als
+    reviews-bron + bevroren stad/niche-benchmark. Geen nieuwe crawl in beide
+    tiers. Raakt website_intelligence-scoring niet aan.
+
+    Tier 2 skipt herberekening als dom_text_hash gelijk is aan de vorige
+    audit-run (rescan-skip uit het ontwerp) — dan komt het bestaande rapport
+    terug met skipped=true.
     """
+    if tier not in (1, 2):
+        raise HTTPException(status_code=422, detail="tier moet 1 of 2 zijn")
     from audit.scorer import score_lead, persist_audit_report
     lead = (db.table("leads").select("*").eq("id", lead_id)
             .eq("workspace_id", workspace_id).maybe_single().execute()).data
@@ -1022,13 +1031,50 @@ async def run_lead_audit(
         raise HTTPException(status_code=404, detail="Lead not found")
     if not (lead.get("domain") or "").strip():
         raise HTTPException(status_code=409, detail="Lead heeft geen domein om te auditen.")
-    report = await score_lead(lead, db, tier=1)
-    saved = await persist_audit_report(report, db)
-    return {"ok": True, "version": (saved or {}).get("version"),
+
+    places = None
+    benchmark = None
+    if tier == 2:
+        # Rescan-skip: zelfde dom_text_hash als de vorige tier-2-run -> niets
+        # herberekenen, bestaand rapport teruggeven.
+        wi = (db.table("website_intelligence").select("dom_text_hash")
+              .eq("lead_id", lead_id).eq("workspace_id", workspace_id)
+              .maybe_single().execute()).data or {}
+        current_hash = wi.get("dom_text_hash")
+        prev = (db.table("audit_reports").select("*")
+                .eq("lead_id", lead_id).eq("workspace_id", workspace_id).eq("tier", 2)
+                .order("version", desc=True).limit(1).execute()).data or []
+        if prev and current_hash and prev[0].get("content_hash") == current_hash:
+            p = prev[0]
+            return {"ok": True, "skipped": "unchanged_content_hash",
+                    "version": p["version"], "score_normalized": p["score_normalized"],
+                    "score_capped_by": p.get("score_capped_by"),
+                    "benchmark": p.get("benchmark")}
+
+        from audit.places import get_place_reviews
+        places = await get_place_reviews(lead, db)
+        if places.get("error") == "no_places_key":
+            raise HTTPException(status_code=503,
+                                detail="Tier 2 vereist GOOGLE_PLACES_API_KEY (nog niet gezet).")
+        if places.get("error"):
+            # Place niet gevonden is geen blocker: audit draait door, reviews-check
+            # wordt not_measurable. Wel teruggeven wat er misging.
+            logger.warning("audit tier2: places-fout voor %s: %s", lead_id, places["error"])
+            places = None
+
+    report = await score_lead(lead, db, tier=tier, places=places)
+
+    if tier == 2:
+        from audit.benchmark import compute_benchmark
+        benchmark = await compute_benchmark(lead, report["score_normalized"], db)
+
+    saved = await persist_audit_report(report, db, benchmark=benchmark)
+    return {"ok": True, "tier": tier, "version": (saved or {}).get("version"),
             "score_normalized": report["score_normalized"],
             "score_capped_by": report["score_capped_by"],
             "is_empty_site": report["is_empty_site"],
             "scored_layers": report["scored_layers"],
+            "benchmark": benchmark,
             "findings": report["findings"]}
 
 

@@ -187,6 +187,37 @@ def test_get_place_reviews_fake_fetcher_and_no_key():
     assert _run(places.get_place_reviews({"company_name": "A", "city": "B"}, None)) == {"error": "no_places_key"}
 
 
+# ── tier 2: reviews via Places ──────────────────────────────────────────────
+def test_tier2_check_excluded_from_tier1_sums():
+    """tier2_only-checks tellen niet mee in de tier-1-schaal (108/107 intact)."""
+    t1 = {c["check_id"] for c in W.checks_for_sector("cosmetische_behandelaars")}
+    t2 = {c["check_id"] for c in W.checks_for_sector("cosmetische_behandelaars", include_tier2=True)}
+    assert "reviews_via_places" not in t1
+    assert "reviews_via_places" in t2
+    assert W.total_max("cosmetische_behandelaars") == 108  # ongewijzigd
+
+
+def test_reviews_via_places_not_measurable_without_places():
+    ctx = _good_ctx()  # geen ctx.places
+    f = C.c_reviews_via_places(ctx)
+    assert f["status"] == "not_measurable"
+
+
+def test_reviews_via_places_strong_hidden_uses_places_data():
+    ctx = _good_ctx()
+    ctx.places = {"rating": 4.7, "review_count": 87}
+    ctx.text_all = "hier staat niets relevants"   # site toont geen reviews
+    f = C.c_reviews_via_places(ctx)
+    assert f["status"] == "fail" and "87" in f["mail_zin"] and f["mail_safe"]
+
+
+def test_google_rating_min_prefers_places():
+    ctx = _good_ctx()   # lead: 4.7 / 87
+    ctx.places = {"rating": 3.0, "review_count": 5}   # Places is verser -> wint
+    f = C.c_google_rating_min(ctx)
+    assert f["status"] == "fail" and "3.0" in str(f["bewijs"])
+
+
 # ── benchmark ───────────────────────────────────────────────────────────────
 def test_benchmark_needs_min_n_and_is_provisional():
     small = benchmark._benchmark_from_scores(60, [50, 55, 58], city="X", sector="chiropractoren")

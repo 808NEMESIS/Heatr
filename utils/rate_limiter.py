@@ -52,6 +52,13 @@ RATE_LIMITS: dict[str, dict[str, float]] = {
         "max_tokens": 10,
         "refill_rate": 0.111111,    # tokens/second = 400/hr
     },
+    "google_places": {
+        # Google Places API (audit Tier 2 — reviews als bron). Tier 2 draait
+        # op verzoek bij leadreactie (2 calls/lead: find + details) — laag volume,
+        # conservatieve limiet ruim onder het gratis maandtegoed.
+        "max_tokens": 5,
+        "refill_rate": 0.083333,    # tokens/second = 300/hr
+    },
     "claude_haiku": {
         # Claude Haiku — bulk AI calls (summaries, openers, patterns)
         "max_tokens": 10,

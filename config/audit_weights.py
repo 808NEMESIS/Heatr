@@ -47,9 +47,14 @@ CHECKS: list[dict] = [
     {"check_id": "responstijd_belofte",    "category": "lead_conversion", "points": 2,  "sectors": "all"},
     {"check_id": "live_chat",              "category": "lead_conversion", "points": 2,  "sectors": "all"},
 
-    # --- Social Proof (18) ---
+    # --- Social Proof (18 in tier 1; +5 in tier 2 via reviews_via_places) ---
     {"check_id": "reviews_zichtbaar",         "category": "social_proof", "points": 5, "sectors": "all"},
     {"check_id": "google_rating_min",         "category": "social_proof", "points": 4, "sectors": "all"},
+    # Tier 2-ONLY: Places als BRON ("u heeft 87 reviews met 4,7 en toont er geen").
+    # tier2_only: telt NIET mee in de tier-1-sommen (108/107 blijft intact);
+    # de scorer neemt 'm alleen mee bij tier=2, en dan nog not_measurable als
+    # de place niet gevonden is.
+    {"check_id": "reviews_via_places",        "category": "social_proof", "points": 5, "sectors": "all", "tier2_only": True},
     {"check_id": "voor_na_galerij",           "category": "social_proof", "points": 4, "sectors": [_COS]},
     {"check_id": "patientverhalen",           "category": "social_proof", "points": 4, "sectors": [_CHI]},
     {"check_id": "behandelaars_naam_foto_kwal", "category": "social_proof", "points": 3, "sectors": "all"},
@@ -107,9 +112,16 @@ KNOCKOUTS = {
 EMPTY_SITE_DOM_CHARS = 150
 
 
-def checks_for_sector(sector: str) -> list[dict]:
-    """De checks die voor deze sector meetellen."""
-    return [c for c in CHECKS if c["sectors"] == "all" or sector in c["sectors"]]
+def checks_for_sector(sector: str, *, include_tier2: bool = False) -> list[dict]:
+    """De checks die voor deze sector meetellen.
+
+    Default = tier 1 (tier2_only-checks uitgesloten) zodat category_max/total_max
+    de tier-1-schaal (108/107) blijven beschrijven. include_tier2=True voegt de
+    tier-2-checks toe (Places-reviews, +5 social_proof).
+    """
+    return [c for c in CHECKS
+            if (c["sectors"] == "all" or sector in c["sectors"])
+            and (include_tier2 or not c.get("tier2_only"))]
 
 
 def category_max(sector: str) -> dict[str, int]:
