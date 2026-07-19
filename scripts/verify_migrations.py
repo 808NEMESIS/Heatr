@@ -15,6 +15,12 @@ READ-ONLY. Beperking: checkt tabel- en kolom-BESTAAN (de drift die we zagen),
 niet elke DDL-vorm (indexes, constraints, functies, policies). Een tabel die
 bestaat maar kolommen mist wordt als 'tabel OK' geteld — kolom-ALTERs worden wel
 los gecheckt.
+
+2026-07-19: dekt ook het BASIS-schema (supabase_schema.sql). Dat was een blinde
+vlek: heatr_gdpr_log stond alleen in het basis-schema, was nooit toegepast, en
+ontsnapte aan deze check — waardoor de GDPR-audittrail stil wegviel. Basis-
+schema-tabellen zijn ongeprefixt gedefinieerd maar leven in prod als heatr_<naam>
+(config/database.py-conventie); de check test de geprefixte naam.
 """
 from __future__ import annotations
 
@@ -73,12 +79,21 @@ def main() -> int:
         except Exception:
             return False
 
+    # Basis-schema meenemen (2026-07-19): supabase_schema.sql definieert tabellen
+    # ongeprefixt; prod draagt de heatr_-prefix. We checken de geprefixte naam.
+    base_schema = os.path.join(os.path.dirname(MIG_DIR), "supabase_schema.sql")
+    if os.path.exists(base_schema) and (not args or any(a in "supabase_schema.sql" for a in args)):
+        files = [base_schema] + files
+
     fully, partial, empty = [], [], []
     for f in files:
         name = os.path.basename(f)
+        is_base = name == "supabase_schema.sql"
         sql = _strip_comments(open(f, encoding="utf-8").read())
         tables = sorted(set(RE_CREATE.findall(sql)))
-        cols = sorted(set(RE_ALTER.findall(sql)))
+        if is_base:
+            tables = [t if t.startswith("heatr_") else f"heatr_{t}" for t in tables]
+        cols = sorted(set(RE_ALTER.findall(sql))) if not is_base else []
         if not tables and not cols:
             continue  # geen tabel/kolom-DDL om te checken (bv. pure data/index-migratie)
 
