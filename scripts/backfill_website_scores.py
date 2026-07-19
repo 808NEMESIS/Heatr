@@ -44,11 +44,16 @@ async def _run(limit: int | None, dry_run: bool, process_all: bool) -> int:
     from config.database import get_heatr_supabase
     sb = get_heatr_supabase()
 
+    # GDPR-filter (2026-07-19): 'forgotten' leads NOOIT her-analyseren — een
+    # rescan zou na een Art.17-erasure opnieuw persoonsgegevens verzamelen
+    # (personalisatie/team-extractie uit een verse crawl). Wijziging raakt de
+    # op dat moment lopende run niet (leadlijst wordt eenmalig bij start geladen);
+    # geldt voor elke volgende run/resume.
     all_leads = [
-        l for l in ((sb.table("leads").select("id, domain, sector")
+        l for l in ((sb.table("leads").select("id, domain, sector, status")
                      .eq("workspace_id", WORKSPACE).not_.is_("domain", "null")
                      .order("score", desc=True).execute()).data or [])
-        if (l.get("domain") or "").strip()
+        if (l.get("domain") or "").strip() and (l.get("status") or "") != "forgotten"
     ]
 
     # Resume-veiligheid: sla leads over die al een score_denominator hebben (=
