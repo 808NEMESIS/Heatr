@@ -37,6 +37,7 @@ class SectorConfig(TypedDict):
     lead_keywords: list[str]  # globale keywords, aanvullend op subcategorieen
     disqualifiers: list[str]  # globale disqualifiers
     website_signals: dict[str, list[str]]  # signalen voor laag 4 scoring
+    allowed_offers: list[str]  # welke Aerys-diensten de classifier mag pitchen
     notes: str
 
 
@@ -46,6 +47,9 @@ SECTORS: dict[str, SectorConfig] = {
     # =========================================================================
     "alternatieve_geneeskunde": {
         "label": "Alternatieve Geneeskunde",
+        # Volume-website-spel: ALLEEN website. Nooit automatisering/AI-receptie —
+        # deze praktijken werken met pijnklachten + medische info (compliance).
+        "allowed_offers": ["website_rebuild", "conversie_optimalisatie"],
         "sbi_codes": [
             "86919",  # Overige paramedische praktijken en alternatieve genezers (hoofdcode)
             "86911",  # Praktijken van fysiotherapeuten
@@ -195,11 +199,28 @@ SECTORS: dict[str, SectorConfig] = {
             },
         },
         "lead_keywords": [
-            # Globale zoektermen die over alle subcategorieen heen werken
+            # Globale zoektermen die over alle subcategorieen heen werken.
+            # Verbreed 2026-07-20 naar de volledige alternatieve-geneeswijze-markt.
+            # NB: "chiropractor" bewust NIET hier — dat blijft de aparte sector
+            # 'chiropractoren' (voorkomt dubbele match).
             "alternatieve geneeskunde",
             "natuurgeneeskunde",
             "complementaire zorg",
             "holistische praktijk",
+            "acupuncturist", "acupunctuur",
+            "homeopaat", "homeopathie",
+            "natuurgeneeskundige",
+            "energetisch therapeut", "reiki",
+            "hypnotherapeut", "hypnotherapie",
+            "kinesioloog", "kinesiologie",
+            "orthomoleculair therapeut", "orthomoleculaire geneeskunde",
+            "iriscopie", "iriscopist",
+            "osteopaat", "osteopathie",
+            "haptonoom", "haptotherapie",
+            "shiatsu", "ayurveda",
+            "Chinese geneeskunde", "TCM", "traditionele Chinese geneeskunde",
+            "voedingsdeskundige", "voedingscoach",
+            "mindfulness coach", "meditatiecoach",
         ],
         "disqualifiers": [
             "ziekenhuis", "UMC", "academisch medisch centrum",
@@ -208,13 +229,18 @@ SECTORS: dict[str, SectorConfig] = {
             "verpleeghuis", "zorginstelling",
         ],
         "website_signals": {
-            # Signalen die een website als hoogwaardige alternatieve praktijk classificeren
+            # Generiek voor de bréde alternatieve-geneeswijze-markt (2026-07-20):
+            # discipline-neutrale trust-/conversie-signalen i.p.v. fysio-specifiek.
             "positive": [
-                "RBCZ", "SRBAG", "NVA", "NVKH", "NWP",  # beroepsverenigingen
+                # beroepsverenigingen/keurmerken over meerdere disciplines
+                "RBCZ", "SRBAG", "NVA", "NVKH", "NWP", "SNRO", "CAT", "VBAG", "NVRT",
+                # generieke vertrouwens- + compliance-signalen
                 "klachtenregeling", "AVG", "privacyverklaring",
                 "vergoeding zorgverzekeraar", "aanvullende verzekering",
-                "online afspraak maken", "online booking",
-                "Wkkgz", "geschillencommissie",
+                "Wkkgz", "geschillencommissie", "kwalificaties", "diploma", "certificaat",
+                # generieke conversie-/praktijk-signalen
+                "online afspraak maken", "online booking", "gratis kennismaking",
+                "behandelingen", "ervaringen", "reviews",
             ],
             "negative": [
                 # Signalen die twijfelachtig zijn (let op: niet per definitie slecht)
@@ -235,6 +261,9 @@ SECTORS: dict[str, SectorConfig] = {
     # =========================================================================
     "cosmetische_behandelaars": {
         "label": "Cosmetische Klinieken",
+        # Volledige funnel: website is de instap, automatisering (AI-receptie) de
+        # premium upsell.
+        "allowed_offers": ["website_rebuild", "conversie_optimalisatie", "automatisering"],
         "sbi_codes": [
             "96022",  # Schoonheidsverzorging, pedicures, manicures, visagie, image consulting
             "86221",  # Medisch specialisten incl. plastische chirurgie (hoofdcode voor klinieken)
@@ -500,6 +529,9 @@ SECTORS: dict[str, SectorConfig] = {
     # =========================================================================
     "chiropractoren": {
         "label": "Chiropractoren",
+        # Website-only, net als alt-zorg: chiro werkt met pijnklachten → geen
+        # automatisering/AI-receptie (momenteel geen automations-target).
+        "allowed_offers": ["website_rebuild", "conversie_optimalisatie"],
         "sbi_codes": [],  # KvK-flow is opt-in (kost geld) — Maps-scraping gebruikt geen SBI.
         "sbi_codes_notes": {},
         "subcategories": {
@@ -579,6 +611,20 @@ def get_sector(sector_key: str) -> SectorConfig:
     if sector_key not in SECTORS:
         raise ValueError(f"Onbekende sector: {sector_key}. Beschikbaar: {list(SECTORS.keys())}")
     return SECTORS[sector_key]
+
+
+# Website-only = veilige default: een onbekende/niet-geconfigureerde sector krijgt
+# NOOIT per ongeluk een automatiserings-pitch.
+_DEFAULT_ALLOWED_OFFERS: list[str] = ["website_rebuild", "conversie_optimalisatie"]
+
+
+def get_allowed_offers(sector_key: str | None) -> list[str]:
+    """Toegestane pitch-diensten per sector (businessmodel: cosmetiek = volledige
+    funnel incl. automatisering; alt-zorg/chiro = alleen website). Onbekend/leeg
+    → website-only."""
+    if not sector_key or sector_key not in SECTORS:
+        return list(_DEFAULT_ALLOWED_OFFERS)
+    return list(SECTORS[sector_key].get("allowed_offers") or _DEFAULT_ALLOWED_OFFERS)
 
 
 def get_all_sbi_codes(sector_key: str) -> list[str]:

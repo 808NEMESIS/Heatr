@@ -46,6 +46,8 @@ _COST_PER_M_OUTPUT = _PRICING["output_per_m_eur"]
 
 def _derive_top_issue(
     website_intelligence: dict,
+    *,
+    allow_automatisering: bool = True,
 ) -> str:
     """Derive the single most impactful website issue from WI data.
 
@@ -71,7 +73,9 @@ def _derive_top_issue(
             return "geen online boekingsmogelijkheid"
         if not conv_details.get("has_whatsapp"):
             return "geen WhatsApp voor klanten"
-        if not conv_details.get("has_chatbot"):
+        # De chat/AI-angle is automatisering (compliance-gevoelig op medische
+        # praktijksites) → alleen als de sector 'm toestaat.
+        if allow_automatisering and not conv_details.get("has_chatbot"):
             return "geen chat voor snelle vragen"
         return "ontbrekende conversie-elementen"
 
@@ -173,7 +177,10 @@ async def generate_review_email(
         comp_data = website_intelligence.get("competitor_data") or {}
         score_vs_market = comp_data.get("score_vs_market") or 0
 
-        top_issue = _derive_top_issue(website_intelligence)
+        # Sector-poort: alt-zorg/chiro krijgen nooit een chat/AI-angle.
+        from config.sectors import get_allowed_offers
+        _allow_auto = "automatisering" in get_allowed_offers(sector)
+        top_issue = _derive_top_issue(website_intelligence, allow_automatisering=_allow_auto)
         specific_observation = _compose_specific_observation(
             website_intelligence, top_issue,
         )

@@ -189,6 +189,7 @@ async def analyze_website(
         conversion_result=conversion,
         sector_result=sector_result,
         visual_score=visual_overall,   # 0-10 overall — de <4-check verwacht die schaal
+        sector=sector,                 # sector-poort: nooit een offer buiten allowed_offers
     )
     result["opportunities"] = opportunities
 
