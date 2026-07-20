@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 RADIUS_KM_DEFAULT = 15.0            # stad; landelijk hoger via config (later)
 _MIN_REVIEWS_ABS = 30              # concurrent moet zelf substantie hebben
 _MIN_RATED_REVIEWS = 20           # rating pas geloofwaardig vanaf X reviews
+_MIN_OWN_REVIEWS = 5              # eigen review-basis vóór "waar jullie er N hebben"
+                                 # (0/null = scrape-gat of te hard voor koude mail)
 
 
 def _fmt_rating(r: float) -> str:
@@ -46,9 +48,11 @@ def select_concurrent_gap(lead: dict, pool: list[dict], *, brug: str) -> str | N
     my_rat = lead.get("google_rating") or 0.0
     cands: list[tuple[float, str]] = []
 
-    # reviews-achterstand (publiek trust-signaal, beide bruggen)
+    # reviews-achterstand (publiek trust-signaal, beide bruggen). Alleen bij een
+    # ECHTE eigen basis (>= _MIN_OWN_REVIEWS): "waar jullie er 0 hebben" is te hard
+    # voor een koude mail én 0/null is vaak een scrape-gat, geen echte nul.
     best_rev = max((c.get("google_review_count") or 0 for c in pool), default=0)
-    if best_rev >= _MIN_REVIEWS_ABS and best_rev >= 2 * max(my_rev, 1):
+    if my_rev >= _MIN_OWN_REVIEWS and best_rev >= _MIN_REVIEWS_ABS and best_rev >= 2 * my_rev:
         cands.append((float(best_rev - my_rev),
                       f"een praktijk op een paar kilometer met {best_rev} reviews, "
                       f"waar jullie er {my_rev} hebben"))

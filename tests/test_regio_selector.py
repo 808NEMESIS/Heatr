@@ -80,6 +80,14 @@ def test_gap_none_when_no_defensible_gap():
     assert select_concurrent_gap(lead, pool, brug="conceptsite") is None
 
 
+def test_gap_reviews_skipped_when_own_base_too_low():
+    """0/lage eigen reviews → geen 'waar jullie er 0 hebben' (te hard/missende data)."""
+    lead = {"google_review_count": 0, "google_rating": None}
+    pool = [{"google_review_count": 68, "google_rating": 4.9}]
+    s = select_concurrent_gap(lead, pool, brug="conceptsite")
+    assert s is None or "0 hebben" not in s
+
+
 # ── Spec 5b: detail_2 laag-uitsluiting ──────────────────────────────────────
 def test_detail_2_prefers_conversion_not_reviews():
     assert "afspraakknop" in pick_detail_2({"has_online_booking": False})
