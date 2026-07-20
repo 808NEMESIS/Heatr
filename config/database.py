@@ -65,6 +65,9 @@ _HEATR_TABLES = {
     "website_network_log",
     # Prospect-facing website-audit (migration 035) — append-only, versioned.
     "audit_reports",
+    # Founding-Five plekken-teller (migration 038, outreach spec 3) — één rij per
+    # vergeven plek per niche.
+    "founding_five_slots",
 }
 
 

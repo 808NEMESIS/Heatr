@@ -755,3 +755,240 @@ def template_for_sector(sector: str | None) -> str | None:
 def template_for_brug(brug: str) -> str:
     """Map brug-keuze ('website'|'workflow'|'ai_audit') naar v3.1 template_id."""
     return f"v3_1_{brug}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FASE A — Founding Five (besluit v2 + docs/outreach_implementatie_faseA.md)
+# ═══════════════════════════════════════════════════════════════════════════
+# Koude mail = observatie ({{opener}}) + één vraag + Founding-Five-aanbod. Twee
+# bruggen. Loom = belofte-ná-ja (nooit vooraf gestuurd → geen {{LOOM_LINK}} hier).
+# Copy WOORDELIJK uit de blauwdruk; alleen ontwrapt tot e-mail-paragrafen (de
+# mid-zin-regelafbrekingen in de bron zijn plak-artefacten). Greeting via
+# {{begroeting}} (spec 2), plekken via {{vrije_plekken}} (spec 3, live geteld).
+
+FOUNDING_FIVE_TOTAL = 5
+_FASE_A_BRUGGEN = ("conceptsite", "workflow")
+_FASE_A_DELAYS = [0, 3, 5]
+_FASE_A_SUBJECT = "{{bedrijfsnaam}}, één ding dat me opviel"
+
+# ─── CONCEPTSITE ───────────────────────────────────────────────────────────
+_CS_MAIL1 = (
+    "{{begroeting}}\n\n"
+    "{{opener}}\n\n"
+    "Klinieken die dit wél strak hebben staan, winnen 'm nu van de buurpraktijk "
+    "nog voor de eerste telefoon. Puur omdat de site meteen vertrouwen wekt.\n\n"
+    "Ik doe nu iets eenmaligs: voor de eerste vijf klinieken maak ik kosteloos "
+    "een concept voor hun nieuwe site. Zeg je ja, dan laat ik je in een Loom, een "
+    "persoonlijke videoboodschap, precies zien wat ik voor {{bedrijfsnaam}} in "
+    "gedachten heb.\n\n"
+    "Het concept en die video zijn gratis, daar zit je nergens aan vast. En "
+    "spreekt het je aan, dan bouwen we 'm echt, voor deze eerste vijf tegen een "
+    "gereduceerd tarief in ruil voor je verhaal als referentie. Maar dat is "
+    "helemaal aan jou.\n\n"
+    "Zal ik er een voor {{bedrijfsnaam}} maken?\n\n"
+    "Groet,\nSami Jansema\nAerys Solution · aeryssolution.nl"
+)
+_CS_MAIL2_BOTH = (
+    "{{begroeting}}\n\n"
+    "Uit enthousiasme was ik eigenlijk al begonnen. {{detail_2}} liet me niet "
+    "los, dus ik zat al wat te schetsen voor {{bedrijfsnaam}}.\n\n"
+    "En ik zag iets in jouw regio: {{concurrent_signaal}}. Dat is precies waar "
+    "twijfelaars nu op afgaan. De mensen die tussen jullie kiezen, landen op dit "
+    "moment bij hen, elke week opnieuw, zonder dat jij het merkt.\n\n"
+    "Zal ik dat concept afmaken en je in een korte video laten zien hoe je dat "
+    "terugpakt? Kost je niks, en spreekt het aan dan bouwen we 'm echt.\n\nSami"
+)
+_CS_MAIL2_DETAIL = (
+    "{{begroeting}}\n\n"
+    "Uit enthousiasme was ik eigenlijk al begonnen. {{detail_2}} liet me niet "
+    "los, dus ik zat al wat te schetsen voor {{bedrijfsnaam}}.\n\n"
+    "Dat soort dingen zie ik vaker, en het kost stilletjes de bezoekers die "
+    "twijfelen, precies degenen die je bijna al binnen had.\n\n"
+    "Zal ik dat concept afmaken en je in een korte video laten zien hoe je het "
+    "terugpakt? Kost je niks, en spreekt het aan dan bouwen we 'm echt.\n\nSami"
+)
+_CS_MAIL2_CONCURRENT = (
+    "{{begroeting}}\n\n"
+    "Ik bleef nog even hangen bij {{bedrijfsnaam}}, dus ik ben alvast wat gaan "
+    "schetsen.\n\n"
+    "En ik zag iets in jouw regio: {{concurrent_signaal}}. Dat is precies waar "
+    "twijfelaars nu op afgaan. De mensen die tussen jullie kiezen, landen op dit "
+    "moment bij hen, zonder dat jij het merkt.\n\n"
+    "Zal ik dat concept afmaken en je in een korte video laten zien hoe je het "
+    "terugpakt? Kost je niks, en spreekt het aan dan bouwen we 'm echt.\n\nSami"
+)
+_CS_MAIL2_NONE = (
+    "{{begroeting}}\n\n"
+    "Ik bleef nog even hangen bij {{bedrijfsnaam}}, dus ik ben alvast wat gaan "
+    "schetsen voor je nieuwe site.\n\n"
+    "Ik wil 'm alleen niet zomaar afmaken zonder dat je 't wilt. Zal ik doorgaan "
+    "en je in een korte video laten zien wat ik in gedachten heb? Kost je niks, "
+    "en spreekt het aan dan bouwen we 'm echt.\n\nSami"
+)
+_CS_MAIL3_HEAD = (
+    "{{begroeting}}\n\n"
+    "Laatste van mijn kant voor nu, beloofd.\n\n"
+    "Waarom ik aandring: negen van de tien mensen die op je site landen en "
+    "twijfelen, zijn binnen een paar seconden weg naar de volgende praktijk. Je "
+    "ziet het nooit, want ze bellen je niet om te zeggen dat ze afhaakten. De "
+    "meeste klinieksites laten dat gewoon gebeuren, en dat is precies je kans: "
+    "een site die die twijfelaar wél vasthoudt, heeft bijna niemand in deze "
+    "markt nu al.\n\n"
+    "Maar dat raam sluit. Elke maand stappen er praktijken over, en wie straks "
+    "pas begint, haalt in plaats van voorloopt.\n\n"
+)
+
+# ─── WORKFLOW ──────────────────────────────────────────────────────────────
+_WF_MAIL1 = (
+    "{{begroeting}}\n\n"
+    "{{opener}}\n\n"
+    "De voorkant staat goed. Waar het bij de meeste praktijken stilletjes "
+    "weglekt, zit erachter: de beller buiten kantoortijd die geen voicemail "
+    "inspreekt, het appje dat pas de volgende dag wordt gezien. Precies de "
+    "patiënt die je al bijna binnen had.\n\n"
+    "Ik doe nu iets eenmaligs: voor de eerste vijf klinieken breng ik kosteloos "
+    "in kaart hoeveel daar bij hen blijft liggen. Zeg je ja, dan loop ik je in "
+    "een Loom, een persoonlijke videoboodschap, door wat ik zie en wat het je "
+    "waarschijnlijk kost.\n\n"
+    "Die analyse is gratis, daar zit je nergens aan vast. En wil je die gemiste "
+    "contacten daarna echt opvangen, dan zet ik dat voor deze eerste vijf op "
+    "tegen een gereduceerd tarief in ruil voor je verhaal als referentie. Maar "
+    "dat is helemaal aan jou.\n\n"
+    "Zal ik er voor {{bedrijfsnaam}} eens naar kijken?\n\n"
+    "Groet,\nSami Jansema\nAerys Solution · aeryssolution.nl"
+)
+_WF_MAIL2_BOTH = (
+    "{{begroeting}}\n\n"
+    "Uit enthousiasme was ik eigenlijk al gaan kijken. {{detail_2}} liet me niet "
+    "los, dus ik ben je opzet alvast wat gaan doorlopen.\n\n"
+    "En ik zag iets in jouw regio: {{concurrent_signaal}}. Daar zit 'm nu de "
+    "winst: de praktijk die als eerste reageert, houdt de twijfelaar. Elke "
+    "gemiste beller buiten kantoortijd is er nu eentje die ergens anders wél "
+    "wordt teruggebeld, zonder dat jij het terugziet in je agenda.\n\n"
+    "Zal ik in een korte video laten zien hoeveel er bij {{bedrijfsnaam}} blijft "
+    "liggen en hoe je dat opvangt? Kost je niks, en wil je het echt oppakken dan "
+    "zetten we 'm op.\n\nSami"
+)
+_WF_MAIL2_DETAIL = (
+    "{{begroeting}}\n\n"
+    "Uit enthousiasme was ik eigenlijk al gaan kijken. {{detail_2}} liet me niet "
+    "los, dus ik ben je opzet alvast wat gaan doorlopen.\n\n"
+    "Dat soort dingen kost stilletjes de bellers buiten kantoortijd, precies de "
+    "patiënten die je al bijna binnen had.\n\n"
+    "Zal ik in een korte video laten zien hoeveel er bij {{bedrijfsnaam}} blijft "
+    "liggen en hoe je dat opvangt? Kost je niks, en wil je het echt oppakken dan "
+    "zetten we 'm op.\n\nSami"
+)
+_WF_MAIL2_CONCURRENT = (
+    "{{begroeting}}\n\n"
+    "Ik bleef nog even hangen bij {{bedrijfsnaam}}, dus ik ben je opzet alvast "
+    "wat gaan doorlopen.\n\n"
+    "En ik zag iets in jouw regio: {{concurrent_signaal}}. Daar zit 'm nu de "
+    "winst: de praktijk die als eerste reageert, houdt de twijfelaar. Elke "
+    "gemiste beller is er nu eentje die ergens anders wél wordt teruggebeld.\n\n"
+    "Zal ik laten zien hoeveel er bij {{bedrijfsnaam}} blijft liggen en hoe je "
+    "dat opvangt? Kost je niks, en wil je het oppakken dan zetten we 'm op.\n\nSami"
+)
+_WF_MAIL2_NONE = (
+    "{{begroeting}}\n\n"
+    "Ik bleef nog even hangen bij {{bedrijfsnaam}}, dus ik ben je opzet alvast "
+    "wat gaan doorlopen.\n\n"
+    "Wat me opvalt bij de meeste praktijken: de bellers en appjes buiten "
+    "kantoortijd blijven liggen, precies de patiënten die je al bijna binnen "
+    "had.\n\n"
+    "Zal ik in een korte video laten zien hoe je dat opvangt? Kost je niks, en "
+    "wil je het oppakken dan zetten we 'm op.\n\nSami"
+)
+_WF_MAIL3_HEAD = (
+    "{{begroeting}}\n\n"
+    "Laatste van mijn kant voor nu, beloofd.\n\n"
+    "Waarom ik aandring: bijna geen enkele praktijk in deze markt vangt die "
+    "gemiste contacten nu al slim op. Wie er vroeg bij is pakt de patiënten die "
+    "de rest laat lopen. Over een jaar doet iedereen het en is het gewoon "
+    "bijhouden.\n\n"
+    "Maar dat raam sluit. Elke maand stappen er praktijken over, en wie straks "
+    "pas begint, haalt in plaats van voorloopt.\n\n"
+)
+
+# Plekken-paragraaf (spec 3, live). >=2 toont het getal, ==1 laatste plek,
+# ==0 laat de Founding-Five-alinea vallen (puur first-mover-urgentie).
+_FF_MULTI = (
+    "Die {{vrije_plekken}} plekken tegen gereduceerd tarief zijn er zo niet "
+    "meer. Spreekt het je aan, dan is dit het moment.\n\n"
+    "Alle goeds met {{bedrijfsnaam}}.\n\nSami"
+)
+_FF_LAST = (
+    "De laatste plek tegen gereduceerd tarief is zo vergeven. Spreekt het je "
+    "aan, dan is dit het moment.\n\n"
+    "Alle goeds met {{bedrijfsnaam}}.\n\nSami"
+)
+_FF_SOLDOUT = (
+    "Mocht je er later toch eens naar willen kijken, laat het gerust weten. "
+    "Alle goeds met {{bedrijfsnaam}}.\n\nSami"
+)
+
+_FASE_A: dict[str, dict] = {
+    "conceptsite": {
+        "mail1": _CS_MAIL1,
+        "mail2": {"both": _CS_MAIL2_BOTH, "detail_2": _CS_MAIL2_DETAIL,
+                  "concurrent": _CS_MAIL2_CONCURRENT, "none": _CS_MAIL2_NONE},
+        "mail3_head": _CS_MAIL3_HEAD,
+    },
+    "workflow": {
+        "mail1": _WF_MAIL1,
+        "mail2": {"both": _WF_MAIL2_BOTH, "detail_2": _WF_MAIL2_DETAIL,
+                  "concurrent": _WF_MAIL2_CONCURRENT, "none": _WF_MAIL2_NONE},
+        "mail3_head": _WF_MAIL3_HEAD,
+    },
+}
+
+
+def faseA_brug_for(brug_pick: str) -> str:
+    """Map pick_brug-output ('website'|'workflow'|'ai_audit') → Fase A-brug.
+
+    Twee bruggen: workflow blijft workflow; al het andere → conceptsite (default,
+    incl. ai_audit dat in de Fase A-copy is opgegaan)."""
+    return "workflow" if brug_pick == "workflow" else "conceptsite"
+
+
+def _mail2_variant_key(lead: dict) -> str:
+    has_d = bool((lead.get("detail_2") or "").strip())
+    has_c = bool((lead.get("concurrent_signaal") or "").strip())
+    if has_d and has_c:
+        return "both"
+    if has_d:
+        return "detail_2"
+    if has_c:
+        return "concurrent"
+    return "none"
+
+
+def _mail3_plekken(free_slots: int) -> str:
+    if free_slots <= 0:
+        return _FF_SOLDOUT
+    if free_slots == 1:
+        return _FF_LAST
+    return _FF_MULTI
+
+
+def resolve_faseA_step(brug: str, step_index: int, lead: dict, *, free_slots: int) -> dict:
+    """Kies de juiste (ongerenderde) Fase A-step: subject + body + delay.
+
+    Variant-keuze: mail 2 op token-beschikbaarheid (degradatie), mail 3 op de
+    live plekken-teller. Rendering doet render_step (met een lead-copy die
+    'vrije_plekken' bevat)."""
+    b = _FASE_A[brug if brug in _FASE_A_BRUGGEN else "conceptsite"]
+    if step_index == 0:
+        body, subject = b["mail1"], _FASE_A_SUBJECT
+    elif step_index == 1:
+        body, subject = b["mail2"][_mail2_variant_key(lead)], "Re: " + _FASE_A_SUBJECT
+    elif step_index == 2:
+        body, subject = b["mail3_head"] + _mail3_plekken(free_slots), "Re: " + _FASE_A_SUBJECT
+    else:
+        raise IndexError(f"Fase A heeft 3 mails; step_index={step_index}")
+    return {
+        "subject": subject,
+        "body": body,
+        "delay_days": _FASE_A_DELAYS[step_index],
+        "thread": "new" if step_index == 0 else "reply",
+    }

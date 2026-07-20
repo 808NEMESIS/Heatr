@@ -85,7 +85,7 @@ def validate_opener_sendable(text: str | None) -> tuple[bool, str]:
     Voorkomt dat structureel-kapotte output stil als verzendbaar veld wordt
     opgeslagen (root cause 2026-07-15: 88% afgekapte openers gingen ongemerkt
     door). Returns (ok, reason); ok=False → NIET opslaan als productie-opener.
-    reason ∈ ok | too_short | truncated | title_as_greeting | clinic_voice.
+    reason ∈ ok | too_short | truncated | title_as_greeting | clinic_voice | em_dash.
     """
     t = (text or "").strip()
     if len(t) < 15 or len(t.split()) < 4:
@@ -97,6 +97,11 @@ def validate_opener_sendable(text: str | None) -> tuple[bool, str]:
         return False, "title_as_greeting"
     if _CLINIC_VOICE_RE.search(t):
         return False, "clinic_voice"
+    # Em-/en-dash verboden (outreach spec 1, 2026-07-20): de opener-prompt verbiedt
+    # ze al, maar 9% (86/954) glipte er doorheen omdat de gate ze niet toetste.
+    # Afgekeurde openers → scripts/regenerate_openers.py.
+    if "—" in t or "–" in t:
+        return False, "em_dash"
     return True, "ok"
 
 

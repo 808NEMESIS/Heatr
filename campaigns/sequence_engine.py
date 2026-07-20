@@ -274,6 +274,12 @@ def inject_variables(text: str, lead: dict) -> str:
     safe_first = display_first_name(lead, fallback="daar")
     company = lead.get("company_name") or lead.get("domain") or ""
 
+    # Spec 2 (2026-07-20) — voornaam-fallback zonder aanhef-gat. Met naam
+    # "Hoi Jan,"; zonder naam "Hoi," (de opener draagt dan de personalisatie).
+    # 29,4% van de leads mist contact_first_name → geen zwak "Hoi daar,".
+    _real_first = display_first_name(lead, fallback="")
+    begroeting = f"Hoi {_real_first}," if _real_first else "Hoi,"
+
     # v3.2 {{stad_of_sector}}: city-naam tenzij leeg/generiek, anders "jullie sector".
     # "Generiek" = niet bruikbaar in opener-zin "ondernemers in [city] met lokale impact".
     raw_city = (lead.get("city") or "").strip()
@@ -289,12 +295,29 @@ def inject_variables(text: str, lead: dict) -> str:
         capitalized = signaal[0].upper() + signaal[1:]
         text = text.replace(". {{signaal_blok}}", f". {capitalized}", 1)
 
+    # Spec 1 (2026-07-20) — {{opener}} rendert de QA-gate Haiku-observatie; valt
+    # terug op {{signaal_blok}} als er geen opener is. Vangnet: een reeds-
+    # opgeslagen opener mét em-/en-dash (86/954 stale) mag nooit uitgaan → ook
+    # dan fallback, zodat de mail nooit een em-dash bevat vóór de regenerate-run.
+    _opener_raw = (lead.get("personalized_opener") or "").strip()
+    if _opener_raw and "—" not in _opener_raw and "–" not in _opener_raw:
+        opener_val = _opener_raw
+    elif signaal:
+        # signaal_blok is een mid-zin-fragment → als standalone opener-zin
+        # kapitaliseren + afsluiten met een punt.
+        opener_val = signaal[0].upper() + signaal[1:]
+        if opener_val[-1] not in ".!?":
+            opener_val += "."
+    else:
+        opener_val = ""
+
     replacements = {
         # v1.0 — legacy
         "{{first_name}}":              safe_first,
+        "{{begroeting}}":              begroeting,
         "{{company}}":                 company,
         "{{city}}":                    lead.get("city") or "",
-        "{{opener}}":                  lead.get("personalized_opener") or "",
+        "{{opener}}":                  opener_val,
         "{{sector}}":                  lead.get("sector") or "",
         "{{website}}":                 f"https://{lead.get('domain')}" if lead.get("domain") else "",
         "{{score}}":                   str(lead.get("website_score") or ""),
@@ -307,6 +330,11 @@ def inject_variables(text: str, lead: dict) -> str:
         # v3.2 — sector-impact frame + stad-of-sector fallback
         "{{stad_of_sector}}":          stad_of_sector,
         "{{sector_impact_frame}}":     pick_sector_impact_frame(lead.get("sector")),
+        # Fase A (2026-07-20) — degradatie-tokens (spec 4/5, nu meestal leeg →
+        # engine kiest de degradation-variant) + live plekken-teller (spec 3).
+        "{{detail_2}}":                lead.get("detail_2") or "",
+        "{{concurrent_signaal}}":      lead.get("concurrent_signaal") or "",
+        "{{vrije_plekken}}":           str(lead.get("vrije_plekken")) if lead.get("vrije_plekken") is not None else "",
         # LOOM/VIDEO — geen kolom, geen invulmechanisme (outreach-reparatie
         # 2026-07-18, Sami-keuze: Loom NIET in de eerste campagne). Het blok
         # wordt hieronder CONDITIONEEL weggelaten als de link leeg is, zodat er
@@ -354,6 +382,32 @@ def render_step(step: dict, lead: dict, *, seed: str | None = None) -> dict:
         "body":       body,
         "delay_days": int(step.get("delay_days") or 0),
     }
+
+
+async def free_founding_five_slots(
+    niche: str, supabase_client, workspace_id: str, total: int | None = None
+) -> int:
+    """Vrije Founding-Five-plekken voor een niche (= lead.sector), spec 3.
+
+    Drempel = getekende deal: elke rij in heatr_founding_five_slots is een
+    vergeven plek. vrije = max(0, TOTAAL - getekend). Per niche geteld, want
+    Founding Five geldt per niche (cosmetisch/chiro apart).
+
+    Fail-safe: kan de teller niet gelezen worden, ga dan uit van 0 vergeven
+    (= alle plekken vrij) — dat is de begin-realiteit (niets getekend) en houdt
+    de mail leesbaar; nooit een verzonnen tekort forceren.
+    """
+    from config.sequence_templates import FOUNDING_FIVE_TOTAL
+    cap = FOUNDING_FIVE_TOTAL if total is None else total
+    try:
+        res = (supabase_client.table("founding_five_slots")
+               .select("id", count="exact")
+               .eq("workspace_id", workspace_id).eq("niche", niche).execute())
+        taken = res.count or 0
+    except Exception as e:
+        logger.warning("free_founding_five_slots: teller onleesbaar (%s) — 0 vergeven aangenomen", e)
+        taken = 0
+    return max(0, cap - taken)
 
 
 # ==============================================================================
