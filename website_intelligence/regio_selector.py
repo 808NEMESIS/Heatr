@@ -79,16 +79,16 @@ def pick_detail_2(lead: dict) -> str | None:
     """Tweede EIGEN-site-observatie uit een andere laag dan de opener (spec 5b).
 
     Opener leidt op reviews/social → detail_2 pakt conversie (afspreken/WhatsApp)
-    of techniek (snelheid). Gekapitaliseerd, want zinbegin in mail 2
-    ("...al begonnen. {{detail_2}} liet me niet los").
+    of techniek (snelheid). NAAMWOORD-frase, gekapitaliseerd — loopt soepel in het
+    mail 2-frame "{{detail_2}} liet me niet los" (geen botsende werkwoorden).
     """
     if not lead.get("has_online_booking"):
-        return "Dat er nog geen directe afspraakknop op je site staat"
+        return "De ontbrekende afspraakknop op je site"
     if not lead.get("has_whatsapp"):
-        return "Dat je site nog geen WhatsApp-knop heeft"
+        return "Het ontbreken van een WhatsApp-knop op je site"
     ws = lead.get("website_score")
     if ws is not None and ws < 50:
-        return "Hoeveel sneller en strakker je site nog kan"
+        return "De laadtijd van je site"
     return None
 
 

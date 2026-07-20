@@ -84,8 +84,16 @@ def test_gap_none_when_no_defensible_gap():
 def test_detail_2_prefers_conversion_not_reviews():
     assert "afspraakknop" in pick_detail_2({"has_online_booking": False})
     assert "WhatsApp" in pick_detail_2({"has_online_booking": True, "has_whatsapp": False})
-    assert "sneller" in pick_detail_2({"has_online_booking": True, "has_whatsapp": True, "website_score": 30})
+    assert "laadtijd" in pick_detail_2({"has_online_booking": True, "has_whatsapp": True, "website_score": 30})
     assert pick_detail_2({"has_online_booking": True, "has_whatsapp": True, "website_score": 80}) is None
+
+
+def test_detail_2_flows_grammatically_in_mail2_frame():
+    """Naamwoord-frase → geen botsende werkwoorden vóór 'liet me niet los'."""
+    d = pick_detail_2({"has_online_booking": False})
+    sentence = f"{d} liet me niet los."
+    assert "staat liet" not in sentence and "heeft liet" not in sentence
+    assert sentence.startswith("De ontbrekende afspraakknop op je site liet me niet los")
 
 
 # ── Integratie: tokens vullen → mail 2 "both"-variant rendert schoon ────────
