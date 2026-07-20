@@ -209,6 +209,14 @@ async def qualify_and_create_lead(
         "gdpr_safe": True,  # Starts as safe — may be revoked during enrichment
     }
 
+    # Coördinaten uit de Maps-URL (outreach spec 4, nul API) — meteen bij creatie,
+    # zodat de radius-selector (spec 5) toekomstige leads direct kan meenemen.
+    # Bestaande leads: scripts/backfill_coordinates.py.
+    from utils.geo import extract_place_coords
+    _coords = extract_place_coords(lead["google_maps_url"])
+    if _coords:
+        lead["lat"], lead["lng"] = _coords
+
     try:
         res = supabase_client.table("leads").insert(lead).execute()
         if res.data:
