@@ -25,6 +25,12 @@ try:
     from dotenv import load_dotenv
 
     load_dotenv(override=False)
+    # .env.local — gitignored local-overrides-bestand (cascade: .env < .env.local).
+    # override=True zodat een lokaal geplakte secret (bv. GOOGLE_PLACES_API_KEY)
+    # de basis-.env wint. Stille no-op als het bestand er niet is.
+    import os as _os
+    _local_env = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), ".env.local")
+    load_dotenv(_local_env, override=True)
 except ImportError:  # dotenv is een dep (requirements.txt); defensief voor kale runs
     pass
 
