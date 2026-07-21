@@ -410,6 +410,24 @@ async def free_founding_five_slots(
     return max(0, cap - taken)
 
 
+async def render_faseA_marker(
+    marker: dict, lead: dict, supabase_client, workspace_id: str, *, seed: str | None = None,
+) -> dict:
+    """Resolve + render een Fase A marker-step LIVE op het verzendmoment.
+
+    Een marker bevat alleen {faseA_brug, faseA_step, delay_days} — de body wordt
+    HIER pas bepaald, zodat de plekken-teller (mail 3), de opener en de voornaam-
+    fallback de actuele staat weerspiegelen i.p.v. de launch-tijd (spec 3). Zelfde
+    gedeelde pad voor preview én send, dus een dry-render toont exact wat uitgaat.
+    """
+    from config.sequence_templates import resolve_faseA_step
+    free = await free_founding_five_slots(lead.get("sector") or "", supabase_client, workspace_id)
+    resolved = resolve_faseA_step(marker["faseA_brug"], int(marker.get("faseA_step") or 0),
+                                  lead, free_slots=free)
+    lead_for_render = {**lead, "vrije_plekken": free}
+    return render_step(resolved, lead_for_render, seed=seed)
+
+
 # ==============================================================================
 # Due-send processing
 # ==============================================================================
@@ -500,10 +518,16 @@ async def process_due_send(
     # altijd dezelfde body — voorwaarde om 'm één keer te bevriezen in het
     # ledger (I7) en om invariant I8 te bewijzen. restart_epoch zit BEWUST niet
     # in de seed: een restart moet dezelfde content herzenden, niet nieuwe.
-    step = render_step(
-        sequence_steps[step_index], lead,
-        seed=f"{lead_id}:{step_index}",
-    )
+    _raw_step = sequence_steps[step_index]
+    if _raw_step.get("faseA_brug"):
+        # Fase A: body live resolven (plekken-teller/opener/voornaam op verzendmoment).
+        step = await render_faseA_marker(
+            _raw_step, lead, supabase_client, workspace_id, seed=f"{lead_id}:{step_index}",
+        )
+    else:
+        step = render_step(
+            _raw_step, lead, seed=f"{lead_id}:{step_index}",
+        )
 
     # Push to Warmr — via de dispatcher (I3/I6/I7). Dit pad draait autonoom
     # (n8n elke 15 min); de idempotency-key record:step:epoch garandeert dat

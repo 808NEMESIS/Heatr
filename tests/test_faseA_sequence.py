@@ -150,6 +150,35 @@ def test_faseA_brug_mapping():
     assert faseA_brug_for("ai_audit") == "conceptsite"
 
 
+def test_render_faseA_marker_resolves_plekken_live():
+    """De marker leest de plekken-teller LIVE (via free_founding_five_slots) en
+    resolvet mail 3 op het verzendmoment — niet de launch-tijd."""
+    import asyncio
+    from campaigns.sequence_engine import render_faseA_marker
+
+    class _Res:  # 2 vergeven → 5-2 = 3 vrij
+        count = 2
+    class _Tbl:
+        def select(self, *a, **k): return self
+        def eq(self, *a, **k): return self
+        def execute(self): return _Res()
+    class _SB:
+        def table(self, *a, **k): return _Tbl()
+
+    lead = {"company_name": "Kliniek X", "contact_first_name": "Jan",
+            "sector": "cosmetische_behandelaars",
+            "personalized_opener": "Jullie 68 reviews met een 4.9 vallen op."}
+    marker = {"faseA_brug": "conceptsite", "faseA_step": 2, "delay_days": 5}
+    out = asyncio.get_event_loop().run_until_complete(
+        render_faseA_marker(marker, lead, _SB(), "aerys"))
+    assert "3 plekken" in out["body"]          # live: 5 − 2 vergeven
+    assert "—" not in out["body"] and "{{" not in out["body"]
+    # mail 1 (marker) rendert de opener + begroeting
+    m1 = asyncio.get_event_loop().run_until_complete(
+        render_faseA_marker({"faseA_brug": "conceptsite", "faseA_step": 0}, lead, _SB(), "aerys"))
+    assert m1["body"].startswith("Hoi Jan,") and "68 reviews" in m1["body"]
+
+
 def test_three_mails_have_distinct_subjects_threaded():
     lead = _base_lead()
     s0 = resolve_faseA_step("conceptsite", 0, lead, free_slots=5)

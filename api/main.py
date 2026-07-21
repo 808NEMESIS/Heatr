@@ -1677,7 +1677,9 @@ def _resolve_template_for_lead(
          pick_brug() → v3_1_<brug>. v1-IDs worden hier server-side ge-rerouted
          naar v3.1 — geen frontend-default-flip nodig om v3.1 te activeren.
     """
-    from config.sequence_templates import SEQUENCE_TEMPLATES, pick_brug, template_for_brug
+    from config.sequence_templates import (
+        SEQUENCE_TEMPLATES, pick_brug, faseA_brug_for, _FASE_A_DELAYS,
+    )
 
     if body_sequence:
         return None, None, body_sequence
@@ -1687,12 +1689,18 @@ def _resolve_template_for_lead(
         if t:
             return body_template_id, t, t["default_steps"]
 
-    # AUTO mode: v1-keys + None + onbekende keys triggeren per-lead brug-keuze
-    brug = pick_brug(lead)
-    auto_id = template_for_brug(brug)
-    t = SEQUENCE_TEMPLATES.get(auto_id)
-    if t:
-        return auto_id, t, t["default_steps"]
+    # AUTO mode (default sinds 2026-07-21): Fase A marker-steps. De body wordt pas
+    # bij send/preview geresolved (render_faseA_marker) zodat de plekken-teller,
+    # de opener en de voornaam-fallback de ACTUELE staat weerspiegelen, niet de
+    # launch-tijd. brug = conceptsite (workflow geschrapt). template-dict = None:
+    # Fase A heeft geen min_personalization_score-gate (opener-HARD dekt dat).
+    brug = faseA_brug_for(pick_brug(lead))
+    markers = [
+        {"faseA_brug": brug, "faseA_step": i, "delay_days": d,
+         "thread": "new" if i == 0 else "reply"}
+        for i, d in enumerate(_FASE_A_DELAYS)
+    ]
+    return f"faseA_{brug}", None, markers
     return None, None, []
 
 
@@ -1727,10 +1735,12 @@ async def preview_campaign(
 
     # Per-lead template-resolutie. Voor de top-level gate gebruiken we het meest
     # voorkomende v3.1-template uit de cohort als representatief threshold-bron.
-    per_lead_template: dict[str, dict] = {}  # lead_id → template-dict
+    per_lead_template: dict[str, dict] = {}  # lead_id → template-dict (v3.1-gate)
+    per_lead_steps: dict[str, tuple] = {}    # lead_id → (template_id, steps)  incl. Fase A-markers
     template_id_counts: dict[str, int] = {}
     for lead in leads:
-        t_id, t_obj, _ = _resolve_template_for_lead(lead, body.template_id, body.sequence)
+        t_id, t_obj, steps = _resolve_template_for_lead(lead, body.template_id, body.sequence)
+        per_lead_steps[lead["id"]] = (t_id, steps)
         if t_id and t_obj:
             per_lead_template[lead["id"]] = {"template_id": t_id, "template": t_obj}
             template_id_counts[t_id] = template_id_counts.get(t_id, 0) + 1
@@ -1751,26 +1761,30 @@ async def preview_campaign(
     auto_leads, review_leads, skip_leads = _gate_leads_for_template(leads, dominant_template)
 
     # Render preview per lead met hun eigen brug-template
+    from campaigns.sequence_engine import render_faseA_marker
     sample = (auto_leads or leads)[:5]
     previews = []
     for lead in sample:
         lead_id = lead.get("id")
-        info = per_lead_template.get(lead_id)
-        if info:
-            steps = info["template"]["default_steps"]
-            template_id_for_lead = info["template_id"]
-        else:
-            steps = body.sequence or []
-            template_id_for_lead = None
-
-        rendered = [render_step(s, lead) for s in steps]
+        template_id_for_lead, steps = per_lead_steps.get(lead_id, (None, body.sequence or []))
+        # Fase A-markers live resolven (zelfde pad als send → dry-render == verzending);
+        # v3.1/custom-steps statisch renderen.
+        rendered = []
+        for s in steps:
+            if s.get("faseA_brug"):
+                rendered.append(await render_faseA_marker(s, lead, db, workspace_id))
+            else:
+                rendered.append(render_step(s, lead))
+        _brug = None
+        if template_id_for_lead:
+            _brug = template_id_for_lead.replace("v3_1_", "").replace("faseA_", "")
         previews.append({
             "lead_id": lead_id,
             "company_name": lead.get("company_name"),
             "first_name": lead.get("contact_first_name"),
             "domain": lead.get("domain"),
-            "template_id": template_id_for_lead,           # v3.1: per-lead brug-keuze
-            "brug": (template_id_for_lead or "").replace("v3_1_", "") if template_id_for_lead else None,
+            "template_id": template_id_for_lead,
+            "brug": _brug,
             "personalization_score": lead.get("_pers_score_0_100", 0),
             "steps": rendered,
         })
@@ -1996,10 +2010,17 @@ async def launch_campaign(
     all_review: list[dict] = []
     all_skip: list[dict] = []
     for bucket_key, b in list(buckets.items()):
-        is_valid, errors = validate_sequence_config(b["steps"])
-        if not is_valid:
-            raise HTTPException(status_code=422, detail={"bucket": bucket_key, "errors": errors})
-        b["fixed_sequence"] = auto_fix_sequence_config(b["steps"])
+        _is_faseA = bool(b["steps"]) and b["steps"][0].get("faseA_brug")
+        if _is_faseA:
+            # Fase A-markers zijn canonieke, pre-gevalideerde templates; hun body
+            # wordt pas live bij send/preview geresolved → geen v3.1-body-validatie
+            # of auto-fix (die op {{opener}}-bodies werkt, niet op markers).
+            b["fixed_sequence"] = b["steps"]
+        else:
+            is_valid, errors = validate_sequence_config(b["steps"])
+            if not is_valid:
+                raise HTTPException(status_code=422, detail={"bucket": bucket_key, "errors": errors})
+            b["fixed_sequence"] = auto_fix_sequence_config(b["steps"])
         # Personalization gate — alleen 'auto'-leads in deze bucket gaan mee
         auto_leads, review_leads, skip_leads = _gate_leads_for_template(b["leads"], b["template"])
         all_review.extend(review_leads)
