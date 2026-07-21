@@ -447,6 +447,26 @@ async def dispatch_outbound(
         _decide("blocked_killswitch", detail)
         raise DispatchHalted(detail)
 
+    # 0b. Verzend-allowlist — extra, expliciet slot NAAST de kill-switch voor een
+    #     gecontroleerde testlancering. Als HEATR_SEND_ALLOWLIST gezet is (comma-
+    #     gescheiden e-mails), mag ALLEEN een adres op die lijst een mail ontvangen;
+    #     élk ander target wordt geblokkeerd, wat de kill-switch ook zegt. Zo kan
+    #     "alleen naar mezelf" nooit per ongeluk "ook naar anderen" worden. Leeg = uit.
+    _allowlist = [e.strip().lower() for e in (os.getenv("HEATR_SEND_ALLOWLIST") or "").split(",") if e.strip()]
+    if _allowlist:
+        for target in targets:
+            _em = (target.get("email") or "").strip().lower()
+            if _em not in _allowlist:
+                detail = f"lead={target.get('id')}: e-mail niet op HEATR_SEND_ALLOWLIST (test-lock)"
+                _append_record(
+                    supabase_client,
+                    workspace_id=workspace_id, idempotency_key=idempotency_key,
+                    kind=kind, status="blocked_allowlist", actor=actor,
+                    lead_id=lead_id, lead_ids=lead_ids, error=detail, metadata=metadata,
+                )
+                _decide("blocked_allowlist", detail)
+                raise DispatchHalted(detail)
+
     # 1. Compliance — laatste vangnet. Hoort nooit te triggeren (callers
     #    gaten al); als het triggert is er een gat en is dít de muur.
     for target in targets:
