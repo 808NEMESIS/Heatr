@@ -962,8 +962,12 @@ async def send_leads_to_warmr(
         campaign_id=campaign_id, service_type="adhoc_push", sequence_steps=[],
     )
 
+    # Launch = voorbereiden (Warmr houdt de campagne in DRAFT tot activatie).
+    # GEEN 'email_sent' hier — dat was misleidend (er ging niets uit). Het echte
+    # send-moment schrijft 'email_sent' in de activate-endpoint.
     for lead in eligible:
-        _insert_timeline_event(db, workspace_id, lead["id"], "email_sent", f"Lead verstuurd naar Warmr (campagne {campaign_id})")
+        _insert_timeline_event(db, workspace_id, lead["id"], "campaign_prepared",
+                               f"Voorbereid in Warmr-draft (campagne {campaign_id})")
 
     return result
 
@@ -1847,12 +1851,11 @@ async def launch_campaign(
     workspace_id: str = Depends(require_service_key),  # service-only — browser kan NOOIT versturen
     db: Client = Depends(get_supabase),
 ) -> dict:
-    # SEND-KILL-SWITCH: zolang ENABLE_CAMPAIGN_SENDS != "true" weigert deze endpoint te versturen.
-    if os.getenv("ENABLE_CAMPAIGN_SENDS", "false").lower() != "true":
-        raise HTTPException(
-            status_code=403,
-            detail="Campagne-sends staan uit (ENABLE_CAMPAIGN_SENDS=false). Gebruik /campaigns/preview om te previewen zonder te versturen.",
-        )
+    # DRAFT-PREP, GEEN SEND. Launch maakt in Warmr ALTIJD een DRAFT-campagne aan en
+    # pusht de leads erin — Warmr verstuurt draft-campagnes niet. Er is hier dus geen
+    # kill-switch: de enige send-trigger is POST /campaigns/{id}/activate, en dáár zit
+    # de kill-switch (ENABLE_PROSPECT_SENDS) + allowlist + per-ontvanger her-verificatie.
+    # Zo blijft launch veilig-vrij (previewbaar/voorbereidbaar) en is activeren de ene muur.
 
     from integrations.warmr_client import WarmrClient
     from campaigns.sequence_engine import validate_sequence_config, auto_fix_sequence_config
@@ -2193,6 +2196,72 @@ async def launch_campaign(
             logger.warning("Failed to store campaign audit-row for bucket %s: %s", sub["bucket"], exc)
 
     return result
+
+
+@app.post("/campaigns/{campaign_id}/activate")
+async def activate_campaign_endpoint(
+    campaign_id: str,
+    workspace_id: str = Depends(require_service_key),  # service-only — browser kan NOOIT activeren/versturen
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Activeer een voorbereide (draft) campagne — HET verzendmoment (fase 3).
+
+    Send-model 2026-07-21: launch bereidt voor (draft, verstuurt nooit), preview
+    reviewt, ACTIVATE is de enige "go". Vier borgingen vóór Warmr's /resume:
+      1. service-key (deze dependency) — nooit vanuit de browser.
+      2. kill-switch aan (ENABLE_PROSPECT_SENDS).
+      3. per-ontvanger her-verificatie: is_sendable + compliance + allowlist. Faalt
+         er één → 409, niks geactiveerd. KRITIEK: ná activatie verstuurt Warmr
+         autonoom, buiten Heatr's per-send-gates om — dít is de laatste muur.
+      4. audit-log + recipient-samenvatting in de respons.
+    """
+    from utils.outbound_dispatcher import _prospect_sends_enabled
+    from utils.email_sendability import is_sendable
+    from utils.enrichment_check import compliance_check
+    from integrations.warmr_client import WarmrClient
+
+    if not _prospect_sends_enabled():
+        raise HTTPException(status_code=409,
+                            detail="Kill-switch dicht (ENABLE_PROSPECT_SENDS != true) — activeren geblokkeerd.")
+
+    enr = (db.table("lead_campaign_history").select("lead_id")
+           .eq("workspace_id", workspace_id).eq("campaign_id", campaign_id).execute()).data or []
+    lead_ids = [r["lead_id"] for r in enr if r.get("lead_id")]
+    if not lead_ids:
+        raise HTTPException(status_code=404, detail="Geen enrollments voor deze campagne.")
+    leads = (db.table("leads").select("*").eq("workspace_id", workspace_id)
+             .in_("id", lead_ids).execute()).data or []
+
+    allowlist = [e.strip().lower() for e in (os.getenv("HEATR_SEND_ALLOWLIST") or "").split(",") if e.strip()]
+    rejected = []
+    for l in leads:
+        ok, reason = is_sendable(l.get("email"), l.get("email_status"), allow_risky=False,
+                                 allow_role_emails=False, is_test_lead=bool(l.get("is_test_lead")),
+                                 verification_method=l.get("email_verification_method"))
+        comp_ok, comp_reason = compliance_check(l)
+        em = (l.get("email") or "").strip().lower()
+        allow_ok = (not allowlist) or (em in allowlist)
+        if not (ok and comp_ok and allow_ok):
+            rejected.append({"lead_id": l.get("id"), "email": l.get("email"),
+                             "reason": reason if not ok else (comp_reason if not comp_ok else "niet op HEATR_SEND_ALLOWLIST")})
+    if rejected:
+        raise HTTPException(status_code=409, detail={
+            "error": "Activatie geblokkeerd — ontvanger(s) faalden de her-verificatie.",
+            "rejected": rejected,
+            "hint": "Verwijder/repareer deze leads of pas de allowlist aan; niets geactiveerd."})
+
+    logger.warning("CAMPAIGN ACTIVATE: campaign=%s recipients=%d ws=%s (kill-switch open, her-verificatie groen)",
+                   campaign_id, len(leads), workspace_id)
+    wc = WarmrClient()
+    result = await wc.activate_campaign(campaign_id)
+    # 'email_sent' op HET activatiemoment (het echte send-punt), niet bij launch.
+    # NB: nog steeds "overgedragen aan Warmr", niet "afgeleverd" — echte bezorg-
+    # bevestiging vereist een Warmr-webhook (openstaande observability-taak).
+    for l in leads:
+        _insert_timeline_event(db, workspace_id, l["id"], "email_sent",
+                               f"Campagne {campaign_id} geactiveerd — Warmr verstuurt")
+    return {"ok": True, "campaign_id": campaign_id, "activated_recipients": len(leads),
+            "recipients": [l.get("email") for l in leads], "warmr": result}
 
 
 @app.get("/campaigns")

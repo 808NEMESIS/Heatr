@@ -413,6 +413,18 @@ class WarmrClient:
         logger.info("Warmr campaign created: id=%s name=%s", campaign_id, name)
         return str(campaign_id)
 
+    async def activate_campaign(self, campaign_id: str) -> dict:
+        """Activeer een Warmr-campagne (draft/paused → active).
+
+        create_campaign maakt de campagne in DRAFT; Warmr verstuurt ALLEEN
+        active-campagnes. Zonder deze stap blijft alles draft staan en gaat er
+        nooit een mail uit (root cause 2026-07-21). Warmr-endpoint:
+        POST /campaigns/{id}/resume (vereist trigger_campaigns-permissie).
+        """
+        result = await self._request("POST", f"/campaigns/{campaign_id}/resume")
+        logger.info("Warmr campaign geactiveerd: id=%s status=%s", campaign_id, result.get("status"))
+        return result
+
     async def get_campaign_stats(self, campaign_id: str) -> dict:
         """Fetch stats for a Warmr campaign.
 

@@ -70,6 +70,14 @@ logger = logging.getLogger(__name__)
 VALID_KINDS = ("warmr_push", "warmr_bulk_push", "warmr_campaign_create", "operator_email")
 # Kinds die een prospect kunnen bereiken → fail-closed + (commit 3) kill-switch.
 PROSPECT_KINDS = ("warmr_push", "warmr_bulk_push", "warmr_campaign_create")
+
+# Kinds die de KILL-SWITCH blokkeert (2026-07-21). Campaign-create + bulk-push
+# zijn PREP: Warmr houdt ze in draft tot een expliciete activatie, dus ze mogen
+# vrij (launch = voorbereiden). De echte "go" is de campagne-activatie
+# (POST /campaigns/{id}/activate), die de switch zelf checkt. De allowlist +
+# fail-closed ledger (PROSPECT_KINDS) gelden onverkort voor álle prospect-kinds,
+# dus ook prep blijft geborgd op WELKE leads erin komen.
+_KILLSWITCH_KINDS = ("warmr_push",)
 # Statussen die meetellen in de partial-UNIQUE (migratie 022): één actieve
 # eigenaar per key. failed_* valt erbuiten zodat een retry opnieuw kan reserveren.
 _ACTIVE_STATUSES = ("in_flight", "completed")
@@ -425,7 +433,7 @@ async def dispatch_outbound(
     #    prospect-pad (launch, follow-up, ad-hoc push, review-mail) stopt
     #    hier, niet alleen /campaigns/launch. Interne meldingen hebben een
     #    eigen switch zodat een campagne-stop geen alerts dempt.
-    if kind in PROSPECT_KINDS and not _prospect_sends_enabled():
+    if kind in _KILLSWITCH_KINDS and not _prospect_sends_enabled():
         detail = ("prospect-sends staan uit "
                   "(ENABLE_PROSPECT_SENDS/ENABLE_CAMPAIGN_SENDS != true)")
         _append_record(
