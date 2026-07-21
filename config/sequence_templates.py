@@ -944,11 +944,12 @@ _FASE_A: dict[str, dict] = {
 
 
 def faseA_brug_for(brug_pick: str) -> str:
-    """Map pick_brug-output ('website'|'workflow'|'ai_audit') → Fase A-brug.
+    """Map pick_brug-output → Fase A-brug.
 
-    Twee bruggen: workflow blijft workflow; al het andere → conceptsite (default,
-    incl. ai_audit dat in de Fase A-copy is opgegaan)."""
-    return "workflow" if brug_pick == "workflow" else "conceptsite"
+    Workflow-brug GESCHRAPT (herijking-keuze 2026-07-21): vuurde de facto nooit
+    (locaties≥2-eis) → alle ICP-leads krijgen de conceptsite-brug. De workflow-
+    copy blijft in dit bestand maar is onbereikbaar geworden (opruimen kan later)."""
+    return "conceptsite"
 
 
 def _mail2_variant_key(lead: dict) -> str:

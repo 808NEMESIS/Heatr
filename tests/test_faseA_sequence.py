@@ -144,7 +144,8 @@ def test_offer_free_paid_separation_mail1():
 
 
 def test_faseA_brug_mapping():
-    assert faseA_brug_for("workflow") == "workflow"
+    # Workflow-brug geschrapt (2026-07-21): alles → conceptsite.
+    assert faseA_brug_for("workflow") == "conceptsite"
     assert faseA_brug_for("website") == "conceptsite"
     assert faseA_brug_for("ai_audit") == "conceptsite"
 
