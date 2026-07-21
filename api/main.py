@@ -1679,6 +1679,7 @@ def _resolve_template_for_lead(
     """
     from config.sequence_templates import (
         SEQUENCE_TEMPLATES, pick_brug, faseA_brug_for, _FASE_A_DELAYS,
+        resolve_faseA_step, FOUNDING_FIVE_TOTAL,
     )
 
     if body_sequence:
@@ -1689,18 +1690,23 @@ def _resolve_template_for_lead(
         if t:
             return body_template_id, t, t["default_steps"]
 
-    # AUTO mode (default sinds 2026-07-21): Fase A marker-steps. De body wordt pas
-    # bij send/preview geresolved (render_faseA_marker) zodat de plekken-teller,
-    # de opener en de voornaam-fallback de ACTUELE staat weerspiegelen, niet de
-    # launch-tijd. brug = conceptsite (workflow geschrapt). template-dict = None:
-    # Fase A heeft geen min_personalization_score-gate (opener-HARD dekt dat).
+    # AUTO mode (default sinds 2026-07-21): Fase A-steps. Elke step draagt een
+    # subject+body-SHELL (met {{tokens}}, net als v3.1) zodat Warmr's campaign-
+    # create ze accepteert — ÉN faseA_brug/faseA_step, zodat process_due_send de
+    # body LIVE herresolvet bij verzending (render_faseA_marker → push_lead
+    # custom_subject/body): plekken-teller/opener/voornaam op het verzendmoment.
+    # De shell gebruikt de start-plekken (FOUNDING_FIVE_TOTAL); de echte waarde
+    # komt live per send. brug = conceptsite (workflow geschrapt).
     brug = faseA_brug_for(pick_brug(lead))
-    markers = [
-        {"faseA_brug": brug, "faseA_step": i, "delay_days": d,
-         "thread": "new" if i == 0 else "reply"}
-        for i, d in enumerate(_FASE_A_DELAYS)
-    ]
-    return f"faseA_{brug}", None, markers
+    steps = []
+    for i, d in enumerate(_FASE_A_DELAYS):
+        shell = resolve_faseA_step(brug, i, lead, free_slots=FOUNDING_FIVE_TOTAL)
+        steps.append({
+            "faseA_brug": brug, "faseA_step": i,
+            "subject": shell["subject"], "body": shell["body"],
+            "delay_days": d, "thread": shell["thread"],
+        })
+    return f"faseA_{brug}", None, steps
     return None, None, []
 
 
