@@ -587,13 +587,12 @@ def pick_brug(lead_signals: dict) -> str:
     op de call-site (de leads-rij heeft geen visual_score-kolom) en verwachtte
     bovendien een 0-100-schaal terwijl website_intelligence.visual_score 0-25 is.
 
-    ⛔ DREMPEL GEBLOKKEERD OP DE BACKFILL-EINDSTAAT: de 50 hieronder is gekozen
-    op de PRE-normalisatie-schaal (mediaan ~37; <50 dekte ~89% van de leads).
-    Na de normalisatie + Vision schuift de mediaan naar ~50+ en betekent <50
-    iets heel anders. NIET LANCEREN vóór deze drempel herijkt is op de
-    post-backfill percentiel-verdeling (zelfde herijking als de opportunity-
-    drempels). Bewust geen nieuw getal gegokt.
+    Herijkt 2026-07-21: de drempel staat op de mediaan (WEBSITE_SCORE_HIGH, 49)
+    van de post-dekking-verdeling. NB: voor Fase A is deze routing sinds de
+    workflow-brug-schrapping (faseA_brug_for → altijd conceptsite) niet meer
+    bepalend; pick_brug voedt nog wel de gedeprecieerde v3.1-flow.
     """
+    from config.scoring_thresholds import WEBSITE_SCORE_HIGH
     site_score = lead_signals.get("website_score")
     if site_score is None:
         site_score = 100  # geen analyse -> geen website-punten (conservatief)
@@ -601,7 +600,7 @@ def pick_brug(lead_signals: dict) -> str:
     cms = (lead_signals.get("cms_detected") or "").strip()
 
     website_score = 0
-    if site_score < 50:
+    if site_score < WEBSITE_SCORE_HIGH:
         website_score += 40
     if website_age >= 4:
         website_score += 30

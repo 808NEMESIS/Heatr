@@ -31,10 +31,12 @@ export function priorityFromScore(score: number | null | undefined): {
   bg: string;
   border: string;
 } {
+  // Drempels: config/scoring_thresholds.py (herijking 2026-07-21, p25/p50/p75).
+  // Houd deze getallen gelijk aan die bron.
   const s = score ?? 100;
-  if (s < 30) return { key: 'urgent', label: 'urgent', color: '#991b1b', bg: '#fee2e2', border: '#dc2626' };
-  if (s < 45) return { key: 'hoog', label: 'hoog', color: '#9a3412', bg: '#fed7aa', border: '#ea580c' };
-  if (s < 70) return { key: 'medium', label: 'medium', color: '#854d0e', bg: '#fef3c7', border: '#ca8a04' };
+  if (s < 41) return { key: 'urgent', label: 'urgent', color: '#991b1b', bg: '#fee2e2', border: '#dc2626' };
+  if (s < 49) return { key: 'hoog', label: 'hoog', color: '#9a3412', bg: '#fed7aa', border: '#ea580c' };
+  if (s < 56) return { key: 'medium', label: 'medium', color: '#854d0e', bg: '#fef3c7', border: '#ca8a04' };
   return { key: 'laag', label: 'laag', color: '#14532d', bg: '#dcfce7', border: '#16a34a' };
 }
 

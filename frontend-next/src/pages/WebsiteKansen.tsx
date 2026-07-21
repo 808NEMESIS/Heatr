@@ -32,24 +32,25 @@ export function WebsiteKansenPage() {
       .filter((l) => l.website_score != null && l.website_score > 0)
       .filter((l) => !sector || l.sector === sector)
       .filter((l) => {
+        // Drempels: config/scoring_thresholds.py (herijking 2026-07-21).
         const s = l.website_score || 0;
-        if (priority === 'urgent') return s < 30;
-        if (priority === 'hoog') return s >= 30 && s < 45;
-        if (priority === 'medium') return s >= 45 && s < 70;
+        if (priority === 'urgent') return s < 41;
+        if (priority === 'hoog') return s >= 41 && s < 49;
+        if (priority === 'medium') return s >= 49 && s < 56;
         return true;
       })
       .sort((a, b) => (a.website_score || 0) - (b.website_score || 0));
   }, [data, sector, priority]);
 
   const counts = useMemo(() => {
-    const urgent = filtered.filter((l) => (l.website_score || 0) < 30).length;
+    const urgent = filtered.filter((l) => (l.website_score || 0) < 41).length;
     const hoog = filtered.filter((l) => {
       const s = l.website_score || 0;
-      return s >= 30 && s < 45;
+      return s >= 41 && s < 49;
     }).length;
     const medium = filtered.filter((l) => {
       const s = l.website_score || 0;
-      return s >= 45 && s < 70;
+      return s >= 49 && s < 56;
     }).length;
     return { urgent, hoog, medium };
   }, [filtered]);

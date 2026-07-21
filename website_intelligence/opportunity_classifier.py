@@ -46,16 +46,19 @@ def classify_opportunities(
     cms = technical_result.get("cms")
     conversion_score = conversion_result.get("conversion_score", 0)
 
-    # --- Website rebuild ---
-    if total_score < 40:
+    # --- Website rebuild (onder de mediaan = rebuild-kandidaat) ---
+    from config.scoring_thresholds import (
+        WEBSITE_SCORE_URGENT, WEBSITE_SCORE_HIGH, WEBSITE_SCORE_OPPORTUNITY,
+    )
+    if total_score < WEBSITE_SCORE_HIGH:
         types.append("website_rebuild")
-        reasons["website_rebuild"] = f"Totaal score {total_score}/100 — onder 40"
+        reasons["website_rebuild"] = f"Totaal score {total_score}/100 — onder {WEBSITE_SCORE_HIGH}"
     elif visual_score is not None and visual_score < 4:
         types.append("website_rebuild")
         reasons["website_rebuild"] = f"Visuele score {visual_score}/10 — onder 4"
 
-    # --- Conversie optimalisatie ---
-    if total_score >= 40 and conversion_score < 15:
+    # --- Conversie optimalisatie (boven de rebuild-grens: site staat, conversie niet) ---
+    if total_score >= WEBSITE_SCORE_HIGH and conversion_score < 15:
         types.append("conversie_optimalisatie")
         reasons["conversie_optimalisatie"] = f"Conversie score {conversion_score}/30 — onder 15"
     if not conversion_result.get("has_whatsapp"):
@@ -94,12 +97,12 @@ def classify_opportunities(
         reasons[fb] = "Sterkste toegestane website-angle (geen automatisering voor deze sector)"
     types = kept
 
-    # --- Priority (op de gefilterde lijst) ---
-    if total_score < 30:
+    # --- Priority (percentiel-banden, op de gefilterde lijst) ---
+    if total_score < WEBSITE_SCORE_URGENT:
         priority = "urgent"
-    elif total_score < 50:
+    elif total_score < WEBSITE_SCORE_HIGH:
         priority = "high"
-    elif len(types) >= 3:
+    elif total_score < WEBSITE_SCORE_OPPORTUNITY:
         priority = "medium"
     else:
         priority = "low"
