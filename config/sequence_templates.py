@@ -774,6 +774,7 @@ _FASE_A_SUBJECT = "{{bedrijfsnaam}}, één ding dat me opviel"
 _CS_MAIL1 = (
     "{{begroeting}}\n\n"
     "{{opener}}\n\n"
+    "{{site_observatie}}\n\n"
     "Klinieken die dit wél strak hebben staan, winnen 'm nu van de buurpraktijk "
     "nog voor de eerste telefoon. Puur omdat de site meteen vertrouwen wekt.\n\n"
     "Ik doe nu iets eenmaligs: voor de eerste vijf klinieken maak ik kosteloos "

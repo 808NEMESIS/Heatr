@@ -335,6 +335,13 @@ def inject_variables(text: str, lead: dict) -> str:
         "{{detail_2}}":                lead.get("detail_2") or "",
         "{{concurrent_signaal}}":      lead.get("concurrent_signaal") or "",
         "{{vrije_plekken}}":           str(lead.get("vrije_plekken")) if lead.get("vrije_plekken") is not None else "",
+        # Fase A conceptsite (2026-07-22) — deterministische, WARE brug van de
+        # review-observatie naar één concrete site-tekortkoming, zodat de vaste
+        # brug-alinea ("Klinieken die dit wél strak hebben staan…") een antecedent
+        # heeft. Komt uit website_intelligence (echte gefaalde checks), NOOIT uit
+        # Claude — die zou hallucineren en strip_unverified_claims zou het wissen.
+        # Leeg (geen betrouwbare gap) → de regel valt conditioneel weg.
+        "{{site_observatie}}":         lead.get("site_observatie") or "",
         # LOOM/VIDEO — geen kolom, geen invulmechanisme (outreach-reparatie
         # 2026-07-18, Sami-keuze: Loom NIET in de eerste campagne). Het blok
         # wordt hieronder CONDITIONEEL weggelaten als de link leeg is, zodat er
@@ -346,7 +353,7 @@ def inject_variables(text: str, lead: dict) -> str:
     # Conditionele blokken: een placeholder die op een eigen regel staat en leeg
     # rendert wordt mét zijn witregel verwijderd i.p.v. een lege regel achter te
     # laten ("{{LOOM_LINK}}\n\n" in de v3.1-bodies).
-    _conditional = ("{{LOOM_LINK}}", "{{VIDEO_LINK}}")
+    _conditional = ("{{LOOM_LINK}}", "{{VIDEO_LINK}}", "{{site_observatie}}")
     for placeholder in _conditional:
         if not replacements.get(placeholder):
             text = text.replace(placeholder + "\n\n", "").replace(placeholder + "\n", "")
@@ -410,6 +417,43 @@ async def free_founding_five_slots(
     return max(0, cap - taken)
 
 
+def build_site_observatie(wi: dict | None, website_score: int | None) -> str:
+    """Deterministische, WARE brugzin: review-observatie → één concrete site-tekortkoming.
+
+    Uitsluitend uit `website_intelligence` (echte gefaalde checks / lage deelscore),
+    nooit uit stale lead-velden of Claude. Geeft de STERKSTE gap terug als natuurlijke
+    zin, of "" als er geen betrouwbare observatie is → dan valt de regel weg. Volgorde =
+    sales-relevantie voor de conceptsite-pitch (uitstraling → mobiel → conversie).
+    """
+    LEAD_IN = "Alleen valt de site daar zelf nog bij achter: "
+    if not wi:
+        return ""
+    tech = wi.get("technical_details") or {}
+    conv = wi.get("conversion_details") or {}
+
+    def _failed(details, check) -> bool:
+        return any(d.get("check") == check and d.get("passed") is False for d in (details or []))
+
+    conv_d, tech_d = conv.get("details") or [], tech.get("details") or []
+    vis = wi.get("visual_score")
+
+    if isinstance(vis, (int, float)) and vis < 13:
+        return LEAD_IN + "de uitstraling oogt wat gedateerd."
+    if tech.get("mobile_friendly") is False:
+        return LEAD_IN + "op een telefoon oogt 'ie niet echt fijn."
+    if _failed(tech_d, "pagespeed_mobile"):
+        return LEAD_IN + "op mobiel laadt 'ie traag."
+    if _failed(conv_d, "cta_above_fold"):
+        return "Alleen mist de site zelf een duidelijke volgende stap voor wie binnenkomt."
+    if _failed(conv_d, "chatbot") and conv.get("has_whatsapp") is False:
+        return "Alleen kan een bezoeker op de site niet snel even een vraag stellen."
+    # Vangnet: brug koos conceptsite dus de score is laag (<49) — zonder specifieke
+    # gefaalde check toch een WARE, zachte observatie i.p.v. een kale sprong.
+    if isinstance(website_score, (int, float)) and website_score < 49:
+        return "Alleen loopt de site zelf nog wat achter op waar jullie staan."
+    return ""
+
+
 async def render_faseA_marker(
     marker: dict, lead: dict, supabase_client, workspace_id: str, *, seed: str | None = None,
 ) -> dict:
@@ -424,7 +468,18 @@ async def render_faseA_marker(
     free = await free_founding_five_slots(lead.get("sector") or "", supabase_client, workspace_id)
     resolved = resolve_faseA_step(marker["faseA_brug"], int(marker.get("faseA_step") or 0),
                                   lead, free_slots=free)
-    lead_for_render = {**lead, "vrije_plekken": free}
+    # Deterministische site-brug uit de geverifieerde website-analyse (alleen zinvol
+    # voor de conceptsite-brug; workflow is geschrapt). Fout mag nooit de mail blokkeren.
+    site_obs = ""
+    if marker.get("faseA_brug") == "conceptsite":
+        try:
+            wi = (supabase_client.table("website_intelligence")
+                  .select("total_score, visual_score, technical_details, conversion_details")
+                  .eq("lead_id", lead.get("id")).limit(1).execute()).data
+            site_obs = build_site_observatie(wi[0] if wi else None, lead.get("website_score"))
+        except Exception as e:
+            logger.warning("site_observatie-fetch faalde voor lead %s: %s", lead.get("id"), e)
+    lead_for_render = {**lead, "vrije_plekken": free, "site_observatie": site_obs}
     return render_step(resolved, lead_for_render, seed=seed)
 
 
