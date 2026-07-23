@@ -41,6 +41,52 @@ def _matches(patterns: list[str], text: str) -> list[str]:
     return [p.strip("\\b") for p in patterns if re.search(p, text, re.IGNORECASE)]
 
 
+# --- Praktijkomvang (Sami 2026-07-23): gevestigde speler = buiten founding -----
+_SIZE_PATTERNS = {
+    "meerdere_vestigingen": r"\b(?:meerdere |onze |verschillende )?(?:vestiging(?:en)?|locaties|filialen)\b|vestiging(?:en)? in .{0,40}\b(?:en|&)\b",
+    "team_specialisten": r"team van (?:artsen|specialisten|professionals)|ons (?:deskundig[e]? )?team|multidisciplinair",
+    "keurmerk": r"\bzkn\b|iso[\s-]?900|keurmerk|geaccrediteerd|gecertificeerd|nvcg|geregistreerd bij",
+    "media": r"bekend van (?:tv|rtl|sbs)|zoals gezien op|in de media verschenen|\brtl\s?\d\b|\bsbs\s?\d\b|geïnterviewd|reportage",
+}
+
+
+def assess_practice_size(text: str, current_year: int = 2026) -> dict:
+    """Fit-signaal praktijkomvang: gevestigde speler (meerdere vestigingen, team,
+    keurmerken, media, lang bestaand) hoort waarschijnlijk NIET in het founding-
+    aanbod (te groot, heeft vaak al een bureau). Markering, geen gate — mens
+    beslist. Amstelzijde-fixture: multidisciplinair team, opgericht 2009."""
+    t = (text or "").lower()
+    signals = [name for name, pat in _SIZE_PATTERNS.items() if re.search(pat, t, re.IGNORECASE)]
+    established_year = None
+    m = re.search(r"(?:opgericht|sinds|gevestigd)[^\d]{0,12}(20\d{2}|19\d{2})", t)
+    if m:
+        yr = int(m.group(1))
+        if yr <= current_year - 8:  # 8+ jaar = gevestigd
+            established_year = yr
+            signals.append("lang_bestaand")
+    likely = len(signals) >= 2 or "meerdere_vestigingen" in signals or "media" in signals
+    label = ("gevestigde speler (buiten founding?): " + ", ".join(signals)) if likely else "kleinschalig / onbepaald"
+    return {"signals": signals, "established_year": established_year,
+            "likely_established_player": likely, "label": label}
+
+
+_TITLE_RE = re.compile(
+    r"\b(prof\.?\s*dr\.?|prof\.?|dr\.?|drs\.?|ir\.?|mr\.?|ing\.?|dokter)\b", re.IGNORECASE)
+
+
+def suggest_aanhef_register(name_context: str | None) -> dict:
+    """Aanhef-register (Sami 2026-07-23): bij een BIG-arts/oprichter met titel is
+    'Hoi {voornaam}' te familiair voor koude NL-outreach. Detecteer de titel en
+    stel een formeler register vóór — mens beslist. Geen automatische wijziging."""
+    ctx = name_context or ""
+    m = _TITLE_RE.search(ctx)
+    if not m:
+        return {"register": "informeel", "title": None, "note": ""}
+    title = re.sub(r"\s+", " ", m.group(1).strip())
+    return {"register": "formeel", "title": title,
+            "note": f"titel '{title}' gedetecteerd — overweeg formele aanhef (Beste dr./mevr. + achternaam) i.p.v. Hoi voornaam"}
+
+
 def classify_practice_type(
     company_name: str | None,
     company_summary: str | None = None,

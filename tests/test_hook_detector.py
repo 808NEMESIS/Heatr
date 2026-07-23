@@ -189,6 +189,26 @@ def test_ambiguous_mechanism_does_not_fire_1b():
     assert d["fired_signal"] is None
 
 
+def test_1b_suppressed_when_consult_is_proposition():
+    # Amstelzijde-fixture: consult is expliciet propositie → 1b mag NIET vuren
+    from website_intelligence.hook_detector import _CONSULT_PROPOSITION_RE
+    amstel = "na het consult stellen we een persoonlijk behandelplan voor je op"
+    assert _CONSULT_PROPOSITION_RE.search(amstel)
+    d = _decide_signal(
+        fetch_ok=True, booking=_booking("request_form"), tel_present=True,
+        cta=evaluate_booking_entries([]), mechanism="request_form",
+        consult_proposition=True, fcp_ms=400,
+    )
+    assert d["fired_signal"] is None
+    # zonder de propositie-copy vuurt 1b wél
+    d2 = _decide_signal(
+        fetch_ok=True, booking=_booking("request_form"), tel_present=True,
+        cta=evaluate_booking_entries([]), mechanism="request_form",
+        consult_proposition=False, fcp_ms=400,
+    )
+    assert d2["fired_signal"] == "1b"
+
+
 # ── Signaal 3/4/5 ────────────────────────────────────────────────────────────
 def test_signal_3_slow_fcp():
     d = _decide_signal(fetch_ok=True, booking={"value": "no_booking", "confidence": "low", "kind": None},

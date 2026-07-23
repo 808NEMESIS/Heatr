@@ -252,6 +252,22 @@ _REQUEST_ONLY_RE = re.compile(
 _FORM_PATH_RE = re.compile(
     r"/(?:consult|consultatie|afspraak-aanvra|aanvraag|terugbel|contact)", re.IGNORECASE)
 
+# Weerlegbaarheids-check voor signaal 1b (Sami 2026-07-23): waar het consult
+# EXPLICIET onderdeel van de propositie is (uitgebreid intakegesprek, behandelplan
+# op maat, "na het consult ..."), is "je kunt geen moment kiezen" geen gemis maar
+# beleid — de ontvanger weerlegt de claim in één zin. Dan vuurt 1b NIET.
+# Amstelzijde-fixture: "Na het consult stellen we een persoonlijk behandelplan op."
+_CONSULT_PROPOSITION_RE = re.compile(
+    r"na (?:het|dit|uw|jouw|een) (?:uitgebreid[e]? |grondig[e]? |persoonlijk[e]? )?"
+    r"(?:consult|intake|kennismaking|adviesgesprek)"
+    r"|persoonlijk[e]? behandelplan|behandelplan op maat|behandelplan voor (?:je|jou|u)"
+    r"|(?:uitgebreid|grondig)[e]? (?:intake|consult|intakegesprek|adviesgesprek|kennismaking)"
+    r"|intakegesprek|adviesgesprek"
+    r"|(?:begint|start(?:en)?|starten we) met een (?:uitgebreid |grondig |persoonlijk )?"
+    r"(?:consult|intake)",
+    re.IGNORECASE,
+)
+
 
 def _registrable_host(host: str | None) -> str:
     if not host:
@@ -482,6 +498,7 @@ def _decide_signal(
     tel_present: bool,
     cta: dict[str, Any],
     mechanism: str | None = None,
+    consult_proposition: bool = False,
     dom_interactive_ms: int | None = None,
     fcp_ms: int | None = None,
     tap: dict | None = None,
@@ -513,8 +530,12 @@ def _decide_signal(
     # Signaal 1b — er is WEL een online ingang, maar alléén een aanvraag-/terugbel-
     # formulier: de bezoeker kan geen moment kiezen. Alleen bij een BEWEZEN
     # request_form-mechanisme (geen self-booking); bij 'ambiguous' niet vuren.
-    # Gaat door de mens-review vóór send (nuance-claim). Sami 2026-07-23.
-    if mechanism == "request_form":
+    # Weerlegbaarheids-check: als het consult expliciet propositie is (behandelplan
+    # op maat, "na het consult ..."), dan is dit geen gemis maar beleid → NIET
+    # vuren (Sami 2026-07-23; Amstelzijde-fixture). Gaat anders door mens-review.
+    if mechanism == "request_form" and consult_proposition:
+        evidence.append("1b_suppressed_consult_is_proposition")
+    elif mechanism == "request_form":
         return {"fired_signal": "1b", "signal_name": "consult_only",
                 "confidence": "high" if bconf == "high" else "low", "needs_review": True,
                 "evidence": ["request_form_only", f"booking_kind={booking.get('kind')}"] + (booking.get("evidence") or [])}
@@ -627,7 +648,8 @@ async def detect_hook_on_page(page, wall_load_ms: int | None = None, *,
     result: dict[str, Any] = {
         "fetch_ok": False, "verifiable": True, "fired_signal": None,
         "signal_name": None, "confidence": "low", "needs_review": False,
-        "booking": None, "mechanism": None, "tel_present": False,
+        "booking": None, "mechanism": None, "consult_proposition": False,
+        "size": None, "tel_present": False,
         "cta": {"found": False, "nav_booking": False, "hidden_booking": False,
                 "above_fold": None, "min_visible_y": None, "y": None,
                 "sig2_allowed": False, "sample": []},
@@ -675,8 +697,12 @@ async def detect_hook_on_page(page, wall_load_ms: int | None = None, *,
         if booking.get("value") == "has_booking":
             result["cta"] = await _scan_booking_entries(page)
             entries = result["cta"].get("entries") or []
-        request_only = bool(_REQUEST_ONLY_RE.search(re.sub(r"<[^>]+>", " ", html or "").lower()))
+        page_text = re.sub(r"<[^>]+>", " ", html or "").lower()
+        request_only = bool(_REQUEST_ONLY_RE.search(page_text))
         result["mechanism"] = classify_booking_mechanism(booking, entries, domain, request_only)
+        result["consult_proposition"] = bool(_CONSULT_PROPOSITION_RE.search(page_text))
+        from website_intelligence.practice_type import assess_practice_size
+        result["size"] = assess_practice_size(page_text, current_year=current_year or 2026)
 
         timing = await _measure_timing(page, wall_load_ms)
         result["load_ms"] = timing["load_ms"]
@@ -698,6 +724,7 @@ async def detect_hook_on_page(page, wall_load_ms: int | None = None, *,
         decision = _decide_signal(
             fetch_ok=fetch_ok, booking=booking, tel_present=result["tel_present"],
             cta=result["cta"], mechanism=result["mechanism"],
+            consult_proposition=result["consult_proposition"],
             dom_interactive_ms=result["dom_interactive_ms"], fcp_ms=result["fcp_ms"],
             tap=result["tap"], footer=result["footer"], vision=None,
         )
@@ -716,6 +743,7 @@ async def detect_hook_on_page(page, wall_load_ms: int | None = None, *,
                 decision = _decide_signal(
                     fetch_ok=fetch_ok, booking=booking, tel_present=result["tel_present"],
                     cta=result["cta"], mechanism=result["mechanism"],
+                    consult_proposition=result["consult_proposition"],
                     dom_interactive_ms=result["dom_interactive_ms"], fcp_ms=result["fcp_ms"],
                     tap=result["tap"], footer=result["footer"], vision=vision,
                 )

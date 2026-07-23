@@ -9,7 +9,35 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from website_intelligence.practice_type import classify_practice_type
+from website_intelligence.practice_type import (
+    assess_practice_size,
+    classify_practice_type,
+    suggest_aanhef_register,
+)
+
+
+AMSTEL_TEXT = ("de kliniek, opgericht in 2009 door dokter hayri hortoglu. "
+               "ons team van specialisten heeft jarenlange ervaring; dankzij ons "
+               "multidisciplinaire team stellen we een persoonlijk behandelplan op.")
+
+
+def test_amstelzijde_is_established_player():
+    r = assess_practice_size(AMSTEL_TEXT, current_year=2026)
+    assert r["likely_established_player"]
+    assert "team_specialisten" in r["signals"] and "lang_bestaand" in r["signals"]
+    assert r["established_year"] == 2009
+
+
+def test_small_solo_practice_not_flagged_established():
+    r = assess_practice_size("kleine praktijk voor huidverbetering in utrecht", 2026)
+    assert not r["likely_established_player"]
+
+
+def test_register_formeel_on_title():
+    r = suggest_aanhef_register("opgericht door dokter Hayri Hortoglu")
+    assert r["register"] == "formeel" and r["title"]
+    r2 = suggest_aanhef_register("Petra, eigenaresse")
+    assert r2["register"] == "informeel"
 
 
 def test_cadance_is_huidinstituut():
