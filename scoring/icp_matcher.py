@@ -75,10 +75,15 @@ def compute_icp_match(lead: dict, sector_config: dict) -> dict:
 
     company_text = _build_company_text(lead).lower()
 
-    # --- Disqualifiers (instant disqualify) — globale + subcategory ---
+    # --- Disqualifiers (instant disqualify) — ALLEEN sector-globaal ---
+    # Subcategory-disqualifiers zijn DISAMBIGUATIE (hoort deze lead in déze
+    # subcategorie?), GEEN sector-uitsluiting. Ze in de globale check meenemen
+    # was de bug (2026-07-22): de schoonheidssalons-subcat had "medisch"/"arts"
+    # om medische klinieken uit díe bucket te houden — maar globaal toegepast
+    # disqualificeerde dat 51% van de cosmetische ICP (elke kliniek met
+    # "medische behandelingen" in de Claude-samenvatting → icp_match 0). Alleen
+    # sector-brede disqualifiers zijn echte non-ICP-uitsluitingen.
     disqualifiers: list[str] = list(sector_config.get("disqualifiers") or [])
-    for sub in (sector_config.get("subcategories") or {}).values():
-        disqualifiers.extend(sub.get("disqualifiers") or [])
     for kw in disqualifiers:
         if kw.lower() in company_text:
             return {"icp_match": 0.0, "signals": ["disqualified"], "evaluable_max": 0.0}

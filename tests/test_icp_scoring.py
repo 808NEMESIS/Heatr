@@ -21,7 +21,8 @@ from scoring.lead_scoring import compute_lead_score
 
 # Minimale sector-config in dezelfde vorm als config/sectors.py get_sector():
 # top-level lead_keywords + subcategories{icp_signals, disqualifiers} + sbi_codes.
-def _sector(*, keywords=None, sbi_codes=None, disqualifiers=None, n_keywords=None):
+def _sector(*, keywords=None, sbi_codes=None, disqualifiers=None,
+            sub_disqualifiers=None, n_keywords=None):
     kws = keywords or ["botox", "filler", "huidverbetering", "laser", "peeling",
                        "injectable", "rimpel", "acne"]
     if n_keywords is not None:  # pad tot n_keywords met unieke fillers
@@ -30,9 +31,11 @@ def _sector(*, keywords=None, sbi_codes=None, disqualifiers=None, n_keywords=Non
             kws.append(f"kw{len(kws)}")
     return {
         "lead_keywords": kws,
-        "subcategories": {"main": {"icp_signals": [], "disqualifiers": disqualifiers or []}},
+        # sub_disqualifiers = DISAMBIGUATIE (mag NIET sector-globaal disqualificeren);
+        # disqualifiers = sector-brede uitsluiting (WEL). Zie icp_matcher-fix 2026-07-22.
+        "subcategories": {"main": {"icp_signals": [], "disqualifiers": sub_disqualifiers or []}},
         "sbi_codes": sbi_codes or [],
-        "disqualifiers": [],
+        "disqualifiers": disqualifiers or [],
     }
 
 
@@ -155,6 +158,20 @@ class TestDisqualifiersAndEdges:
         r = compute_icp_match(lead, _sector(disqualifiers=["dierenarts"]))
         assert r["icp_match"] == 0.0
         assert r["signals"] == ["disqualified"]
+
+    def test_subcategory_disqualifier_does_not_zero_out(self):
+        # Regressie 2026-07-22: subcategory-disqualifiers zijn DISAMBIGUATIE, geen
+        # sector-uitsluiting. "medisch" in de schoonheidssalons-subcat disqualificeerde
+        # 51% van de cosmetische ICP (medisch-esthetische klinieken). Een subcategory-
+        # disqualifier mag de score NIET nullen.
+        lead = _lead(company_summary="medisch esthetisch centrum met botox en laser")
+        r = compute_icp_match(lead, _sector(sub_disqualifiers=["medisch", "arts"]))
+        assert r["icp_match"] > 0.0
+        assert r["signals"] != ["disqualified"]
+        # sector-brede disqualifier vuurt WÉL, ook al matcht ook een keyword
+        r2 = compute_icp_match(lead, _sector(disqualifiers=["ziekenhuis"],
+                                             sub_disqualifiers=["medisch"]))
+        assert r2["icp_match"] > 0.0  # "ziekenhuis" staat niet in de tekst
 
     def test_no_keywords_configured_still_normalises(self):
         lead = _lead(company_summary="botox")

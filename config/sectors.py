@@ -284,6 +284,16 @@ SECTORS: dict[str, SectorConfig] = {
             "96099": "Catch-all. PMU, tattoo, permanente wimpers, nagelstudios vaak hier.",
             "86230": "Tandartsen. Alleen relevant bij expliciete cosmetische tandheelkunde focus.",
         },
+        # Sector-BREDE uitsluitingen: ECHTE non-ICP (reguliere/acute zorg, apotheek).
+        # BEWUST NIET "medisch"/"arts"/"huidtherapeut"/"schoonheidssalon"/"wellness":
+        # dat IS de ICP (medisch-esthetisch) of een ICP-subcategorie. Die termen
+        # staan in subcategory-disqualifiers als DISAMBIGUATIE en horen niet
+        # sector-globaal te vuren (zie scoring/icp_matcher.compute_icp_match).
+        "disqualifiers": [
+            "ziekenhuis", "UMC", "academisch medisch centrum",
+            "spoedeisende hulp", "huisartsenpraktijk", "huisartsenpost",
+            "apotheek", "drogisterij", "verpleeghuis", "zorginstelling",
+        ],
         "subcategories": {
             "injectables_anti_aging": {
                 "label": "Injectables en anti-aging",
