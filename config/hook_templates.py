@@ -38,8 +38,9 @@ from __future__ import annotations
 import hashlib
 import re
 
-SIGNAL_NAMES: dict[int, str] = {
+SIGNAL_NAMES: dict = {
     1: "no_online_booking",
+    "1b": "consult_only",
     2: "cta_below_fold",
     3: "slow_tti",
     4: "tap_targets",
@@ -49,7 +50,7 @@ SIGNAL_NAMES: dict[int, str] = {
 
 # signaal -> (variant_A, variant_B). Klinieknaam in zin 1, gekoppeld aan de
 # observatie. Geen review-verwijzing (die zit in zonde_brug), geen "zonde".
-HOOK_VARIANTS: dict[int, tuple[str, str]] = {
+HOOK_VARIANTS: dict = {
     1: (
         "Ik wilde op mijn telefoon even kijken hoe ik bij {kliniek} een afspraak "
         "maak, en kwam alleen een telefoonnummer tegen. De meeste mensen bellen "
@@ -58,6 +59,17 @@ HOOK_VARIANTS: dict[int, tuple[str, str]] = {
         "Op zoek naar de boekknop van {kliniek} vond ik alleen een telefoonnummer. "
         "Wie 's avonds {loc} op de bank zit te twijfelen, vindt bellen net die "
         "drempel te veel, en gaat door naar de volgende praktijk.",
+    ),
+    # Signaal 1b — consult-only: er is wél een online ingang, maar alleen een
+    # aanvraag-/terugbelformulier; de bezoeker kan geen moment zelf kiezen.
+    "1b": (
+        "Ik wilde op mijn telefoon bij {kliniek} een afspraak maken, maar kwam niet "
+        "verder dan een aanvraagformulier; een moment zelf kiezen kon niet. Wie 's "
+        "avonds twijfelt wil op dát moment vastleggen, niet wachten tot er "
+        "teruggebeld wordt.",
+        "Op mijn telefoon kon ik bij {kliniek} alleen een aanvraag achterlaten en "
+        "wachten op contact, geen moment zelf vastleggen. Juist wie 's avonds "
+        "twijfelt haakt af als 'ie niet meteen kan boeken.",
     ),
     2: (
         "Ik wilde op mijn telefoon een afspraak maken bij {kliniek}, en moest een "

@@ -105,9 +105,30 @@ _BOOK_HREF_HINTS = ("afspra", "/boek", "booking", "appoint", "reserv", "consult"
 # script-tags op gewone pagina's (vals "niet verifieerbaar" op amstelzijde/
 # monalisa in de rerun).
 _CHALLENGE_MARKERS = (
-    "just a moment", "attention required", "cf-challenge",
-    "checking your browser", "enable javascript and cookies",
+    "just a moment", "attention required", "cf-challenge", "cf-mitigated",
+    "checking your browser", "enable javascript and cookies", "even geduld",
     "verifying you are human", "access denied", "you have been blocked",
+    "een ogenblik geduld", "controleren of de verbinding", "ddos-guard",
+)
+
+# Geparkeerde/te-koop-domeinen: geen echte site → lead is dood, geen haakje.
+_PARKING_MARKERS = (
+    "domein te koop", "domain is for sale", "domain for sale", "buy this domain",
+    "this domain is parked", "dit domein is te koop", "parkingcrew", "sedoparking",
+    "domein geparkeerd", "te koop aangeboden", "godaddy.com/domainfind",
+)
+
+# Vision-elementen die GEEN design-signaal zijn maar een overlay/foutpagina —
+# een haakje daarover is onzin (of erger: onthult dat de site dood/geblokkeerd
+# is). Vision mag hier nooit op vuren (Guardrail, testrun 2026-07-23).
+_BAD_VISION_RE = re.compile(
+    r"cookie|banner|cloudflare|captcha|beveilig|security|verificat|"
+    r"te koop|for sale|geparkeerd|parked|just a moment|even geduld|"
+    r"404|foutmelding|error|onderhoud|maintenance|leeg scherm|blank|"
+    # third-party overlays/widgets — geen eigen design, geen eerlijk haakje
+    r"accessibility|toegankelijk|chatknop|chatbot-knop|widget-knop|"
+    r"whatsapp-knop|zweven",
+    re.IGNORECASE,
 )
 
 
@@ -208,6 +229,134 @@ _ENTRY_SCAN_JS = """
 """
 
 
+def _entry_is_booking(e: dict) -> bool:
+    """Heeft dit a/button-element afspraak-intentie? (canonieke definitie —
+    generieke 'contact' telt bewust NIET, alleen boek-/afspraak-/consult-taal)."""
+    blob_txt = f"{e.get('text') or ''} {e.get('aria') or ''}"
+    href = e.get("href") or ""
+    return (any(k in blob_txt for k in _BOOK_TEXT)
+            or any(h in href for h in _BOOK_HREF_HINTS)
+            or any(p in href for p in ALL_BOOKING_PLATFORMS))
+
+
+# --- Signaal 1b: consult-only (request_form, geen self-booking) --------------
+# Fragmenten die POSITIEF bewijzen dat je niet zelf kunt boeken, alleen
+# aanvragen/terugbellen (Sami 2026-07-23). Aanwezig → geen zelf-boek-agenda.
+_REQUEST_ONLY_RE = re.compile(
+    r"bel (?:mij|me) terug|terugbel|wij bellen (?:u|je) terug|"
+    r"(?:consult|afspraak|behandeling) aanvragen|vraag (?:een )?(?:consult|afspraak) aan|"
+    r"request a callback|call (?:me|you) back",
+    re.IGNORECASE,
+)
+# Interne form-paden (aanvraag/consult/terugbel/contact-formulier).
+_FORM_PATH_RE = re.compile(
+    r"/(?:consult|consultatie|afspraak-aanvra|aanvraag|terugbel|contact)", re.IGNORECASE)
+
+
+def _registrable_host(host: str | None) -> str:
+    if not host:
+        return ""
+    h = str(host).lower().strip()
+    h = re.sub(r"^https?://", "", h).split("/")[0].split(":")[0]
+    if h.startswith("www."):
+        h = h[4:]
+    parts = h.split(".")
+    return ".".join(parts[-2:]) if len(parts) > 2 else h
+
+
+def _href_host(href: str | None) -> str:
+    m = re.match(r"^https?://([^/]+)", str(href or ""), re.IGNORECASE)
+    return m.group(1) if m else ""
+
+
+def classify_booking_mechanism(booking: dict | None, entries: list[dict],
+                               site_domain: str | None,
+                               request_only_present: bool) -> str | None:
+    """Bepaal HOE er geboekt kan worden: self_booking | request_form | ambiguous.
+
+    - self_booking : zelf-boek-agenda (platform/iframe, of een EXTERNE boek-link).
+    - request_form : uitsluitend aanvraag-/terugbelpad (geen slot-keuze) — bewezen
+      via een request-only-frase óf een interne form-path-link.
+    - ambiguous    : boeking aanwezig maar mechanisme niet vast te stellen
+      (bv. een 'boek nu'-knop met href='#' die een onbekende widget kan openen).
+      Signaal 1b vuurt dan NIET — bij twijfel geen onware claim.
+    None → geen boeking.
+    """
+    if (booking or {}).get("value") != "has_booking":
+        return None
+    if booking.get("kind") == "self_booking":
+        return "self_booking"
+    site_reg = _registrable_host(site_domain)
+    booking_entries = [e for e in entries if _entry_is_booking(e)]
+    for e in booking_entries:
+        host = _href_host(e.get("href"))
+        if host and site_reg and _registrable_host(host) != site_reg:
+            return "self_booking"  # externe boek-ingang = zelf-boek-systeem
+    if request_only_present:
+        return "request_form"
+    for e in booking_entries:
+        if _FORM_PATH_RE.search(e.get("href") or ""):
+            return "request_form"
+    return "ambiguous"
+
+
+def evaluate_tap_targets(tap: dict | None) -> dict[str, Any]:
+    """Beoordeel de tap-target-meting (signaal 4). Conservatief: vuurt alleen bij
+    ECHTE overlap of veel te kleine knoppen dicht op elkaar — social-icoontjes
+    (los, klein) mogen geen false positive geven."""
+    tap = tap or {}
+    count = tap.get("count") or 0
+    small = tap.get("small") or 0
+    overlaps = tap.get("overlaps") or 0
+    # Twee onafhankelijke bewijzen, allebei streng: ECHTE overlap (≥4 paren) óf een
+    # pagina die dicht vol staat met te kleine targets (≥10 én >helft, en genoeg
+    # elementen om van "vol" te spreken). Een sparse iconen-menu (9/9 klein, 1
+    # overlap) vuurt bewust niet (CadanCe, testrun 2026-07-23).
+    fires = overlaps >= 4 or (small >= 10 and count >= 12 and small / count > 0.5)
+    return {"fires": bool(fires), "count": count, "small": small, "overlaps": overlaps}
+
+
+_TAP_SCAN_JS = """
+() => {
+  const limit = 844 * 2;
+  const els = Array.from(document.querySelectorAll('a, button')).filter(el => {
+    const r = el.getBoundingClientRect();
+    let vis = r.width > 0 && r.height > 0;
+    try { const st = getComputedStyle(el); if (st.visibility==='hidden'||st.display==='none') vis=false; } catch(e){}
+    return vis && (r.top + window.scrollY) < limit;
+  }).map(el => { const r = el.getBoundingClientRect();
+    return {x: r.left, y: r.top + window.scrollY, w: r.width, h: r.height}; });
+  let small = 0, overlaps = 0;
+  for (const e of els) if (Math.min(e.w, e.h) < 40) small++;
+  for (let i = 0; i < els.length; i++) for (let j = i + 1; j < els.length; j++) {
+    const a = els[i], b = els[j];
+    const ox = Math.min(a.x+a.w, b.x+b.w) - Math.max(a.x, b.x);
+    const oy = Math.min(a.y+a.h, b.y+b.h) - Math.max(a.y, b.y);
+    if (ox > 1 && oy > 1) overlaps++;
+  }
+  return {count: els.length, small: small, overlaps: overlaps};
+}
+"""
+
+_FOOTER_SCAN_JS = """
+() => {
+  const foot = document.querySelector('footer') || document.body;
+  const txt = (foot.innerText || '').slice(-2500);
+  const ys = (txt.match(/20\\d{2}/g) || []).map(Number).filter(y => y >= 2005 && y <= 2100);
+  return {max_year: ys.length ? Math.max(...ys) : null};
+}
+"""
+
+
+def evaluate_footer_year(max_year: int | None, current_year: int) -> dict[str, Any]:
+    """Signaal 5: footer-jaartal ≥3 jaar terug. Guardrail: alleen de footer, en
+    het MEEST RECENTE jaartal telt (een oud jaartal in body-tekst mag niet
+    vuren)."""
+    if not max_year:
+        return {"fires": False, "max_year": None}
+    return {"fires": (current_year - int(max_year)) >= 3, "max_year": int(max_year)}
+
+
 def evaluate_booking_entries(raw_entries: list[dict], *, fold: int = FOLD_PX,
                              min_y_sig2: int | None = None) -> dict[str, Any]:
     """PURE evaluatie van de gescande a/button-entries → boekingang-oordeel.
@@ -232,14 +381,7 @@ def evaluate_booking_entries(raw_entries: list[dict], *, fold: int = FOLD_PX,
     if min_y_sig2 is None:
         min_y_sig2 = SIGNAL2_MIN_Y
 
-    def _is_booking(e: dict) -> bool:
-        blob_txt = f"{e.get('text') or ''} {e.get('aria') or ''}"
-        href = e.get("href") or ""
-        return (any(k in blob_txt for k in _BOOK_TEXT)
-                or any(h in href for h in _BOOK_HREF_HINTS)
-                or any(p in href for p in ALL_BOOKING_PLATFORMS))
-
-    hits = [e for e in raw_entries if _is_booking(e)]
+    hits = [e for e in raw_entries if _entry_is_booking(e)]
     nav_booking = any(e.get("in_nav") for e in hits)
     hidden_booking = any(not e.get("in_nav") and (e.get("y") is None or not e.get("visible"))
                          for e in hits)
@@ -262,12 +404,13 @@ async def _scan_booking_entries(page) -> dict[str, Any]:
     locator-sweep door header/nav (die pierct open shadow DOM)."""
     empty = {"found": False, "nav_booking": False, "hidden_booking": False,
              "above_fold": None, "min_visible_y": None, "y": None,
-             "sig2_allowed": False, "sample": []}
+             "sig2_allowed": False, "sample": [], "entries": []}
     try:
         raw = await page.evaluate(_ENTRY_SCAN_JS)
     except Exception:
         return empty
     result = evaluate_booking_entries(raw or [])
+    result["entries"] = raw or []  # ruwe entries voor de mechanisme-classificatie
     if not result["nav_booking"]:
         # shadow-DOM-vangnet: locators piercen open shadow roots, de JS-pass niet.
         try:
@@ -302,22 +445,34 @@ async def _measure_timing(page, wall_load_ms: int | None) -> dict[str, Any]:
     als enige bewijs voor een send te gebruiken.
     """
     dom_interactive_ms: int | None = None
+    fcp_ms: int | None = None
     try:
         val = await page.evaluate(
             """() => {
+                const out = {di: null, fcp: null};
                 const n = performance.getEntriesByType('navigation')[0];
-                if (n && n.domInteractive) return Math.round(n.domInteractive);
-                const t = performance.timing;
-                if (t && t.domInteractive && t.navigationStart)
-                    return t.domInteractive - t.navigationStart;
-                return null;
+                if (n && n.domInteractive) out.di = Math.round(n.domInteractive);
+                else { const t = performance.timing;
+                  if (t && t.domInteractive && t.navigationStart) out.di = t.domInteractive - t.navigationStart; }
+                const fcp = performance.getEntriesByName('first-contentful-paint')[0];
+                if (fcp) out.fcp = Math.round(fcp.startTime);
+                return out;
             }"""
         )
-        if isinstance(val, (int, float)) and val >= 0:
-            dom_interactive_ms = int(val)
+        if isinstance(val, dict):
+            if isinstance(val.get("di"), (int, float)) and val["di"] >= 0:
+                dom_interactive_ms = int(val["di"])
+            if isinstance(val.get("fcp"), (int, float)) and val["fcp"] >= 0:
+                fcp_ms = int(val["fcp"])
     except Exception:
         pass
-    return {"load_ms": wall_load_ms, "dom_interactive_ms": dom_interactive_ms}
+    return {"load_ms": wall_load_ms, "dom_interactive_ms": dom_interactive_ms,
+            "fcp_ms": fcp_ms}
+
+
+# Trage-render-drempel (signaal 3). Ongethrotteld → conservatieve ondergrens:
+# een site die er ONgethrottled al >4s over doet, is op 4G aantoonbaar traag.
+SLOW_MS = 4000
 
 
 def _decide_signal(
@@ -326,76 +481,158 @@ def _decide_signal(
     booking: dict[str, Any],
     tel_present: bool,
     cta: dict[str, Any],
-    dom_interactive_ms: int | None,
+    mechanism: str | None = None,
+    dom_interactive_ms: int | None = None,
+    fcp_ms: int | None = None,
+    tap: dict | None = None,
+    footer: dict | None = None,
+    vision: dict | None = None,
 ) -> dict[str, Any]:
-    """Ladder-beslissing (eerste dat vuurt), met Guardrail 1 hard ingebouwd."""
+    """Prioriteitsladder (eerste dat vuurt wint), Guardrail 1 hard ingebouwd.
+
+    Volgorde (docs/haakje_mapping_mail1.md): 1 geen online boeking → 1b consult-
+    only → 2 boeking diep → 3 traag → 4 tap-targets → 5 verouderde footer →
+    6 vision. `needs_review` = mens-in-de-lus vóór send (signaal 1b + 6)."""
     evidence: list[str] = []
-    # Guardrail 1: zonder geslaagde, volledige render vuurt NIETS.
     if not fetch_ok:
         return {"fired_signal": None, "signal_name": None, "confidence": "low",
-                "evidence": ["fetch_failed_or_partial"]}
+                "needs_review": False, "evidence": ["fetch_failed_or_partial"]}
 
     bval = booking.get("value")
     bconf = booking.get("confidence")
-    # 'Echte online boeking' = uitsluitend een HOGE-confidence hit (platform-
-    # domein, boek-iframe of een echte boek-link). 'unknown' (mislukte/dunne
-    # fetch) telt nergens mee: Guardrail 1.
     real_online_booking = (bval == "has_booking" and bconf == "high")
 
-    # Signaal 1 — geen online boeking, wél een telefoonnummer. Vuurt UITSLUITEND
-    # bij een geverifieerde HIGH-confidence 'no_booking'. De eerdere low-conf-
-    # route (keyword-hit maar "geen echt boekkanaal") is verwijderd: de testrun
-    # van 2026-07-22 bewees 4/4 false-positives op precies dat pad (Hairworld/
-    # Amstelzijde/Aever/Monalisa hadden wél een consult-formulier of boekknop) —
-    # dat waren aantoonbaar onware mails geworden. Bij twijfel: niet vuren.
+    # Signaal 1 — geen online boeking, wél een telefoonnummer. UITSLUITEND bij
+    # een geverifieerde HIGH-confidence 'no_booking' (testrun 2026-07-22: de
+    # low-conf-route gaf 4/4 false-positives).
     if bval == "no_booking" and bconf == "high" and tel_present:
-        evidence = ["no_online_booking", "tel_present"]
-        evidence += booking.get("evidence") or []
         return {"fired_signal": 1, "signal_name": "no_online_booking",
-                "confidence": "high", "evidence": evidence}
+                "confidence": "high", "needs_review": False,
+                "evidence": ["no_online_booking", "tel_present"] + (booking.get("evidence") or [])}
 
-    # Signaal 2 — er ís een echte online boeking, maar de bezoeker kan NIET
-    # boeken zonder te scrollen. Harde regel (live bewezen op Fairday/CadanCe,
-    # 2026-07-22): een boek-/afspraak-ingang in de header of hoofdnavigatie —
-    # óók in een dichtgeklapt hamburger-menu — laat het signaal vervallen,
-    # ongeacht hoe diep de body-widget zit. `sig2_allowed` (pure evaluatie in
-    # evaluate_booking_entries) bundelt dat: geen nav-ingang, geen verborgen
-    # boek-element, en de hoogste zichtbare ingang minstens 2 schermen diep.
-    cta_y = cta.get("y")
-    if real_online_booking and cta.get("sig2_allowed"):
-        evidence = ["booking_cta_below_fold", f"cta_y={cta_y}>={SIGNAL2_MIN_Y}",
-                    "nav_check=schoon (geen boekingang in header/nav/menu)"]
-        evidence += booking.get("evidence") or []
+    # Signaal 1b — er is WEL een online ingang, maar alléén een aanvraag-/terugbel-
+    # formulier: de bezoeker kan geen moment kiezen. Alleen bij een BEWEZEN
+    # request_form-mechanisme (geen self-booking); bij 'ambiguous' niet vuren.
+    # Gaat door de mens-review vóór send (nuance-claim). Sami 2026-07-23.
+    if mechanism == "request_form":
+        return {"fired_signal": "1b", "signal_name": "consult_only",
+                "confidence": "high" if bconf == "high" else "low", "needs_review": True,
+                "evidence": ["request_form_only", f"booking_kind={booking.get('kind')}"] + (booking.get("evidence") or [])}
+
+    # Signaal 2 — echte zelf-boek-agenda, maar niet bereikbaar zonder scrollen
+    # (nav/header/menu schoon én ≥2 schermen diep). Alleen bij self_booking.
+    if real_online_booking and mechanism == "self_booking" and cta.get("sig2_allowed"):
         return {"fired_signal": 2, "signal_name": "cta_below_fold",
-                "confidence": "high", "evidence": evidence}
-    if real_online_booking and cta.get("found") and cta.get("nav_booking"):
-        # expliciet bewijs voor de uitlezing waarom sig2 NIET vuurt
+                "confidence": "high", "needs_review": False,
+                "evidence": ["booking_cta_below_fold", f"cta_y={cta.get('y')}>={SIGNAL2_MIN_Y}",
+                             "nav_check=schoon"] + (booking.get("evidence") or [])}
+    if real_online_booking and cta.get("nav_booking"):
         evidence.append("nav_booking_present")
+    if mechanism == "ambiguous":
+        evidence.append("booking_mechanism_ambiguous")
 
-    # Signaal 3 — trage TTI (rough, zonder throttle → 'low').
-    if dom_interactive_ms is not None and dom_interactive_ms > 4000:
+    # Signaal 3 — trage eerste render (FCP, of domInteractive als fallback) >4s.
+    slow_ms = fcp_ms if fcp_ms is not None else dom_interactive_ms
+    if slow_ms is not None and slow_ms > SLOW_MS:
+        metric = "fcp_ms" if fcp_ms is not None else "dom_interactive_ms"
         return {"fired_signal": 3, "signal_name": "slow_tti", "confidence": "low",
-                "evidence": [f"dom_interactive_ms={dom_interactive_ms}>4000_rough"]}
+                "needs_review": False, "evidence": [f"{metric}={slow_ms}>{SLOW_MS}_ongethrottled"]}
+
+    # Signaal 4 — tap-targets te klein/overlappend op mobiel.
+    tap_eval = evaluate_tap_targets(tap)
+    if tap_eval["fires"]:
+        return {"fired_signal": 4, "signal_name": "tap_targets", "confidence": "low",
+                "needs_review": False,
+                "evidence": [f"overlaps={tap_eval['overlaps']}", f"small={tap_eval['small']}/{tap_eval['count']}"]}
+
+    # Signaal 5 — verouderde footer (jaartal ≥3 jaar terug).
+    if footer and footer.get("fires"):
+        return {"fired_signal": 5, "signal_name": "stale_footer", "confidence": "high",
+                "needs_review": False, "evidence": [f"footer_jaar={footer.get('max_year')}"],
+                "jaar": footer.get("max_year")}
+
+    # Signaal 6 — vision-vangnet (Sonnet), alleen als 1-5 niks gaven en de
+    # score ≥60 (Guardrail 2). Mens-review vóór send (Guardrail 3).
+    if vision and vision.get("fires"):
+        return {"fired_signal": 6, "signal_name": "vision_element", "confidence": "high",
+                "needs_review": True, "evidence": [f"vision_score={vision.get('score')}"],
+                "vision_element": vision.get("element")}
 
     return {"fired_signal": None, "signal_name": None, "confidence": "low",
-            "evidence": evidence + ["site_ok_no_signal_1_3"]}
+            "needs_review": False, "evidence": evidence + ["site_ok_no_signal"]}
 
 
-async def detect_hook_on_page(page, wall_load_ms: int | None = None) -> dict[str, Any]:
-    """Voer Guardrail-1-flow + detectie uit op een AL genavigeerde mobiele page.
+_VISION_SCORE_MIN = 60  # Guardrail 2: onder 60 telt vision als GEEN.
 
-    De caller heeft `page.goto(...)` al gedaan (zodat de wall-clock-laadtijd
-    buiten gemeten kan worden). Deze functie: cookie weg → scroll → networkidle
-    → boeking/tel/CTA-positie/TTI → laddersignaal. Nooit-raise.
+
+async def _run_vision(page, anthropic_client) -> dict[str, Any]:
+    """Signaal 6: één benoembaar gedateerd element via Claude Sonnet Vision.
+
+    Vangnet, alleen als 1-5 niks gaven. Guardrail 2: score <60 → fires=False.
+    Guardrail 3 (mens-review vóór send) zit in _decide_signal (needs_review).
+    Nooit-raise; bij elke fout → fires=False.
+    """
+    from config.hook_templates import VISION_PROMPT
+    out = {"fires": False, "element": None, "score": None, "error": None,
+           "rejected": None, "challenge_or_dead": False}
+    try:
+        # Cookie-banner nog eens wegklikken + naar boven: anders fotografeert
+        # vision de overlay i.p.v. de site (testrun 2026-07-23).
+        await _dismiss_cookie_banner(page)
+        try:
+            await page.evaluate("() => window.scrollTo(0, 0)")
+        except Exception:
+            pass
+        png = await page.screenshot(type="jpeg", quality=70, full_page=False)
+        import base64
+        b64 = base64.standard_b64encode(png).decode("ascii")
+        msg = await anthropic_client.messages.create(
+            model="claude-sonnet-4-6", max_tokens=120, temperature=0,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                {"type": "text", "text": VISION_PROMPT},
+            ]}],
+        )
+        text = "".join(getattr(b, "text", "") for b in msg.content)
+        el_m = re.search(r"ELEMENT:\s*(.+)", text, re.IGNORECASE)
+        sc_m = re.search(r"SCORE:\s*(\d{1,3})", text, re.IGNORECASE)
+        element = (el_m.group(1).strip() if el_m else "").strip()
+        score = int(sc_m.group(1)) if sc_m else None
+        out["element"] = element
+        out["score"] = score
+        if element and _BAD_VISION_RE.search(element):
+            # Vision beschrijft een overlay/foutpagina/cookie/challenge/parking —
+            # geen design-signaal. Niet vuren; markeer of het op dood/geblokkeerd
+            # wijst (dan is de lead sowieso onbruikbaar).
+            out["rejected"] = element
+            if re.search(r"cloudflare|captcha|beveilig|te koop|for sale|geparkeerd|parked|404|onderhoud|maintenance", element, re.IGNORECASE):
+                out["challenge_or_dead"] = True
+        elif element and element.upper() != "GEEN" and score is not None and score >= _VISION_SCORE_MIN:
+            out["fires"] = True
+    except Exception as e:
+        out["error"] = str(e)[:160]
+    return out
+
+
+async def detect_hook_on_page(page, wall_load_ms: int | None = None, *,
+                              domain: str = "", anthropic_client: Any | None = None,
+                              current_year: int | None = None) -> dict[str, Any]:
+    """Voer Guardrail-1-flow + de volle signaal-ladder uit op een AL genavigeerde
+    mobiele page. Nooit-raise.
+
+    `current_year` moet door de caller worden meegegeven (Playwright draait in de
+    async-loop; we vermijden hier impliciete tijd). `anthropic_client` activeert
+    signaal 6 (vision) als de rest niks gaf.
     """
     result: dict[str, Any] = {
         "fetch_ok": False, "verifiable": True, "fired_signal": None,
-        "signal_name": None, "confidence": "low", "booking": None,
-        "tel_present": False,
+        "signal_name": None, "confidence": "low", "needs_review": False,
+        "booking": None, "mechanism": None, "tel_present": False,
         "cta": {"found": False, "nav_booking": False, "hidden_booking": False,
                 "above_fold": None, "min_visible_y": None, "y": None,
                 "sig2_allowed": False, "sample": []},
-        "load_ms": wall_load_ms, "dom_interactive_ms": None,
+        "load_ms": wall_load_ms, "dom_interactive_ms": None, "fcp_ms": None,
+        "tap": None, "footer": None, "vision": None,
         "evidence": [], "error": None,
     }
     try:
@@ -411,11 +648,17 @@ async def detect_hook_on_page(page, wall_load_ms: int | None = None) -> dict[str
         # Challenge-/blokkadepagina (Cloudflare e.d.) = geen echte render → de
         # site is machinaal NIET verifieerbaar en mag nooit als stuurbaar gelden:
         # verplicht handmatige telefoon-check (Sami-regel 2026-07-22).
-        low_head = (html or "")[:4000].lower()
+        low_head = (html or "")[:6000].lower()
         if any(m in low_head for m in _CHALLENGE_MARKERS):
             result["fetch_ok"] = False
             result["verifiable"] = False
             result["evidence"] = ["challenge_page_not_machine_verifiable"]
+            return result
+        if any(m in (html or "").lower() for m in _PARKING_MARKERS):
+            result["fetch_ok"] = False
+            result["verifiable"] = False
+            result["dead_site"] = True
+            result["evidence"] = ["parked_or_for_sale_domain"]
             return result
         result["fetch_ok"] = fetch_ok
 
@@ -427,19 +670,55 @@ async def detect_hook_on_page(page, wall_load_ms: int | None = None) -> dict[str
         except Exception:
             result["tel_present"] = False
 
-        # Boekingang-scan (alle a/button, óók verborgen + header/nav) — alleen
-        # relevant als er überhaupt een boeking is.
+        # Boekingang-scan + mechanisme (self_booking / request_form / ambiguous).
+        entries: list[dict] = []
         if booking.get("value") == "has_booking":
             result["cta"] = await _scan_booking_entries(page)
+            entries = result["cta"].get("entries") or []
+        request_only = bool(_REQUEST_ONLY_RE.search(re.sub(r"<[^>]+>", " ", html or "").lower()))
+        result["mechanism"] = classify_booking_mechanism(booking, entries, domain, request_only)
 
         timing = await _measure_timing(page, wall_load_ms)
         result["load_ms"] = timing["load_ms"]
         result["dom_interactive_ms"] = timing["dom_interactive_ms"]
+        result["fcp_ms"] = timing["fcp_ms"]
+
+        # Signaal 4 (tap-targets) + 5 (footer-jaar) — goedkope DOM-metingen.
+        try:
+            result["tap"] = await page.evaluate(_TAP_SCAN_JS)
+        except Exception:
+            result["tap"] = None
+        try:
+            foot_raw = await page.evaluate(_FOOTER_SCAN_JS)
+            cy = current_year or 2026
+            result["footer"] = evaluate_footer_year((foot_raw or {}).get("max_year"), cy)
+        except Exception:
+            result["footer"] = None
 
         decision = _decide_signal(
             fetch_ok=fetch_ok, booking=booking, tel_present=result["tel_present"],
-            cta=result["cta"], dom_interactive_ms=result["dom_interactive_ms"],
+            cta=result["cta"], mechanism=result["mechanism"],
+            dom_interactive_ms=result["dom_interactive_ms"], fcp_ms=result["fcp_ms"],
+            tap=result["tap"], footer=result["footer"], vision=None,
         )
+
+        # Signaal 6 (vision) — vangnet: alleen als 1-5 niks gaven én er een
+        # anthropic-client is. Duur → pas hier, niet standaard.
+        if decision.get("fired_signal") is None and anthropic_client is not None:
+            vision = await _run_vision(page, anthropic_client)
+            result["vision"] = vision
+            if vision and vision.get("challenge_or_dead"):
+                # Vision-backstop: HTML-markers misten de challenge/parking, de
+                # screenshot niet. Lead is machinaal niet verifieerbaar.
+                result["verifiable"] = False
+                result["evidence"] = result.get("evidence", []) + ["vision_challenge_or_dead"]
+            if vision and vision.get("fires"):
+                decision = _decide_signal(
+                    fetch_ok=fetch_ok, booking=booking, tel_present=result["tel_present"],
+                    cta=result["cta"], mechanism=result["mechanism"],
+                    dom_interactive_ms=result["dom_interactive_ms"], fcp_ms=result["fcp_ms"],
+                    tap=result["tap"], footer=result["footer"], vision=vision,
+                )
         result.update(decision)
     except Exception as e:
         result["error"] = str(e)[:200]
@@ -468,6 +747,8 @@ async def detect_hook(
     *,
     browser: Any | None = None,
     timeout_ms: int = 20000,
+    anthropic_client: Any | None = None,
+    current_year: int | None = None,
 ) -> dict[str, Any]:
     """Self-contained haakje-detectie voor één domein op een mobiele render.
 
@@ -505,7 +786,9 @@ async def detect_hook(
                 "evidence": ["navigation_failed"], "error": "navigation_failed",
             }
         else:
-            detected = await detect_hook_on_page(page, wall_load_ms=wall)
+            detected = await detect_hook_on_page(
+                page, wall_load_ms=wall, domain=domain,
+                anthropic_client=anthropic_client, current_year=current_year)
             detected["domain"] = domain
             result = detected
     except Exception as e:

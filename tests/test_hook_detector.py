@@ -17,7 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from website_intelligence.hook_detector import (
     SIGNAL2_MIN_Y,
     _decide_signal,
+    classify_booking_mechanism,
     evaluate_booking_entries,
+    evaluate_footer_year,
+    evaluate_tap_targets,
 )
 
 
@@ -47,13 +50,16 @@ DEEP_ONLY_ENTRIES = [
 ]
 
 
+_SELF = "self_booking"
+
+
 def test_fairday_fixture_no_signal2():
     r = evaluate_booking_entries(FAIRDAY_ENTRIES)
     assert r["found"] and r["nav_booking"] and not r["sig2_allowed"]
     d = _decide_signal(
         fetch_ok=True,
-        booking={"value": "has_booking", "confidence": "high", "evidence": []},
-        tel_present=False, cta=r, dom_interactive_ms=400,
+        booking={"value": "has_booking", "confidence": "high", "evidence": [], "kind": _SELF},
+        tel_present=False, cta=r, mechanism=_SELF, fcp_ms=400,
     )
     assert d["fired_signal"] is None, d
 
@@ -64,8 +70,8 @@ def test_cadance_fixture_no_signal2():
     d = _decide_signal(
         fetch_ok=True,
         booking={"value": "has_booking", "confidence": "high",
-                 "evidence": ["platform:salonized.com"]},
-        tel_present=True, cta=r, dom_interactive_ms=440,
+                 "evidence": ["platform:salonized.com"], "kind": _SELF},
+        tel_present=True, cta=r, mechanism=_SELF, fcp_ms=440,
     )
     assert d["fired_signal"] is None, d
 
@@ -75,8 +81,8 @@ def test_deep_widget_clean_nav_fires_signal2():
     assert r["sig2_allowed"] and r["min_visible_y"] == 2200.0
     d = _decide_signal(
         fetch_ok=True,
-        booking={"value": "has_booking", "confidence": "high", "evidence": []},
-        tel_present=True, cta=r, dom_interactive_ms=400,
+        booking={"value": "has_booking", "confidence": "high", "evidence": [], "kind": _SELF},
+        tel_present=True, cta=r, mechanism=_SELF, fcp_ms=400,
     )
     assert d["fired_signal"] == 2
     assert any("nav_check=schoon" in e for e in d["evidence"])
@@ -127,8 +133,104 @@ def test_nav_afspraak_link_does_count_as_booking():
 def test_sig1_unaffected_by_nav_rule():
     d = _decide_signal(
         fetch_ok=True,
-        booking={"value": "no_booking", "confidence": "high", "evidence": []},
+        booking={"value": "no_booking", "confidence": "high", "evidence": [], "kind": None},
         tel_present=True,
-        cta=evaluate_booking_entries([]), dom_interactive_ms=500,
+        cta=evaluate_booking_entries([]), mechanism=None, fcp_ms=500,
     )
+    assert d["fired_signal"] == 1
+
+
+# ── Signaal 1b — consult-only (mechanisme-classificatie) ────────────────────
+def _booking(kind, val="has_booking", conf="high"):
+    return {"value": val, "confidence": conf, "kind": kind, "evidence": []}
+
+
+def test_mechanism_kveg_bel_mij_terug_is_request_form():
+    m = classify_booking_mechanism(_booking("request_form"), [], "kveg.nl",
+                                   request_only_present=True)
+    assert m == "request_form"
+
+
+def test_mechanism_amstelzijde_form_path_is_request_form():
+    entries = [_entry(text="consult plannen", href="/consultatie-form/", y=40.0, in_nav=True)]
+    m = classify_booking_mechanism(_booking("request_form"), entries, "amstelzijdekliniek.nl",
+                                   request_only_present=False)
+    assert m == "request_form"
+
+
+def test_mechanism_fairday_hash_widget_is_ambiguous():
+    # 'boek nu' met href='#' (JS-widget), geen request-only, geen form-path → ambiguous
+    entries = [_entry(text="boek nu", href="#", y=52.0, in_nav=True)]
+    m = classify_booking_mechanism(_booking("request_form"), entries, "fairdayclinics.com",
+                                   request_only_present=False)
+    assert m == "ambiguous"
+
+
+def test_mechanism_external_booking_href_is_self_booking():
+    entries = [_entry(text="boek nu", href="https://x.zenoti.com/webstore", y=52.0)]
+    m = classify_booking_mechanism(_booking("request_form"), entries, "aeverclinics.com",
+                                   request_only_present=False)
+    assert m == "self_booking"
+
+
+def test_signal_1b_fires_on_request_form_and_needs_review():
+    d = _decide_signal(
+        fetch_ok=True, booking=_booking("request_form"), tel_present=True,
+        cta=evaluate_booking_entries([]), mechanism="request_form", fcp_ms=400,
+    )
+    assert d["fired_signal"] == "1b" and d["needs_review"] is True
+
+
+def test_ambiguous_mechanism_does_not_fire_1b():
+    d = _decide_signal(
+        fetch_ok=True, booking=_booking("request_form"), tel_present=True,
+        cta=evaluate_booking_entries([]), mechanism="ambiguous", fcp_ms=400,
+    )
+    assert d["fired_signal"] is None
+
+
+# ── Signaal 3/4/5 ────────────────────────────────────────────────────────────
+def test_signal_3_slow_fcp():
+    d = _decide_signal(fetch_ok=True, booking={"value": "no_booking", "confidence": "low", "kind": None},
+                       tel_present=False, cta=evaluate_booking_entries([]),
+                       mechanism=None, fcp_ms=5200)
+    assert d["fired_signal"] == 3
+
+
+def test_signal_4_overlapping_taps():
+    tap = {"count": 20, "small": 6, "overlaps": 5}
+    d = _decide_signal(fetch_ok=True, booking={"value": "no_booking", "confidence": "low", "kind": None},
+                       tel_present=False, cta=evaluate_booking_entries([]),
+                       mechanism=None, fcp_ms=800, tap=tap)
+    assert d["fired_signal"] == 4
+
+
+def test_tap_targets_social_icons_no_false_positive():
+    # een paar losse kleine icoontjes, geen overlap → NIET vuren
+    assert not evaluate_tap_targets({"count": 30, "small": 4, "overlaps": 0})["fires"]
+
+
+def test_tap_targets_sparse_icon_menu_no_false_positive():
+    # CadanCe-geval: 9/9 klein maar 1 overlap en te weinig elementen → NIET vuren
+    assert not evaluate_tap_targets({"count": 9, "small": 9, "overlaps": 1})["fires"]
+    # wél vuren bij een pagina dicht vol met te kleine targets
+    assert evaluate_tap_targets({"count": 20, "small": 14, "overlaps": 1})["fires"]
+
+
+def test_signal_5_stale_footer():
+    assert evaluate_footer_year(2021, 2026)["fires"]
+    assert not evaluate_footer_year(2024, 2026)["fires"]
+    assert not evaluate_footer_year(None, 2026)["fires"]
+    d = _decide_signal(fetch_ok=True, booking={"value": "no_booking", "confidence": "low", "kind": None},
+                       tel_present=False, cta=evaluate_booking_entries([]),
+                       mechanism=None, fcp_ms=800, tap={"count": 5, "small": 0, "overlaps": 0},
+                       footer=evaluate_footer_year(2020, 2026))
+    assert d["fired_signal"] == 5 and d.get("jaar") == 2020
+
+
+def test_ladder_order_sig1_beats_all():
+    # geen boeking + tel → signaal 1, ook al is de site traag
+    d = _decide_signal(fetch_ok=True, booking={"value": "no_booking", "confidence": "high", "kind": None},
+                       tel_present=True, cta=evaluate_booking_entries([]),
+                       mechanism=None, fcp_ms=9000, footer=evaluate_footer_year(2019, 2026))
     assert d["fired_signal"] == 1
