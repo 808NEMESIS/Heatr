@@ -773,19 +773,21 @@ _FASE_A_SUBJECT = "{{bedrijfsnaam}}, één ding dat me opviel"
 # ─── CONCEPTSITE ───────────────────────────────────────────────────────────
 _CS_MAIL1 = (
     "{{begroeting}}\n\n"
-    "{{opener}}\n\n"
-    "{{site_observatie}}\n\n"
-    "Klinieken die dit wél strak hebben staan, winnen 'm nu van de buurpraktijk "
-    "nog voor de eerste telefoon. Puur omdat de site meteen vertrouwen wekt.\n\n"
+    # Haakje-mapping (2026-07-22): één scherpe, LIVE-geverifieerde observatie uit
+    # de signaal-ladder (hook_detector) vervangt de opener + site_observatie. De
+    # review-getallen komen terug in {{zonde_brug}} als onderbouwing van "zonde",
+    # niet als opening. Beide conditioneel: geen signaal → geen haakje-regel.
+    "{{haakje}}\n\n"
+    "{{zonde_brug}}\n\n"
     "Ik doe nu iets eenmaligs: voor de eerste vijf klinieken maak ik kosteloos "
     "een concept voor hun nieuwe site. Zeg je ja, dan laat ik je in een Loom, een "
-    "persoonlijke videoboodschap, precies zien wat ik voor {{bedrijfsnaam}} in "
+    "persoonlijke videoboodschap, precies zien wat ik voor je praktijk in "
     "gedachten heb.\n\n"
     "Het concept en die video zijn gratis, daar zit je nergens aan vast. En "
     "spreekt het je aan, dan bouwen we 'm echt, voor deze eerste vijf tegen een "
     "gereduceerd tarief in ruil voor je verhaal als referentie. Maar dat is "
     "helemaal aan jou.\n\n"
-    "Zal ik er een voor {{bedrijfsnaam}} maken?\n\n"
+    "Zal ik er een voor je praktijk maken?\n\n"
     "Groet,\nSami Jansema\nAerys Solution · aeryssolution.nl"
 )
 _CS_MAIL2_BOTH = (

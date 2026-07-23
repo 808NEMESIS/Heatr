@@ -47,19 +47,32 @@ def _assert_clean_mail(rendered, *, expect_offer_word=True):
         assert phrase.lower() not in body.lower(), f"Loom-claim-als-bestaand: {phrase}"
 
 
-# ── Spec 1: opener-render + em-dash-gate ────────────────────────────────────
-def test_opener_renders_in_mail1():
-    lead = _base_lead()
+# ── Spec 1 / haakje-ladder (2026-07-22): mail 1 rendert de haakje, niet meer ─
+# de Claude-opener. {{haakje}} + {{zonde_brug}} worden door render_faseA_marker
+# uit het gevuurde website-signaal gebouwd; hier direct op de lead gezet.
+def test_haakje_renders_in_mail1():
+    lead = _base_lead(
+        haakje="Op zoek naar een boekknop op jullie site kwam ik alleen een "
+               "telefoonnummer tegen.",
+        zonde_brug="Bij 68 reviews is dat zonde: je krijgt ze binnen, en op dat "
+                   "ene moment laat de site een deel weer los.")
     r = _render(resolve_faseA_step("conceptsite", 0, lead, free_slots=5), lead)
-    assert "68 reviews met een 4.9" in r["body"]
+    assert "alleen een telefoonnummer tegen" in r["body"]
+    assert "Bij 68 reviews is dat zonde" in r["body"]
+    # de Claude-opener rendert NIET meer in mail 1
+    assert "68 reviews met een 4.9" not in r["body"]
+    _assert_clean_mail(r)
 
 
-def test_opener_falls_back_to_signaal_when_missing():
+def test_mail1_no_signal_degrades_clean():
+    # Geen gevuurd signaal → geen haakje/zonde: beide regels vallen conditioneel
+    # weg, zonder leeg gat. (Zo'n lead hoort niet in de flow, maar mag nooit een
+    # kapotte mail geven.)
     lead = _base_lead(personalized_opener=None)
     r = _render(resolve_faseA_step("conceptsite", 0, lead, free_slots=5), lead)
-    # geen leeg gat waar de opener hoort; signaal_blok vulde het (review-getal)
-    assert "68 reviews" in r["body"]
     assert "\n\n\n" not in r["body"]
+    assert r["body"].startswith("Hoi Jan,")
+    assert "Ik doe nu iets eenmaligs" in r["body"]  # begroeting → direct het aanbod
 
 
 def test_stale_emdash_opener_falls_back_not_rendered():
@@ -156,27 +169,41 @@ def test_render_faseA_marker_resolves_plekken_live():
     import asyncio
     from campaigns.sequence_engine import render_faseA_marker
 
-    class _Res:  # 2 vergeven → 5-2 = 3 vrij
-        count = 2
+    class _Res:
+        def __init__(self, count=None, data=None):
+            self.count = count
+            self.data = data if data is not None else []
     class _Tbl:
+        def __init__(self, name): self.name = name
         def select(self, *a, **k): return self
         def eq(self, *a, **k): return self
-        def execute(self): return _Res()
+        def limit(self, *a, **k): return self
+        def execute(self):
+            # website_intelligence-fetch geeft een gevuurd signaal-1; de
+            # plekken-teller (founding_five_slots) geeft 2 vergeven → 3 vrij.
+            if self.name == "website_intelligence":
+                return _Res(data=[{"fired_signal": 1, "hook_variant": "A"}])
+            return _Res(count=2)
     class _SB:
-        def table(self, *a, **k): return _Tbl()
+        def table(self, name, *a, **k): return _Tbl(name)
 
-    lead = {"company_name": "Kliniek X", "contact_first_name": "Jan",
+    lead = {"company_name": "Kliniek X", "contact_first_name": "Jan", "id": "L-x",
             "sector": "cosmetische_behandelaars",
+            "google_review_count": 68, "google_rating": 4.9,
             "personalized_opener": "Jullie 68 reviews met een 4.9 vallen op."}
     marker = {"faseA_brug": "conceptsite", "faseA_step": 2, "delay_days": 5}
     out = asyncio.get_event_loop().run_until_complete(
         render_faseA_marker(marker, lead, _SB(), "aerys"))
     assert "3 plekken" in out["body"]          # live: 5 − 2 vergeven
     assert "—" not in out["body"] and "{{" not in out["body"]
-    # mail 1 (marker) rendert de opener + begroeting
+    # mail 1 (marker) rendert de HAAKJE (uit fired_signal) + begroeting, niet meer
+    # de Claude-opener.
     m1 = asyncio.get_event_loop().run_until_complete(
         render_faseA_marker({"faseA_brug": "conceptsite", "faseA_step": 0}, lead, _SB(), "aerys"))
-    assert m1["body"].startswith("Hoi Jan,") and "68 reviews" in m1["body"]
+    assert m1["body"].startswith("Hoi Jan,")
+    assert "telefoonnummer" in m1["body"]              # signaal-1 haakje (variant A)
+    assert "Bij 68 reviews" in m1["body"]              # zonde-brug met reviews
+    assert "68 reviews met een 4.9" not in m1["body"]  # opener rendert niet meer
 
 
 def test_three_mails_have_distinct_subjects_threaded():

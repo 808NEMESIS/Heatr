@@ -38,6 +38,9 @@ CASES = [
     # geen booking (echte negatieve)
     ("no_booking_contact_only", f'<html>{_FILLER}<a href="mailto:info@x.nl">Mail ons</a><a href="tel:+31">Bel</a></html>', True, "no_booking"),
     ("no_booking_plain", f'<html>{_FILLER}<h1>Welkom bij onze praktijk</h1></html>', True, "no_booking"),
+    # regressie 2026-07-22: 'facebook' bevat 'book' → bare-substring gaf vals
+    # has_booking op elke kliniek met een Facebook-link (hasci.nl / echthaar.nl).
+    ("no_booking_facebook_link", f'<html>{_FILLER}<a href="https://www.facebook.com/kliniek">Facebook</a><a href="tel:+31">Bel</a></html>', True, "no_booking"),
     # mislukte/lege fetch → NOOIT no_booking
     ("empty_fetch", "", False, "unknown"),
     ("failed_fetch_flag", f'<html>{_FILLER}</html>', False, "unknown"),
@@ -87,3 +90,65 @@ def test_platform_gives_high_confidence():
     r = detect_booking('<a href="https://calendly.com/x">boek</a>' + "x" * 600, fetch_ok=True)
     assert r["value"] == "has_booking" and r["confidence"] == "high"
     assert r["platform"] == "calendly.com"
+
+
+def test_social_links_not_booking():
+    """Regressie: social-domeinen met 'book' in de host (facebook) mogen NOOIT
+    als online-boeking tellen. Bewezen false-positive op hasci.nl/echthaar.nl."""
+    for host in (
+        "https://www.facebook.com/kliniek",
+        "https://facebook.com/echt.haar.kliniek/",
+        "https://m.facebook.com/x",
+    ):
+        html = f'<html>{_FILLER}<a href="{host}">Volg ons</a></html>'
+        r = detect_booking(html, fetch_ok=True)
+        assert r["value"] == "no_booking", f"{host} → {r}"
+    # maar een echte boek-href met woordgrens moet nog steeds vuren
+    for href in ("/online-booking", "/afspraak-maken", "https://booksy.com/x", "/reserveren"):
+        html = f'<html>{_FILLER}<a href="{href}">Plan</a></html>'
+        assert detect_booking(html, fetch_ok=True)["value"] == "has_booking", href
+
+
+def test_kveg_amstelzijde_same_verdict_on_form():
+    """Definitie-besluit 2026-07-22: een aanvraag-/terugbelformulier IS een online
+    afspraak-ingang (request_form). KVEG (bel-mij-terug) en Amstelzijde (consult
+    plannen) moeten HETZELFDE oordeel krijgen op het formulier-punt: beide
+    has_booking, geen van beide no_booking. Eerder spraken ze elkaar tegen."""
+    kveg = detect_booking(f'<html>{_FILLER}<p>Liever gebeld worden? Bel mij terug via het formulier.</p><a href="tel:+31">Bel</a></html>', fetch_ok=True)
+    amstel = detect_booking(f'<html>{_FILLER}<a href="/consultatie-form/">Consult plannen</a><a href="tel:+31">Bel</a></html>', fetch_ok=True)
+    assert kveg["value"] == "has_booking" and kveg["kind"] == "request_form"
+    assert amstel["value"] == "has_booking" and amstel["kind"] == "request_form"
+    assert kveg["value"] == amstel["value"]  # geen tegenspraak meer
+
+
+def test_generic_contact_is_not_booking():
+    """Punt 2: een GENERIEKE contactpagina/link (geen afspraak-intentie) mag NIET
+    als boekingang tellen — anders vervalt elke lead."""
+    for html in (
+        f'<html>{_FILLER}<a href="/contact">Contact</a><a href="tel:+31">Bel ons</a></html>',
+        f'<html>{_FILLER}<a href="/contact-opnemen">Neem contact op</a></html>',
+        f'<html>{_FILLER}<nav><a href="/over-ons">Over ons</a><a href="/contact">Contact</a></nav></html>',
+    ):
+        r = detect_booking(html, fetch_ok=True)
+        assert r["value"] == "no_booking", (html[:60], r)
+
+
+def test_platform_is_self_booking_kind():
+    r = detect_booking(f'<a href="https://salonized.com/x">Boek</a>{_FILLER}', fetch_ok=True)
+    assert r["value"] == "has_booking" and r["kind"] == "self_booking"
+
+
+def test_testrun_gaps_2026_07_22():
+    """Regressie testrun 2026-07-22: drie bewezen detectie-gaten die elk een
+    aantoonbaar ONWARE signaal-1-mail hadden opgeleverd."""
+    # 1. Zenoti-boekplatform (Aever Clinics)
+    r = detect_booking(f'<html>{_FILLER}<a href="https://x.zenoti.com/webstorenew/services">Boek nu</a></html>', fetch_ok=True)
+    assert r["value"] == "has_booking" and r["platform"] == "zenoti.com"
+    # 2. "nu boeken"-knop zonder href (Monalisa)
+    r = detect_booking(f'<html>{_FILLER}<button>Nu boeken</button></html>', fetch_ok=True)
+    assert r["value"] == "has_booking"
+    # 3. consult-aanvraag-paden (Hairworld: /consult-aanvragen/, Amstelzijde: /consultatie-form/)
+    for href, txt in (("/consult-aanvragen/", "Vrijblijvend consult aanvragen"),
+                      ("/consultatie-form/", "Consult plannen")):
+        r = detect_booking(f'<html>{_FILLER}<a href="{href}">{txt}</a></html>', fetch_ok=True)
+        assert r["value"] == "has_booking", (href, r)

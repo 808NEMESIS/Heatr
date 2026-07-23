@@ -342,6 +342,12 @@ def inject_variables(text: str, lead: dict) -> str:
         # Claude — die zou hallucineren en strip_unverified_claims zou het wissen.
         # Leeg (geen betrouwbare gap) → de regel valt conditioneel weg.
         "{{site_observatie}}":         lead.get("site_observatie") or "",
+        # Fase A haakje-ladder (2026-07-22) — LIVE-gevuurd website-signaal → vaste
+        # template-hook (config/hook_templates). {{haakje}} vervangt opener+observatie
+        # in mail 1; {{zonde_brug}} brengt de review-getallen terug als onderbouwing.
+        # Beide conditioneel: geen signaal → beide leeg → regels vallen weg.
+        "{{haakje}}":                  lead.get("haakje") or "",
+        "{{zonde_brug}}":              lead.get("zonde_brug") or "",
         # LOOM/VIDEO — geen kolom, geen invulmechanisme (outreach-reparatie
         # 2026-07-18, Sami-keuze: Loom NIET in de eerste campagne). Het blok
         # wordt hieronder CONDITIONEEL weggelaten als de link leeg is, zodat er
@@ -353,7 +359,8 @@ def inject_variables(text: str, lead: dict) -> str:
     # Conditionele blokken: een placeholder die op een eigen regel staat en leeg
     # rendert wordt mét zijn witregel verwijderd i.p.v. een lege regel achter te
     # laten ("{{LOOM_LINK}}\n\n" in de v3.1-bodies).
-    _conditional = ("{{LOOM_LINK}}", "{{VIDEO_LINK}}", "{{site_observatie}}")
+    _conditional = ("{{LOOM_LINK}}", "{{VIDEO_LINK}}", "{{site_observatie}}",
+                    "{{haakje}}", "{{zonde_brug}}")
     for placeholder in _conditional:
         if not replacements.get(placeholder):
             text = text.replace(placeholder + "\n\n", "").replace(placeholder + "\n", "")
@@ -468,18 +475,44 @@ async def render_faseA_marker(
     free = await free_founding_five_slots(lead.get("sector") or "", supabase_client, workspace_id)
     resolved = resolve_faseA_step(marker["faseA_brug"], int(marker.get("faseA_step") or 0),
                                   lead, free_slots=free)
-    # Deterministische site-brug uit de geverifieerde website-analyse (alleen zinvol
-    # voor de conceptsite-brug; workflow is geschrapt). Fout mag nooit de mail blokkeren.
+    # Haakje-ladder (2026-07-22): het LIVE-gevuurde website-signaal (hook_detector)
+    # levert de mail-1 haakje + de review-onderbouwing ("zonde"). Vervangt opener +
+    # site_observatie voor de conceptsite-brug. site_observatie blijft als fallback
+    # berekend (andere paden/degradatie). Fout mag nooit de mail blokkeren.
     site_obs = ""
+    haakje = ""
+    zonde_brug = ""
     if marker.get("faseA_brug") == "conceptsite":
         try:
-            wi = (supabase_client.table("website_intelligence")
-                  .select("total_score, visual_score, technical_details, conversion_details")
-                  .eq("lead_id", lead.get("id")).limit(1).execute()).data
-            site_obs = build_site_observatie(wi[0] if wi else None, lead.get("website_score"))
+            # select("*") is robuust tegen een nog-niet-gedraaide hook-migratie:
+            # ontbrekende kolommen geven simpelweg None i.p.v. een select-fout.
+            wi_rows = (supabase_client.table("website_intelligence")
+                       .select("*")
+                       .eq("lead_id", lead.get("id")).limit(1).execute()).data
+            wi = wi_rows[0] if wi_rows else None
+            site_obs = build_site_observatie(wi, lead.get("website_score"))
+            from config.hook_templates import build_haakje, build_zonde_brug
+            from utils.lead_naming import display_first_name
+            fired = (wi or {}).get("fired_signal")
+            # Aanspreekvorm volgt de begroeting: krijgt de lead een voornaam, dan
+            # enkelvoud (je/jou), anders de praktijk als "jullie" (spec 2026-07-22).
+            _singular = bool(display_first_name(lead, fallback=""))
+            haakje = build_haakje(
+                fired, seed or lead.get("id"),
+                kliniek=lead.get("company_name"),
+                variant=(wi or {}).get("hook_variant"),
+                stad=lead.get("city"),
+                singular=_singular,
+                jaar=(wi or {}).get("hook_jaar"),
+                vision_element=(wi or {}).get("hook_vision_element"),
+            )
+            if haakje:
+                zonde_brug = build_zonde_brug(
+                    lead.get("google_review_count"), lead.get("google_rating"))
         except Exception as e:
-            logger.warning("site_observatie-fetch faalde voor lead %s: %s", lead.get("id"), e)
-    lead_for_render = {**lead, "vrije_plekken": free, "site_observatie": site_obs}
+            logger.warning("haakje/site_observatie-fetch faalde voor lead %s: %s", lead.get("id"), e)
+    lead_for_render = {**lead, "vrije_plekken": free, "site_observatie": site_obs,
+                       "haakje": haakje, "zonde_brug": zonde_brug}
     return render_step(resolved, lead_for_render, seed=seed)
 
 
