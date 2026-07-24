@@ -174,9 +174,11 @@ def render_receptie_mail(
     skipped}. Verstuurt NIETS; puur compositie + gate.
 
     Mail 2 zonder second_hook → skipped=True (geen mail 2, ga naar mail 3)."""
-    from utils.lead_naming import display_first_name
+    from utils.lead_naming import clean_company_name, display_first_name
     first = display_first_name(lead, fallback="")
-    company = (lead.get("company_name") or "").strip()
+    # SEO-title-vervuiling schoonmaken; needs_review → mail blokkeren (nooit een
+    # title-tag als naam de deur uit).
+    company, company_needs_review = clean_company_name(lead.get("company_name"))
     # Voornaam-gate (Sami 2026-07-24): een geldige voornaam → "Hoi {naam},";
     # geen (of junk, afgevangen in safe_first_name) → "Hallo," — nooit "Hoi ,".
     begroeting = f"Hoi {first}," if first else "Hallo,"
@@ -212,6 +214,8 @@ def render_receptie_mail(
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
 
     ok, reason = receptie_mail_sendable(body, privacy_notice=privacy_notice, unsubscribe=unsubscribe)
+    if company_needs_review:
+        ok, reason = False, "company_name_needs_review"
     return {"step": step, "skipped": False, "subject": subject, "body": body,
             "sendable": ok, "block_reason": reason,
             "hook_code": hook_code, "second_hook": second_hook if step == 2 else None}

@@ -128,3 +128,16 @@ def test_all_mails_f4_proof():
         r = _m(step)
         assert "gisteravond" not in r["body"] and "op mijn telefoon" not in r["body"]
         assert r["block_reason"] != "f4_time_claim"
+
+
+def test_render_blocks_on_polluted_company_name():
+    # bedrijfsnaam die na schoonmaak nog >4 woorden is → mail geblokkeerd.
+    lead = {**LEAD, "company_name": "Kliniek voor Esthetiek Botox Filler Laser Rotterdam"}
+    r = render_receptie_mail(1, lead, hook_code="Q7", privacy_notice=PRIV, unsubscribe=UNSUB)
+    assert r["sendable"] is False and r["block_reason"] == "company_name_needs_review"
+
+
+def test_render_uses_cleaned_company_name():
+    lead = {**LEAD, "company_name": "Beauty Clinic | Botox & Filler | Rotterdam"}
+    r = render_receptie_mail(1, lead, hook_code="Q7", privacy_notice=PRIV, unsubscribe=UNSUB)
+    assert "Beauty Clinic" in r["body"] and "|" not in r["body"]

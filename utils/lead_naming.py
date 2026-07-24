@@ -83,6 +83,28 @@ def safe_first_name(lead: dict) -> str:
     return raw
 
 
+# SEO-title-vervuiling in company_name (2026-07-24): "NAAM | Descriptor | ..." —
+# een title-tag als bedrijfsnaam is de sterkste geautomatiseerd-tell. Splits op de
+# eerste separator (pipe/bullet of spatie-omringd streepje/dubbelepunt).
+_COMPANY_SEP_RE = re.compile(r"\s*[|•·»«]\s*|\s+[-–—:]\s+")
+_COMPANY_WEIRD_RE = re.compile(r"[|•·»«/\\@]|\s{2,}")
+
+
+def clean_company_name(raw: str | None) -> tuple[str, bool]:
+    """Schoon de bedrijfsnaam van SEO-title-vervuiling. Returned (naam, needs_review).
+
+    Neemt het deel vóór de eerste pipe/spatie-streepje/dubbelepunt. needs_review=True
+    → nog steeds title-tag-achtig (>4 woorden of rare tekens) óf leeg → handmatige
+    correctie nodig, GEEN mail met een title-tag als naam (Sami 2026-07-24)."""
+    if not raw or not raw.strip():
+        return ("", True)
+    name = _COMPANY_SEP_RE.split(raw.strip(), maxsplit=1)[0].strip()
+    if not name:
+        return (raw.strip(), True)
+    needs_review = bool(_COMPANY_WEIRD_RE.search(name)) or len(name.split()) > 4
+    return (name, needs_review)
+
+
 def display_first_name(lead: dict, fallback: str = "daar") -> str:
     """Voor mail-greeting: 'Hoi {{first_name}}'. Geeft fallback als safe leeg is.
 
