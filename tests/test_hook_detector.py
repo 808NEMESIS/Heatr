@@ -19,13 +19,22 @@ from website_intelligence.hook_detector import (
     _decide_signal,
     classify_booking_mechanism,
     combine_stable,
+    decide_receptie_hook,
     evaluate_booking_entries,
+    evaluate_coverage,
     evaluate_footer_year,
     evaluate_price_anchor,
     evaluate_tap_targets,
     evaluate_tracking,
     price_link_in_html,
 )
+
+
+def _cov(**kw):
+    base = dict(chat_platform=False, wa=False, messenger=False,
+                self_booking=False, ambiguous_chat=False, fetch_ok=True)
+    base.update(kw)
+    return evaluate_coverage(**base)
 
 
 def _entry(text="", href="", y=None, visible=True, in_nav=False, aria=""):
@@ -361,6 +370,85 @@ def test_price_link_in_html_raw_fallback():
     assert price_link_in_html('<a href="/en/pricing">Prices</a>')
     assert not price_link_in_html('<a href="/contact">Contact</a>')
     assert not price_link_in_html("")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Q4 — dekking buiten kantooruren (async-kanaal). Elk gevonden kanaal = geen hit.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_q4_hit_when_no_channel_at_all():
+    assert _cov()["state"] == "hit"
+
+
+def test_q4_geen_when_self_booking():
+    assert _cov(self_booking=True)["state"] == "geen"
+
+
+def test_q4_geen_when_chat_platform():
+    assert _cov(chat_platform=True)["state"] == "geen"
+
+
+def test_q4_geen_when_whatsapp():
+    assert _cov(wa=True)["state"] == "geen"
+
+
+def test_q4_geen_when_messenger():
+    assert _cov(messenger=True)["state"] == "geen"
+
+
+def test_q4_onbepaald_when_ambiguous_chat_only():
+    # chat-marker zonder herkend platform (laadt mogelijk na interactie) → onbepaald.
+    assert _cov(ambiguous_chat=True)["state"] == "onbepaald"
+
+
+def test_q4_geen_beats_ambiguous_when_real_channel_present():
+    # een herkend kanaal wint van de ambigue marker → geen, niet onbepaald.
+    assert _cov(wa=True, ambiguous_chat=True)["state"] == "geen"
+
+
+def test_q4_onbepaald_when_fetch_failed():
+    assert _cov(ambiguous_chat=False, fetch_ok=False)["state"] == "onbepaald"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Receptie-ladder-beslissing Q4→Q7→Q2→P1 + Q4-formulier-gate + mail-2 tweede haak.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_ladder_q4_wins_when_form_present():
+    # Q4 vuurt (⊆ Q2, dus Q2 ook), formulier aanwezig → mail-1-haak = Q4.
+    r = decide_receptie_hook("hit", "hit", "hit", "hit", form_present=True)
+    assert r["hook_code"] == "Q4"
+    assert r["hook_ladder"] == ["Q4", "Q7", "Q2", "P1"]
+    # mail-2 = eerstvolgende haak uit ÁNDER thema (niet Q2=boeken) → Q7 (meten).
+    assert r["second_hook"] == "Q7"
+    assert r["q4_gated"] is False
+
+
+def test_ladder_q4_gated_without_form_falls_through():
+    # Q4 vuurt maar geen formulier → q4_gated, val door naar Q7.
+    r = decide_receptie_hook("hit", "hit", "hit", "hit", form_present=False)
+    assert r["hook_code"] == "Q7" and r["q4_gated"] is True
+    assert "Q4" not in r["hook_ladder"]
+
+
+def test_ladder_skips_geen_and_onbepaald():
+    # alleen Q2 is een hit; Q7 onbepaald, P1 geen → mail-1 = Q2, geen tweede haak.
+    r = decide_receptie_hook("geen", "onbepaald", "hit", "geen", form_present=True)
+    assert r["hook_code"] == "Q2" and r["hook_ladder"] == ["Q2"]
+    assert r["second_hook"] is None
+
+
+def test_ladder_no_hits_is_not_mailable():
+    r = decide_receptie_hook("geen", "geen", "geen", "geen", form_present=True)
+    assert r["hook_code"] is None and r["hook_ladder"] == []
+
+
+def test_ladder_second_hook_must_be_distinct_theme():
+    # mail-1 = Q7 (meten); Q2 (boeken) en P1 (prijs) vuren ook → tweede haak = Q2
+    # (eerste uit ander thema in ladder-volgorde: Q2 vóór P1).
+    r = decide_receptie_hook("geen", "hit", "hit", "hit", form_present=True)
+    assert r["hook_code"] == "Q7"
+    assert r["second_hook"] == "Q2"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

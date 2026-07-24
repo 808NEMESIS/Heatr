@@ -526,6 +526,115 @@ def combine_stable(state_a: str | None, state_b: str | None) -> str:
     return "onbepaald"
 
 
+# Async-/24-7-kanalen voor Q4 ("geen dekking buiten kantooruren"). Herkende
+# chat-platformen, WhatsApp-deeplinks/-widgets en Messenger. Elk gevonden kanaal
+# laat Q4 vervallen (dan IS er dekking) → Q4-hit vraagt de afwezigheid van álle.
+_CHAT_PLATFORM_RE = re.compile(
+    r"intercom|drift\.com|js\.driftt|tidio|landbot|trengo|livechat(?:inc)?|zopim|"
+    r"zdassets|zendesk[^\"']*(?:chat|widget|messaging)|crisp\.chat|tawk\.to|smartsupp|"
+    r"userlike|olark|chatwoot|gorgias(?:chat)?|formilla|chaport|reamaze|whatshelp|"
+    r"hubspot[^\"']*(?:messages|conversations)|leadinfo|watermelon|obi4wan",
+    re.IGNORECASE,
+)
+# WhatsApp: deeplinks (tel-gebaseerd), click-to-chat en widget-scripts (F7-harding).
+_WA_RE = re.compile(
+    r"wa\.me/|api\.whatsapp\.com|chat\.whatsapp\.com|whatsapp://|\.whatsapp\.com/send|"
+    r"href=[\"'][^\"']*whatsapp|whatsapp[-_]?(?:widget|chat|button|me)|data-whatsapp",
+    re.IGNORECASE,
+)
+# Facebook Messenger: m.me-deeplink of de customer-chat-plugin.
+_MESSENGER_RE = re.compile(
+    r"m\.me/|facebook\.com/messages|fb-customerchat|customerchat|"
+    r"facebook[^\"']*customer.?chat|messenger[^\"']*plugin",
+    re.IGNORECASE,
+)
+# Chat-marker ZONDER herkend platform: knop/tekst die op live-chat wijst maar
+# waarvan we het platform niet zien → de widget laadt mogelijk pas na interactie
+# → niet hard vast te stellen → onbepaald (Sami-regel), nooit een Q4-hit.
+_AMBIG_CHAT_RE = re.compile(
+    r"live[- ]?chat|chat met ons|chat nu|start(?:en)? (?:een )?chat|open(?: de)? chat|"
+    r"chat openen|stel je vraag via (?:de )?chat|chatten met",
+    re.IGNORECASE,
+)
+
+
+def evaluate_coverage(*, chat_platform: bool, wa: bool, messenger: bool,
+                      self_booking: bool, ambiguous_chat: bool, fetch_ok: bool) -> dict[str, Any]:
+    """Q4 — kan een bezoeker buiten kantooruren iets vastleggen of contact leggen?
+    Pure tri-state (zie TRISTATE). Async-/24-7-kanaal = chat-widget, WhatsApp,
+    Messenger of zelf-boeken.
+
+    - "geen"      : minstens één async-kanaal gevonden → er IS dekking (geen hit).
+    - "onbepaald" : render mislukt, óf een chat-marker zonder herkend platform
+                    (laadt mogelijk pas na interactie) → niet hard → nooit hit.
+    - "hit"       : geen chat/WhatsApp/Messenger/zelf-boeken → buiten kantooruren
+                    kan een bezoeker niets vastleggen (de 22:47-lek).
+    """
+    if not fetch_ok:
+        return {"state": "onbepaald", "evidence": ["fetch_failed"]}
+    have: list[str] = []
+    if self_booking:
+        have.append("self_booking")
+    if chat_platform:
+        have.append("chat")
+    if wa:
+        have.append("whatsapp")
+    if messenger:
+        have.append("messenger")
+    if have:
+        return {"state": "geen", "evidence": ["kanaal_" + "+".join(have)]}
+    if ambiguous_chat:
+        return {"state": "onbepaald",
+                "evidence": ["chat_marker_zonder_herkend_platform_mogelijk_na_interactie"]}
+    return {"state": "hit", "evidence": ["geen_chat_wa_messenger_zelfboeken"]}
+
+
+# Receptie-ladder-volgorde (Sami 2026-07-24): eerste die vuurt wint de mail-1-haak.
+_RECEPTIE_LADDER = ("Q4", "Q7", "Q2", "P1")
+# Thematische groepen — mail 2 wil een haak uit een ÁNDER thema (niet Q4 én Q2,
+# want dat is twee keer 'boeken'); zie decide_receptie_hook / mail-2-selectie.
+_HOOK_THEME = {"Q4": "boeken", "Q2": "boeken", "Q7": "meten", "P1": "prijs"}
+
+
+def decide_receptie_hook(q4: str, q7: str, q2: str, p1: str, *,
+                         form_present: bool) -> dict[str, Any]:
+    """Wijs de mail-1-haak toe uit de vier tri-state-uitslagen via de receptie-
+    ladder Q4→Q7→Q2→P1. Alleen 'hit' telt als gevuurd ('geen'/'onbepaald' niet).
+
+    Q4 als mail-1-haak vereist een formulier (de copy claimt 'alleen een formulier
+    achterlaten'); zonder formulier → `q4_gated`, Q4 valt door naar de volgende
+    rung (invariant-2-les). Q4 ⊆ Q2 geldt, dus als Q4 vuurt vuurt Q2 ook.
+
+    Returns:
+      hook_code    — mail-1-winnaar (of None → lead niet mailbaar)
+      hook_ladder  — ALLE gevuurde haken, in ladder-volgorde (voor mail-2-keuze)
+      second_hook  — eerstvolgende gevuurde haak uit een ÁNDER thema dan hook_code
+                     (of None) — dit is de enige geldige mail-2-haak
+      q4_gated     — Q4 vuurde maar viel door bij gebrek aan formulier
+    """
+    fired: list[str] = []
+    q4_gated = False
+    if q4 == "hit":
+        if form_present:
+            fired.append("Q4")
+        else:
+            q4_gated = True
+    if q7 == "hit":
+        fired.append("Q7")
+    if q2 == "hit":
+        fired.append("Q2")
+    if p1 == "hit":
+        fired.append("P1")
+    fired.sort(key=lambda k: _RECEPTIE_LADDER.index(k))
+    hook_code = fired[0] if fired else None
+    second_hook = None
+    if hook_code is not None:
+        theme = _HOOK_THEME[hook_code]
+        second_hook = next((k for k in fired[1:] if _HOOK_THEME[k] != theme), None)
+    return {"hook_code": hook_code, "hook_ladder": fired,
+            "second_hook": second_hook, "q4_gated": q4_gated}
+
+
 def evaluate_booking_entries(raw_entries: list[dict], *, fold: int = FOLD_PX,
                              min_y_sig2: int | None = None) -> dict[str, Any]:
     """PURE evaluatie van de gescande a/button-entries → boekingang-oordeel.
