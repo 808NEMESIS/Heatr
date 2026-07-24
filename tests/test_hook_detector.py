@@ -24,6 +24,7 @@ from website_intelligence.hook_detector import (
     evaluate_coverage,
     evaluate_footer_year,
     evaluate_price_anchor,
+    evaluate_selfbooking,
     evaluate_tap_targets,
     evaluate_tracking,
     price_link_in_html,
@@ -449,6 +450,35 @@ def test_ladder_second_hook_must_be_distinct_theme():
     r = decide_receptie_hook("geen", "hit", "hit", "hit", form_present=True)
     assert r["hook_code"] == "Q7"
     assert r["second_hook"] == "Q2"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Q2 — 'alleen aanvraag, geen zelf-boeken' op het canonieke booking-mechanisme.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_q2_geen_when_self_booking():
+    assert evaluate_selfbooking("self_booking", form_present=True, fetch_ok=True)["state"] == "geen"
+
+
+def test_q2_hit_when_request_form():
+    assert evaluate_selfbooking("request_form", form_present=True, fetch_ok=True)["state"] == "hit"
+
+
+def test_q2_onbepaald_when_ambiguous():
+    assert evaluate_selfbooking("ambiguous", form_present=True, fetch_ok=True)["state"] == "onbepaald"
+
+
+def test_q2_hit_when_no_booking_but_form_present():
+    assert evaluate_selfbooking(None, form_present=True, fetch_ok=True)["state"] == "hit"
+
+
+def test_q2_onbepaald_when_no_booking_and_no_form():
+    # geen boeking én geen formulier → 'alleen aanvraag' houdt geen stand → onbepaald.
+    assert evaluate_selfbooking(None, form_present=False, fetch_ok=True)["state"] == "onbepaald"
+
+
+def test_q2_onbepaald_when_fetch_failed():
+    assert evaluate_selfbooking("request_form", form_present=True, fetch_ok=False)["state"] == "onbepaald"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

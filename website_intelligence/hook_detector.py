@@ -635,6 +635,44 @@ def decide_receptie_hook(q4: str, q7: str, q2: str, p1: str, *,
             "second_hook": second_hook, "q4_gated": q4_gated}
 
 
+def evaluate_selfbooking(mechanism: str | None, *, form_present: bool,
+                         fetch_ok: bool) -> dict[str, Any]:
+    """Q2 — 'alleen een aanvraag, geen moment zelf vastleggen'. Canoniek op het
+    booking_detector-mechanisme (audit F3: niet op een losse platform-namenlijst).
+
+    - "geen"      : self_booking → de bezoeker kan wél zelf een moment kiezen.
+    - "hit"       : request_form (aanvraag-/terugbelformulier), óf geen boeking maar
+                    wél een formulier → 'alleen een aanvraag' klopt.
+    - "onbepaald" : ambigu mechanisme, óf geen boeking én geen formulier (dan houdt
+                    de 'alleen een aanvraag'-claim geen stand) → nooit hit.
+    """
+    if not fetch_ok:
+        return {"state": "onbepaald", "evidence": ["fetch_failed"]}
+    if mechanism == "self_booking":
+        return {"state": "geen", "evidence": ["self_booking"]}
+    if mechanism == "request_form":
+        return {"state": "hit", "evidence": ["alleen_aanvraagformulier"]}
+    if mechanism == "ambiguous":
+        return {"state": "onbepaald", "evidence": ["booking_mechanisme_ambigu"]}
+    # geen herkend boekmechanisme: 'alleen aanvraag' vraagt minstens een formulier.
+    if form_present:
+        return {"state": "hit", "evidence": ["formulier_geen_zelfboeken"]}
+    return {"state": "onbepaald", "evidence": ["geen_boeking_geen_formulier"]}
+
+
+# Formulier op de pagina (voor de Q4/Q2-copy die 'een formulier' claimt).
+_FORM_PRESENT_JS = """
+() => {
+  for (const f of document.querySelectorAll('form')) {
+    const n = [...f.querySelectorAll('input,textarea,select')].filter(i => i.type !== 'hidden').length;
+    if (n >= 1) return true;
+  }
+  // losse velden buiten een <form> (sommige site-builders)
+  return document.querySelectorAll('input[type=email], textarea').length >= 1;
+}
+"""
+
+
 def evaluate_booking_entries(raw_entries: list[dict], *, fold: int = FOLD_PX,
                              min_y_sig2: int | None = None) -> dict[str, Any]:
     """PURE evaluatie van de gescande a/button-entries → boekingang-oordeel.
@@ -1110,3 +1148,159 @@ async def detect_hook(
         except Exception:
             pass
     return result
+
+
+# ── Receptie-detectie: de volledige Q4/Q7/Q2/P1-ladder over 2 renders ─────────
+# Dit is de kern van de writer (Fase 2c, 2026-07-24): één mobiele render levert
+# alle vier de tri-states + form_present; detect_receptie draait 'm 2x en
+# combineert fail-closed (combine_stable) per as, dan decide_receptie_hook.
+
+async def _receptie_one_render(page, *, served_html: str, request_urls: list[str],
+                               consent_accepted: bool, domain: str = "") -> dict[str, Any]:
+    """Eén AL-genavigeerde render → per-run tri-states voor Q4/Q7/Q2/P1 +
+    form_present. Nooit-raise (caller vangt af)."""
+    html = await page.content()
+    fetch_ok = bool(html) and len(html) >= 500
+    low = (html or "").lower()
+    if any(m in low[:6000] for m in _CHALLENGE_MARKERS) or any(m in low for m in _PARKING_MARKERS):
+        fetch_ok = False
+    reqs = request_urls or []
+    blob = " ".join(reqs) + " " + (html or "")
+
+    q7 = evaluate_tracking(reqs, html, consent_accepted=consent_accepted, fetch_ok=fetch_ok)
+
+    booking = _combine_booking(html, fetch_ok=fetch_ok)
+    entries: list[dict] = []
+    if booking.get("value") == "has_booking":
+        try:
+            cta = await _scan_booking_entries(page)
+            entries = cta.get("entries") or []
+        except Exception:
+            entries = []
+    page_text = re.sub(r"<[^>]+>", " ", html or "").lower()
+    request_only = bool(_REQUEST_ONLY_RE.search(page_text))
+    mechanism = classify_booking_mechanism(booking, entries, domain, request_only)
+    try:
+        form_present = bool(await page.evaluate(_FORM_PRESENT_JS))
+    except Exception:
+        form_present = False
+    q2 = evaluate_selfbooking(mechanism, form_present=form_present, fetch_ok=fetch_ok)
+
+    chat_platform = bool(_CHAT_PLATFORM_RE.search(blob))
+    wa = bool(_WA_RE.search(blob))
+    messenger = bool(_MESSENGER_RE.search(blob))
+    ambiguous_chat = bool(_AMBIG_CHAT_RE.search(page_text)) and not chat_platform
+    q4 = evaluate_coverage(chat_platform=chat_platform, wa=wa, messenger=messenger,
+                           self_booking=(mechanism == "self_booking"),
+                           ambiguous_chat=ambiguous_chat, fetch_ok=fetch_ok)
+
+    try:
+        price = await page.evaluate(_PRICE_SCAN_JS)
+    except Exception:
+        price = None
+    p = dict(price or {})
+    p["price_page_link"] = bool(p.get("price_page_link")
+                                or price_link_in_html(served_html) or price_link_in_html(html))
+    if fetch_ok and not (p.get("euro_amount") or p.get("price_page_link")) and p.get("service_link"):
+        try:
+            await page.goto(p["service_link"], wait_until="domcontentloaded", timeout=15000)
+            await _dismiss_cookie_banner(page)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+            sp = await page.evaluate(_PRICE_SCAN_JS) or {}
+            p["euro_amount"] = p.get("euro_amount") or sp.get("euro_amount")
+            p["price_page_link"] = p.get("price_page_link") or sp.get("price_page_link")
+        except Exception:
+            p["service_unchecked"] = True
+    p1 = evaluate_price_anchor(p, fetch_ok=fetch_ok)
+
+    return {"fetch_ok": fetch_ok, "q4": q4["state"], "q7": q7["state"],
+            "q2": q2["state"], "p1": p1["state"], "form_present": form_present,
+            "mechanism": mechanism,
+            "evidence": {"q4": q4["evidence"], "q7": q7["evidence"],
+                         "q2": q2["evidence"], "p1": p1["evidence"]}}
+
+
+_RECEPTIE_FAIL = {"fetch_ok": False, "q4": "onbepaald", "q7": "onbepaald",
+                  "q2": "onbepaald", "p1": "onbepaald", "form_present": False}
+
+
+async def detect_receptie(domain: str, playwright: Any | None = None, *,
+                          browser: Any | None = None, timeout_ms: int = 20000,
+                          runs: int = 2) -> dict[str, Any]:
+    """Volledige receptie-haakje-detectie voor één domein: `runs` verse mobiele
+    renders, per as fail-closed 2-run-gecombineerd (combine_stable), dan de
+    ladder-haak (decide_receptie_hook). Nooit-raise; bij falen hook_code=None.
+
+    Voor een batch geef je een gedeelde `playwright`+`browser` mee. Dit is de
+    functie die de writer/worker aanroept (audit: er moet iets zijn dat écht
+    hook_* produceert in de productie-flow)."""
+    own_pw = playwright is None
+    own_browser = browser is None
+    pw_cm = None
+    per_run: list[dict[str, Any]] = []
+    try:
+        if own_pw:
+            pw_cm = async_playwright()
+            playwright = await pw_cm.__aenter__()
+        if own_browser:
+            browser, _ = await new_browser_context(playwright)
+        for _ in range(max(1, runs)):
+            ctx = await mobile_context(browser, playwright)
+            page = await ctx.new_page()
+            reqs: list[str] = []
+            page.on("request", lambda r, _b=reqs: _b.append(r.url))
+            try:
+                clean = re.sub(r"^https?://", "", domain, flags=re.IGNORECASE).strip("/")
+                resp = None
+                for scheme in ("https://", "http://"):
+                    try:
+                        resp = await page.goto(scheme + clean, wait_until="domcontentloaded", timeout=timeout_ms)
+                        if resp is not None:
+                            break
+                    except Exception:
+                        continue
+                if resp is None:
+                    per_run.append(dict(_RECEPTIE_FAIL, error="navigation_failed"))
+                    continue
+                try:
+                    served = await resp.text()
+                except Exception:
+                    served = ""
+                consent = await _dismiss_cookie_banner(page)
+                await _scroll_full(page)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=6000)
+                except Exception:
+                    pass
+                per_run.append(await _receptie_one_render(
+                    page, served_html=served, request_urls=reqs,
+                    consent_accepted=bool(consent), domain=domain))
+            except Exception as e:
+                per_run.append(dict(_RECEPTIE_FAIL, error=str(e)[:120]))
+            finally:
+                try:
+                    await ctx.close()
+                except Exception:
+                    pass
+    finally:
+        try:
+            if own_browser and browser is not None:
+                await browser.close()
+        except Exception:
+            pass
+        try:
+            if own_pw and pw_cm is not None:
+                await pw_cm.__aexit__(None, None, None)
+        except Exception:
+            pass
+
+    a, b = per_run[0], per_run[-1]
+    axes = {ax: combine_stable(a.get(ax), b.get(ax)) for ax in ("q4", "q7", "q2", "p1")}
+    form_present = bool(a.get("form_present") or b.get("form_present"))
+    decision = decide_receptie_hook(axes["q4"], axes["q7"], axes["q2"], axes["p1"],
+                                    form_present=form_present)
+    return {"domain": domain, **axes, "form_present": form_present, **decision,
+            "runs": per_run}
