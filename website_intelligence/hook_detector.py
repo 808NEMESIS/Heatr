@@ -373,6 +373,125 @@ def evaluate_footer_year(max_year: int | None, current_year: int) -> dict[str, A
     return {"fires": (current_year - int(max_year)) >= 3, "max_year": int(max_year)}
 
 
+# ── Q-ladder (receptie): Q7 meting/tracking + P1 prijsanker ──────────────────
+# Nieuwe meet-primitieven voor de receptie-haakje-ladder (Sami 2026-07-24). Zelfde
+# stijl als de signaal-1-6-evaluatoren: PURE functies op AL-gescande data, met een
+# expliciete DRIE-standen-uitslag in ladder-termen:
+#   "hit"       — het criterium vuurt (Q7: de site meet niets / P1: geen prijsanker)
+#   "geen"      — het criterium vuurt aantoonbaar NIET (er is meting / er is prijs)
+#   "onbepaald" — niet betrouwbaar vast te stellen (consent-gated/JS-geladen
+#                 tracking, prijs achter een interactie, mislukte render)
+# "onbepaald" is GEEN negatief resultaat: een onmeetbaar criterium mag nooit als
+# hit én nooit als geen-hit tellen (de C9-les: vier "hits", nul bevestigd, omdat
+# de detector iets MOEST zeggen). Fail-closed: bij twijfel "onbepaald", nooit "hit".
+TRISTATE = ("hit", "geen", "onbepaald")
+
+# Analytics / tag-managers: laadt één hiervan, dan MEET de site wel → geen Q7-hit.
+_GA_RE = re.compile(
+    r"googletagmanager\.com/(?:gtm|gtag)|google-analytics\.com|/gtag/js|/g/collect|"
+    r"analytics\.google\.com|\bgtag\s*\(|\bdataLayer\b|plausible\.io|cdn\.matomo|"
+    r"matomo\.(?:php|js)|piwik|stats\.g\.doubleclick|clarity\.ms|(?:static\.)?hotjar|"
+    r"mc\.yandex|segment\.(?:com|io)/analytics|cdn\.segment",
+    re.IGNORECASE,
+)
+# Advertentie-/remarketing-pixels tellen óók als 'meten' (conversie/retargeting).
+_PIXEL_RE = re.compile(
+    r"connect\.facebook\.net/[^\"']*fbevents|facebook\.com/tr\b|\bfbq\s*\(|"
+    r"snap\.licdn\.com|linkedin\.com/(?:px|li\.lms)|px\.ads\.linkedin|"
+    r"analytics\.tiktok|googleadservices\.com|googlesyndication|bat\.bing\.com",
+    re.IGNORECASE,
+)
+# Consent-managers: staat er één en klikten we niet aantoonbaar 'accepteren', dan
+# kan tracking pas ná consent laden → afwezigheid is dan niet hard (F2) → onbepaald.
+_CMP_MARKERS = (
+    "cookiebot", "cookieyes", "cookiefirst", "cookie-script", "complianz",
+    "onetrust", "cookiepro", "usercentrics", "borlabs", "iubenda", "termly",
+    "quantcast-choice", "didomi", "klaro", "osano", "cookieconsent",
+)
+
+
+def evaluate_tracking(request_urls: list[str] | None, html: str | None, *,
+                      consent_accepted: bool, fetch_ok: bool) -> dict[str, Any]:
+    """Q7 — meet de site het bezoekersgedrag? Pure tri-state (zie TRISTATE).
+
+    - "geen"      : GA/GTM/analytics/pixel geladen → er wórdt gemeten (geen hit).
+    - "onbepaald" : render mislukt, óf een consent-manager staat er en we hebben
+                    niet aantoonbaar geaccepteerd (tracking kan post-consent laden).
+    - "hit"       : géén analytics én géén pixel client-side gezien → de site meet
+                    niets. LIMIET: puur server-side/proxied tracking zonder enige
+                    client-trace is per definitie onzichtbaar; de copy claimt dan
+                    ook enkel wat client-side observeerbaar is.
+    """
+    if not fetch_ok:
+        return {"state": "onbepaald", "evidence": ["fetch_failed"], "found": []}
+    reqs = " ".join(request_urls or [])
+    blob = reqs + " " + (html or "")
+    found: list[str] = []
+    if _GA_RE.search(blob):
+        found.append("analytics")
+    if _PIXEL_RE.search(blob):
+        found.append("pixel")
+    if found:
+        return {"state": "geen", "evidence": [f"meet_via_{'+'.join(found)}"], "found": found}
+    low = ((html or "") + " " + reqs).lower()
+    cmp_hit = next((c for c in _CMP_MARKERS if c in low), None)
+    if cmp_hit and not consent_accepted:
+        return {"state": "onbepaald",
+                "evidence": [f"consent_manager={cmp_hit}_niet_geaccepteerd"], "found": []}
+    return {"state": "hit", "evidence": ["geen_analytics_geen_pixel_client_side"], "found": []}
+
+
+_PRICE_SCAN_JS = """
+() => {
+  const low = s => (s || '').toLowerCase();
+  const bodyTxt = low(document.body ? document.body.innerText : '');
+  const euro = /€\\s?\\d{2,}|\\bvanaf\\s?€|\\d{2,}\\s*euro\\b|prijs vanaf/.test(bodyTxt);
+  const navA = [...document.querySelectorAll('header a, nav a, [role=navigation] a')];
+  const tarieven_nav = navA.some(a => {
+    const h = low(a.getAttribute('href') || ''), t = low(a.innerText || '');
+    return /tarie|prijz|prijslijst|\\/kosten/.test(h) || /tarief|tarieven|prijzen|prijslijst/.test(t);
+  });
+  const clickers = [...document.querySelectorAll('a,button,summary,[role=button]')];
+  const teaser = clickers.some(el => /prijs|tarief|tarieven|kosten|prijslijst/.test(low(el.innerText || '')));
+  return {euro_amount: euro, tarieven_nav: tarieven_nav, price_teaser_no_amount: teaser && !euro};
+}
+"""
+
+
+def evaluate_price_anchor(price: dict | None, *, fetch_ok: bool) -> dict[str, Any]:
+    """P1 — geeft de site een prijsindicatie? Pure tri-state (zie TRISTATE).
+
+    - "geen"      : een €-bedrag op de pagina, óf een tarieven-/prijzen-pagina in
+                    de nav → er IS een prijsanker (geen hit).
+    - "onbepaald" : een prijs-/tarief-element zonder zichtbaar bedrag (accordion/
+                    tab) → de prijs zit mogelijk achter een interactie die we niet
+                    openden → niet hard, nooit als hit.
+    - "hit"       : geen bedrag én geen tarievenpagina → geen prijsanker.
+    """
+    if not fetch_ok:
+        return {"state": "onbepaald", "evidence": ["fetch_failed"]}
+    p = price or {}
+    ev: list[str] = []
+    if p.get("euro_amount"):
+        ev.append("euro_bedrag_op_pagina")
+    if p.get("tarieven_nav"):
+        ev.append("tarieven_pagina_in_nav")
+    if ev:
+        return {"state": "geen", "evidence": ev}
+    if p.get("price_teaser_no_amount"):
+        return {"state": "onbepaald", "evidence": ["prijs_element_zonder_bedrag_mogelijk_achter_interactie"]}
+    return {"state": "hit", "evidence": ["geen_bedrag_geen_tarievenpagina"]}
+
+
+def combine_stable(state_a: str | None, state_b: str | None) -> str:
+    """2-run-stabiliteit: alleen een IDENTIEKE 'hit'/'geen' over BEIDE runs telt;
+    elke afwijking tussen de runs of een 'onbepaald' → 'onbepaald' (fail-closed).
+    Dit is de "hits identiek in beide runs"-eis uit de klaar-definitie."""
+    if state_a == state_b and state_a in ("hit", "geen"):
+        return state_a
+    return "onbepaald"
+
+
 def evaluate_booking_entries(raw_entries: list[dict], *, fold: int = FOLD_PX,
                              min_y_sig2: int | None = None) -> dict[str, Any]:
     """PURE evaluatie van de gescande a/button-entries → boekingang-oordeel.

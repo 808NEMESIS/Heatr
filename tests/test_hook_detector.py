@@ -18,9 +18,12 @@ from website_intelligence.hook_detector import (
     SIGNAL2_MIN_Y,
     _decide_signal,
     classify_booking_mechanism,
+    combine_stable,
     evaluate_booking_entries,
     evaluate_footer_year,
+    evaluate_price_anchor,
     evaluate_tap_targets,
+    evaluate_tracking,
 )
 
 
@@ -254,3 +257,109 @@ def test_ladder_order_sig1_beats_all():
                        tel_present=True, cta=evaluate_booking_entries([]),
                        mechanism=None, fcp_ms=9000, footer=evaluate_footer_year(2019, 2026))
     assert d["fired_signal"] == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Q7 — meting/tracking-detector (tri-state, fail-closed). Bekende hit + geen-hit
+# + onbepaald als fixtures; de onbepaald-regel is de C9-les die Sami eiste.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_q7_geen_hit_when_analytics_loads():
+    # bekende NIET-hit: GA/GTM laadt → de site meet wél.
+    r = evaluate_tracking(["https://www.googletagmanager.com/gtm.js?id=GTM-XYZ"],
+                          "<html><body>kliniek</body></html>",
+                          consent_accepted=True, fetch_ok=True)
+    assert r["state"] == "geen" and "analytics" in r["found"]
+
+
+def test_q7_geen_hit_when_meta_pixel_loads():
+    r = evaluate_tracking(["https://connect.facebook.net/en_US/fbevents.js"], "",
+                          consent_accepted=True, fetch_ok=True)
+    assert r["state"] == "geen" and "pixel" in r["found"]
+
+
+def test_q7_hit_when_no_tracking_and_no_cmp():
+    # bekende HIT: geen analytics, geen pixel, geen consent-manager → site meet niets.
+    r = evaluate_tracking(["https://kliniek.nl/style.css", "https://kliniek.nl/logo.png"],
+                          "<html><body>welkom</body></html>",
+                          consent_accepted=False, fetch_ok=True)
+    assert r["state"] == "hit"
+
+
+def test_q7_onbepaald_when_cmp_present_and_not_accepted():
+    # consent-manager aanwezig + niet geaccepteerd → tracking kan post-consent
+    # laden → nooit als hit, altijd onbepaald (fail-closed, F2).
+    r = evaluate_tracking(["https://kliniek.nl/app.js"],
+                          "<script src='https://consent.cookiebot.com/uc.js'></script>",
+                          consent_accepted=False, fetch_ok=True)
+    assert r["state"] == "onbepaald"
+
+
+def test_q7_hit_when_cmp_present_but_accepted_and_still_nothing():
+    # wél geaccepteerd én daarna nog steeds geen tracking → hit mag (sterk bewijs).
+    r = evaluate_tracking(["https://kliniek.nl/app.js"],
+                          "<script src='https://consent.cookiebot.com/uc.js'></script>",
+                          consent_accepted=True, fetch_ok=True)
+    assert r["state"] == "hit"
+
+
+def test_q7_onbepaald_when_fetch_failed():
+    r = evaluate_tracking([], "", consent_accepted=True, fetch_ok=False)
+    assert r["state"] == "onbepaald"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P1 — prijsanker-detector (tri-state, fail-closed).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_p1_geen_hit_when_euro_amount_on_page():
+    r = evaluate_price_anchor({"euro_amount": True, "tarieven_nav": False,
+                               "price_teaser_no_amount": False}, fetch_ok=True)
+    assert r["state"] == "geen"
+
+
+def test_p1_geen_hit_when_tarieven_page_in_nav():
+    r = evaluate_price_anchor({"euro_amount": False, "tarieven_nav": True,
+                               "price_teaser_no_amount": False}, fetch_ok=True)
+    assert r["state"] == "geen"
+
+
+def test_p1_hit_when_no_price_anywhere():
+    r = evaluate_price_anchor({"euro_amount": False, "tarieven_nav": False,
+                               "price_teaser_no_amount": False}, fetch_ok=True)
+    assert r["state"] == "hit"
+
+
+def test_p1_onbepaald_when_price_teaser_without_amount():
+    # 'Bekijk tarieven'-accordion zonder zichtbaar bedrag → prijs mogelijk achter
+    # interactie → onbepaald, nooit hit.
+    r = evaluate_price_anchor({"euro_amount": False, "tarieven_nav": False,
+                               "price_teaser_no_amount": True}, fetch_ok=True)
+    assert r["state"] == "onbepaald"
+
+
+def test_p1_onbepaald_when_fetch_failed():
+    r = evaluate_price_anchor({"euro_amount": False, "tarieven_nav": False,
+                               "price_teaser_no_amount": False}, fetch_ok=False)
+    assert r["state"] == "onbepaald"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2-run-stabiliteit: alleen identieke hit/geen over beide runs telt (fail-closed).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_combine_stable_agreeing_hit():
+    assert combine_stable("hit", "hit") == "hit"
+
+
+def test_combine_stable_agreeing_geen():
+    assert combine_stable("geen", "geen") == "geen"
+
+
+def test_combine_stable_disagreement_becomes_onbepaald():
+    assert combine_stable("hit", "geen") == "onbepaald"
+
+
+def test_combine_stable_any_onbepaald_becomes_onbepaald():
+    assert combine_stable("hit", "onbepaald") == "onbepaald"
+    assert combine_stable("onbepaald", "geen") == "onbepaald"
