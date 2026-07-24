@@ -135,6 +135,29 @@ async def process_next_website_analysis(
             company_name, domain, total_score, duration,
         )
 
+        # Receptie-haakje-ladder (Q4/Q7/Q2/P1) detecteren + persisten. Fail-soft
+        # en getimeboxt: mag de analyse-uitkomst nooit beïnvloeden. Dit is de
+        # productie-flow-aanroep die de audit miste (er schreef niets hook_*).
+        try:
+            from website_intelligence.hook_writer import run_receptie_for_lead
+
+            rec = await asyncio.wait_for(
+                run_receptie_for_lead(
+                    supabase_client,
+                    {"id": lead_id, "workspace_id": workspace_id, "domain": domain},
+                ),
+                timeout=_ANALYSIS_TIMEOUT_SECONDS,
+            )
+            if rec:
+                logger.info(
+                    "website_analysis_queue: receptie-haak=%s voor %s (ladder=%s, 2e=%s)",
+                    rec.get("hook_code"), domain, rec.get("hook_ladder"), rec.get("second_hook"),
+                )
+        except Exception as e:
+            logger.warning(
+                "website_analysis_queue: receptie-detectie faalde voor %s: %s", domain, e,
+            )
+
         return {
             "processed": True,
             "lead_id": lead_id,
