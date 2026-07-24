@@ -454,6 +454,23 @@ def test_ladder_no_hits_is_not_mailable():
     assert r["hook_code"] is None and r["hook_ladder"] == []
 
 
+def test_q4_form_available_request_form_counts_as_form():
+    from website_intelligence.hook_detector import q4_form_available
+    # skin.nl-regressie: geen inline <form> maar mechanism=request_form → formulier.
+    assert q4_form_available(False, "request_form") is True
+    assert q4_form_available(True, None) is True
+    assert q4_form_available(False, "self_booking") is False
+    assert q4_form_available(False, None) is False
+
+
+def test_ladder_q4_wins_over_q2_when_request_form_is_the_form():
+    # skin.nl: Q4 hit + Q2 hit, formulier-pad via request_form → Q4 mag niet gaten.
+    from website_intelligence.hook_detector import q4_form_available
+    fp = q4_form_available(False, "request_form")
+    r = decide_receptie_hook("hit", "geen", "hit", "geen", form_present=fp)
+    assert r["hook_code"] == "Q4" and r["q4_gated"] is False
+
+
 def test_ladder_second_hook_must_be_distinct_theme():
     # mail-1 = Q7 (meten); Q2 (boeken) en P1 (prijs) vuren ook → tweede haak = Q2
     # (eerste uit ander thema in ladder-volgorde: Q2 vóór P1).

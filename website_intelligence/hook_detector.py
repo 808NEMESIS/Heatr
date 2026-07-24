@@ -645,6 +645,15 @@ def decide_receptie_hook(q4: str, q7: str, q2: str, p1: str, *,
             "second_hook": second_hook, "q4_gated": q4_gated}
 
 
+def q4_form_available(dom_form: bool, mechanism: str | None) -> bool:
+    """Voor de Q4-form-gate: er is een formulier-pad als er een inline <form> is
+    OF het mechanisme een aanvraag-/terugbelformulier is (request_form). Zonder
+    één van beide is Q4's copy-claim 'alleen een formulier achterlaten' onwaar en
+    moet Q4 gaten. skin.nl-regressie 2026-07-24: mechanism=request_form zonder
+    inline <form> is wél een formulier → Q4 mag niet naar Q2 weggedrukt worden."""
+    return bool(dom_form) or mechanism == "request_form"
+
+
 def evaluate_selfbooking(mechanism: str | None, *, form_present: bool,
                          fetch_ok: bool) -> dict[str, Any]:
     """Q2 — 'alleen een aanvraag, geen moment zelf vastleggen'. Canoniek op het
@@ -1197,9 +1206,11 @@ async def _receptie_one_render(page, *, served_html: str, request_urls: list[str
     self_booking = (mechanism == "self_booking") or served_selfbook
     mechanism_eff = "self_booking" if served_selfbook else mechanism
     try:
-        form_present = bool(await page.evaluate(_FORM_PRESENT_JS))
+        dom_form = bool(await page.evaluate(_FORM_PRESENT_JS))
     except Exception:
-        form_present = False
+        dom_form = False
+    # request_form telt mee als formulier-pad voor de Q4-gate (zie q4_form_available).
+    form_present = q4_form_available(dom_form, mechanism_eff)
     q2 = evaluate_selfbooking(mechanism_eff, form_present=form_present, fetch_ok=fetch_ok)
 
     chat_platform = bool(_CHAT_PLATFORM_RE.search(blob))
