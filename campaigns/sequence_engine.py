@@ -461,6 +461,63 @@ def build_site_observatie(wi: dict | None, website_score: int | None) -> str:
     return ""
 
 
+async def _render_receptie_marker(
+    marker: dict, lead: dict, supabase_client, *, seed: str | None = None,
+) -> dict:
+    """Render + gate één receptie-brug-step (mail 1/2/3). Returned altijd
+    {subject, body, delay_days, sendable, block_reason, skipped}. Verzendt niets;
+    process_due_send blokkeert de dispatch als sendable=False."""
+    from config.receptie_sequence import receptie_compliance_tokens, render_receptie_mail
+    from utils.legal_form import receptie_avg_safe
+    from utils.suppression import check_suppressed_lead
+
+    delay = int(marker.get("delay_days") or 0)
+    mail_step = int(marker.get("faseA_step") or 0) + 1   # 0→mail1, 1→mail2, 2→mail3
+
+    hook_code = second_hook = hook_variant = second_variant = None
+    try:
+        # select("*") is robuust tegen een nog-niet-gedraaide migratie 041:
+        # ontbrekende receptie_-kolommen geven None i.p.v. een select-fout.
+        wi_rows = (supabase_client.table("website_intelligence").select("*")
+                   .eq("lead_id", lead.get("id")).limit(1).execute()).data
+        wi = wi_rows[0] if wi_rows else {}
+        hook_code = wi.get("receptie_hook_code")
+        second_hook = wi.get("receptie_second_hook")
+        hook_variant = wi.get("receptie_hook_variant")
+        second_variant = wi.get("receptie_second_variant")
+    except Exception as e:
+        logger.warning("receptie WI-fetch faalde voor lead %s: %s", lead.get("id"), e)
+
+    privacy_notice, unsubscribe = receptie_compliance_tokens(lead)
+    mail = render_receptie_mail(
+        mail_step, lead, hook_code=hook_code, second_hook=second_hook,
+        hook_variant=hook_variant, second_variant=second_variant,
+        privacy_notice=privacy_notice, unsubscribe=unsubscribe, seed=seed)
+
+    out = {"subject": mail.get("subject") or "", "body": mail.get("body") or "",
+           "delay_days": delay, "sendable": False, "block_reason": mail.get("block_reason") or "ok",
+           "skipped": bool(mail.get("skipped"))}
+    if out["skipped"] or not mail.get("sendable"):
+        return out                                        # geen 2e haak / token-gate
+    # AVG-02: alleen bevestigde rechtspersoon; natuurlijk persoon/onbepaald blokt.
+    avg_ok, avg_reason = receptie_avg_safe(lead)
+    if not avg_ok:
+        out["block_reason"] = avg_reason
+        return out
+    # AVG-05: org-brede suppressie (e-mail/domein/KvK), fail-closed.
+    try:
+        supp = check_suppressed_lead(supabase_client, lead)
+    except Exception as e:
+        out["block_reason"] = f"suppression_check_failed:{str(e)[:60]}"
+        return out
+    if supp:
+        out["block_reason"] = f"suppressed:{supp}"
+        return out
+    out["sendable"] = True
+    out["block_reason"] = "ok"
+    return out
+
+
 async def render_faseA_marker(
     marker: dict, lead: dict, supabase_client, workspace_id: str, *, seed: str | None = None,
 ) -> dict:
@@ -472,6 +529,15 @@ async def render_faseA_marker(
     gedeelde pad voor preview én send, dus een dry-render toont exact wat uitgaat.
     """
     from config.sequence_templates import resolve_faseA_step
+
+    # ── Receptie-brug (Q4/Q7/Q2/P1-ladder) ──────────────────────────────────
+    # Aparte render + volledige gate-stack. Verzendt nooit zonder privacyzin +
+    # afmeldlink (AVG art.14 / opt-out), zonder bevestigde rechtspersoon (AVG-02),
+    # of bij een org-suppressie (AVG-05). Alles fail-closed; kill-switch staat er
+    # bovenop. Geen plekken-teller (die is conceptsite/Founding-Five).
+    if marker.get("faseA_brug") == "receptie":
+        return await _render_receptie_marker(marker, lead, supabase_client, seed=seed)
+
     free = await free_founding_five_slots(lead.get("sector") or "", supabase_client, workspace_id)
     resolved = resolve_faseA_step(marker["faseA_brug"], int(marker.get("faseA_step") or 0),
                                   lead, free_slots=free)
@@ -616,6 +682,33 @@ async def process_due_send(
         step = render_step(
             _raw_step, lead, seed=f"{lead_id}:{step_index}",
         )
+
+    # Receptie-brug: de step kan OVERGESLAGEN zijn (mail 2 zonder tweede thema-haak
+    # → door naar mail 3) of GEBLOKKEERD (compliance-gate: privacyzin/afmeldlink,
+    # AVG-02-rechtsvorm, org-suppressie). Alleen de receptie-render zet deze velden;
+    # conceptsite laat ze weg (.get() → None → geen effect op het bestaande pad).
+    if step.get("skipped"):
+        logger.info("Receptie: stap %d overgeslagen (geen tweede haak) voor lead %s",
+                    step_index, lead_id)
+        _nxt = step_index + 1
+        if _nxt >= len(sequence_steps):
+            _nsa, _st = None, "sequence_complete"
+        else:
+            _wd = max(int(sequence_steps[_nxt].get("delay_days") or MIN_WAIT_DAYS), MIN_WAIT_DAYS)
+            _nsa = (datetime.now(timezone.utc) + timedelta(days=_wd)).isoformat()
+            _st = "pending"
+        try:
+            supabase_client.table("lead_campaign_history").update({
+                "status": _st, "step_index": _nxt, "next_send_at": _nsa,
+            }).eq("id", record_id).execute()
+        except Exception as e:
+            logger.error("Kon overgeslagen receptie-stap niet doorschuiven (record %s): %s", record_id, e)
+        return {"sent": False, "reason": "receptie_step_skipped", "lead_id": lead_id, "advanced": True}
+    if step.get("sendable") is False:
+        reason = step.get("block_reason") or "receptie_not_sendable"
+        logger.warning("Receptie-send geblokkeerd (%s) voor lead %s", reason, lead_id)
+        _mark_send_blocked(record_id, str(reason), supabase_client)
+        return {"sent": False, "reason": f"receptie_blocked: {reason}", "lead_id": lead_id}
 
     # Push to Warmr — via de dispatcher (I3/I6/I7). Dit pad draait autonoom
     # (n8n elke 15 min); de idempotency-key record:step:epoch garandeert dat

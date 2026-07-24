@@ -21,10 +21,26 @@ mail. Em-/en-dash verboden (QA-gate). Max één vraag per mail.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
 from config.hook_templates import build_haakje, build_zonde_brug
+
+
+def receptie_compliance_tokens(lead: dict) -> tuple[str, str]:
+    """Privacyzin (AVG art.14) + afmeldlink uit env — Sami levert die aan. Leeg →
+    de render-gate (receptie_mail_sendable) blokkeert de send (gewenst gedrag).
+
+    RECEPTIE_PRIVACY_NOTICE: de herkomst-/privacyzin met link.
+    RECEPTIE_UNSUBSCRIBE_TEMPLATE: afmeldregel met {email}/{id}-placeholders."""
+    privacy = (os.getenv("RECEPTIE_PRIVACY_NOTICE") or "").strip()
+    tmpl = (os.getenv("RECEPTIE_UNSUBSCRIBE_TEMPLATE") or "").strip()
+    unsub = ""
+    if tmpl:
+        unsub = (tmpl.replace("{email}", lead.get("email") or "")
+                     .replace("{id}", str(lead.get("id") or "")))
+    return privacy, unsub
 
 _SUBJECT = "{{bedrijfsnaam}}, één ding dat me opviel"
 
