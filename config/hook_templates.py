@@ -46,6 +46,11 @@ SIGNAL_NAMES: dict = {
     4: "tap_targets",
     5: "stale_footer",
     6: "vision_element",
+    # Receptie-ladder (Sami 2026-07-24).
+    "Q4": "geen_dekking_buiten_uren",
+    "Q7": "geen_meting",
+    "Q2": "alleen_aanvraag",
+    "P1": "geen_prijsanker",
 }
 
 # signaal -> (variant_A, variant_B). Klinieknaam in zin 1, gekoppeld aan de
@@ -110,6 +115,44 @@ HOOK_VARIANTS: dict = {
         "Eén ding sprong er voor mij meteen uit op de site van {kliniek}: "
         "{vision_element}. Kleinigheid, maar precies zoiets bepaalt in een paar "
         "seconden of een bezoeker je vertrouwt of doorklikt.",
+    ),
+    # ── Receptie-ladder Q4/Q7/Q2/P1 (Sami 2026-07-24, F4-proof) ──────────────
+    # Belangrijk: GEEN eerste-persoons-tijdsclaim ("ik keek gisteravond"), geen
+    # tijdstip, geen geënsceneerde context — de observatie gaat over de SITE, niet
+    # over een persoonlijke actie (F4). Em-dashes uit Sami's copy zijn omgezet naar
+    # ; en , (outreach spec 1 + QA-gate bant em-/en-dash); woorden ongewijzigd.
+    "Q4": (
+        "Op de site van {kliniek} kan een bezoeker geen afspraak vastleggen; "
+        "alleen een formulier achterlaten en wachten tot er teruggebeld wordt. "
+        "Buiten jullie openingstijden betekent dat: wie het op dat moment wil "
+        "regelen, kan het niet.",
+        "Bij {kliniek} kun je online geen moment zelf kiezen; het loopt allemaal "
+        "via een aanvraag. Wie 's avonds besluit dat ze het wil, kan dat niet "
+        "meteen vastleggen, en de volgende ochtend is dat moment vaak weg.",
+    ),
+    "Q7": (
+        "Op de site van {kliniek} draait geen enkele vorm van meting; geen "
+        "statistieken, geen tracking. Je ziet dus wie er belt of mailt, maar niet "
+        "hoeveel mensen er zijn geweest en zonder iets te doen weer weg zijn.",
+        "Er meet niets wat bezoekers op de site van {kliniek} doen. Daardoor "
+        "blijft onzichtbaar hoeveel mensen er wél waren maar niets hebben "
+        "achtergelaten.",
+    ),
+    "Q2": (
+        "Op de site van {kliniek} kan een bezoeker alleen een aanvraag "
+        "achterlaten, geen moment zelf vastleggen. Juist wie twijfelt haakt af "
+        "als het niet meteen kan.",
+        "Bij {kliniek} loopt het afspraak maken via een formulier in plaats van "
+        "een agenda waarin je zelf kiest. Dat verschil is klein, maar het is "
+        "precies waar een twijfelaar afvalt.",
+    ),
+    "P1": (
+        "Op de site van {kliniek} staat nergens een prijsindicatie. Wie "
+        "oriënteert weet dus niet of ze het over tweehonderd of tweeduizend euro "
+        "heeft, en dat is vaak het punt waarop iemand wegklikt.",
+        "Bij {kliniek} is nergens te vinden wat een behandeling ongeveer kost. "
+        "Voor iemand die twijfelt is dat een drempel, niet omdat het te duur is, "
+        "maar omdat ze niet weet of ze in de buurt zit.",
     ),
 }
 
