@@ -183,6 +183,7 @@ class WarmrClient:
         preferred_inbox_id: str | None = None,
         custom_subject: str | None = None,
         custom_body: str | None = None,
+        content_type: str = "text/plain",
     ) -> dict:
         """Push a single lead to Warmr for outreach.
 
@@ -212,6 +213,12 @@ class WarmrClient:
                 payload["custom_fields"]["custom_subject"] = custom_subject
             if custom_body:
                 payload["custom_fields"]["custom_body"] = custom_body
+                # DELIV-02 (audit 2026-07-24): plain-text-intentie EXPLICIET op de
+                # wire zetten i.p.v. Warmrs onbekende default. Koude receptie-mail
+                # gaat plain-text (geen HTML, geen tracking-pixel). Warmr-side handler
+                # moet dit honoreren; verifieer de werkelijke MIME op een seed-/BCC-
+                # test vóór de eerste koude send (Sami levert de bevestiging aan).
+                payload["custom_fields"]["content_type"] = content_type
         result = await self._request("POST", "/leads", json=payload)
 
         # Store Warmr's lead UUID back in Heatr for future correlation

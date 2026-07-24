@@ -139,3 +139,100 @@ def test_check_suppressed_raises_on_db_error():
 def test_check_suppressed_empty_input_no_query():
     db = FakeSuppressionDB(raises="zou niet bevraagd mogen worden")
     assert check_suppressed(db, [None, "geen-email"]) == {}
+
+
+# ── AVG-05: org-brede suppressie op domein + KvK (2026-07-24) ────────────────
+from utils.suppression import (  # noqa: E402
+    check_suppressed_lead,
+    normalize_domain,
+    suppression_match_keys,
+)
+
+
+def test_normalize_domain():
+    assert normalize_domain("info@Kliniek.NL") == "kliniek.nl"
+    assert normalize_domain("https://www.x.nl/pad") == "www.x.nl"
+    assert normalize_domain("x.nl") == "x.nl"
+    assert normalize_domain(None) is None and normalize_domain("") is None
+
+
+def test_suppression_match_keys():
+    k = suppression_match_keys({"email": "info@kliniek.nl", "kvk_number": "12345678"})
+    assert k == {"email": "info@kliniek.nl", "domain": "kliniek.nl", "kvk": "12345678"}
+    # domein valt terug op het domain-veld als er geen e-mail is
+    assert suppression_match_keys({"domain": "praktijk.nl"}) == {"domain": "praktijk.nl"}
+
+
+def test_add_suppression_stores_domain_and_kvk():
+    db = FakeSuppressionDB()
+    add_suppression(db, email="a@kliniek.nl", suppression_type="unsubscribe",
+                    source="webhook", kvk_number="12345678")
+    assert db.rows[0]["normalized_domain"] == "kliniek.nl"
+    assert db.rows[0]["kvk_number"] == "12345678"
+
+
+class _OrFake:
+    """Minimale fake voor check_suppressed_lead: legt de .or_-filter vast."""
+    def __init__(self, rows=None, raises=None):
+        self.rows = rows or []
+        self.raises = raises
+        self.or_arg = None
+
+    def table(self, _):
+        return self
+
+    def select(self, *_):
+        return self
+
+    def or_(self, expr):
+        self.or_arg = expr
+        return self
+
+    def is_(self, *_):
+        return self
+
+    def execute(self):
+        if self.raises:
+            raise RuntimeError(self.raises)
+        return type("R", (), {"data": self.rows})()
+
+
+def test_check_suppressed_lead_matches_on_domain():
+    fake = _OrFake(rows=[{"suppression_type": "forgotten"}])
+    out = check_suppressed_lead(fake, {"email": "nieuw@kliniek.nl", "kvk_number": "999"})
+    assert out == "forgotten"
+    assert "normalized_email.eq.nieuw@kliniek.nl" in fake.or_arg
+    assert "normalized_domain.eq.kliniek.nl" in fake.or_arg
+    assert "kvk_number.eq.999" in fake.or_arg
+
+
+def test_check_suppressed_lead_none_when_no_match():
+    assert check_suppressed_lead(_OrFake(rows=[]), {"email": "x@y.nl"}) is None
+
+
+def test_check_suppressed_lead_fail_closed_raises():
+    import pytest as _pt
+    with _pt.raises(RuntimeError):
+        check_suppressed_lead(_OrFake(raises="db down"), {"email": "x@y.nl"})
+
+
+def test_add_suppression_falls_back_to_email_only_before_migration_042():
+    # pre-042: insert mét org-kolommen faalt (kolom bestaat niet) → retry e-mail-only
+    # zodat de bestaande unsubscribe-suppressie BLIJFT werken.
+    class _PreMigrationDB:
+        def __init__(self): self.inserts = []
+        def table(self, _): return self
+        def insert(self, row):
+            self._row = dict(row); return self
+        def execute(self):
+            self.inserts.append(self._row)
+            if "normalized_domain" in self._row:
+                raise RuntimeError("column \"normalized_domain\" does not exist")
+            class _R: data = [{}]
+            return _R()
+    db = _PreMigrationDB()
+    out = add_suppression(db, email="a@kliniek.nl", suppression_type="unsubscribe", source="webhook")
+    assert out["ok"] is True and out.get("org_columns_missing") is True
+    # tweede insert had de org-kolommen NIET meer
+    assert "normalized_domain" not in db.inserts[-1]
+    assert db.inserts[-1]["normalized_email"] == "a@kliniek.nl"
