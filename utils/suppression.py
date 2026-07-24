@@ -88,11 +88,12 @@ def add_suppression(
         return {"ok": False, "error": "geen bruikbaar e-mailadres"}
     # AVG-05: leg óók het org-niveau vast (domein uit de expliciete param of het
     # e-mailadres, + KvK) zodat een andere collega bij dezelfde praktijk niet
-    # opnieuw benaderd wordt na een afmelding/forget.
+    # opnieuw benaderd wordt na een afmelding/forget. `domain` bestaat al sinds
+    # migratie 024 (heatr_suppressions); alleen kvk_number is nieuw (042).
     norm_domain = normalize_domain(domain) or normalize_domain(email)
     row = {
         "normalized_email": normalized,
-        "normalized_domain": norm_domain,
+        "domain": norm_domain,
         "kvk_number": (kvk_number or "").strip() or None,
         "suppression_type": suppression_type,
         "source": source,
@@ -119,17 +120,18 @@ def add_suppression(
         if _is_dup(e):
             # Al actief gesuppressed — precies wat we willen (idempotent).
             return {"ok": True, "already": True}
-        # Migratie 042 (normalized_domain/kvk_number) nog niet gedraaid? Val terug
-        # op de e-mail-only insert zodat de bestaande suppressie BLIJFT werken —
-        # anders zou een unsubscribe-write pre-042 stilletjes falen (compliance-gat).
-        if "normalized_domain" in text or "kvk_number" in text or "PGRST204" in text \
+        # Migratie 042 (kvk_number) nog niet gedraaid? Val terug op een insert
+        # zonder kvk_number zodat de bestaande suppressie BLIJFT werken — anders
+        # zou een unsubscribe-write pre-042 stilletjes falen (compliance-gat).
+        # `domain` bestaat al sinds 024, dus die blijft in de fallback staan.
+        if "kvk_number" in text or "PGRST204" in text \
                 or ("column" in text.lower() and "does not exist" in text.lower()):
-            base = {k: v for k, v in row.items() if k not in ("normalized_domain", "kvk_number")}
+            base = {k: v for k, v in row.items() if k != "kvk_number"}
             try:
                 supabase_client.table("suppressions").insert(base).execute()
                 logger.warning(
-                    "suppression: org-kolommen (migratie 042) ontbreken nog → %s alleen "
-                    "op e-mail gesuppressed (domein/KvK volgt na 042).", normalized,
+                    "suppression: kvk_number-kolom (migratie 042) ontbreekt nog → %s "
+                    "gesuppressed op e-mail+domein (KvK volgt na 042).", normalized,
                 )
                 return {"ok": True, "already": False, "org_columns_missing": True}
             except Exception as e2:
@@ -204,7 +206,7 @@ def check_suppressed_lead(supabase_client: Any, lead: dict) -> str | None:
     if keys.get("email"):
         ors.append(f"normalized_email.eq.{keys['email']}")
     if keys.get("domain"):
-        ors.append(f"normalized_domain.eq.{keys['domain']}")
+        ors.append(f"domain.eq.{keys['domain']}")
     if keys.get("kvk"):
         ors.append(f"kvk_number.eq.{keys['kvk']}")
     res = (

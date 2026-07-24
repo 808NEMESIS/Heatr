@@ -167,7 +167,7 @@ def test_add_suppression_stores_domain_and_kvk():
     db = FakeSuppressionDB()
     add_suppression(db, email="a@kliniek.nl", suppression_type="unsubscribe",
                     source="webhook", kvk_number="12345678")
-    assert db.rows[0]["normalized_domain"] == "kliniek.nl"
+    assert db.rows[0]["domain"] == "kliniek.nl"        # bestaande 024-kolom
     assert db.rows[0]["kvk_number"] == "12345678"
 
 
@@ -202,7 +202,7 @@ def test_check_suppressed_lead_matches_on_domain():
     out = check_suppressed_lead(fake, {"email": "nieuw@kliniek.nl", "kvk_number": "999"})
     assert out == "forgotten"
     assert "normalized_email.eq.nieuw@kliniek.nl" in fake.or_arg
-    assert "normalized_domain.eq.kliniek.nl" in fake.or_arg
+    assert "domain.eq.kliniek.nl" in fake.or_arg
     assert "kvk_number.eq.999" in fake.or_arg
 
 
@@ -216,9 +216,9 @@ def test_check_suppressed_lead_fail_closed_raises():
         check_suppressed_lead(_OrFake(raises="db down"), {"email": "x@y.nl"})
 
 
-def test_add_suppression_falls_back_to_email_only_before_migration_042():
-    # pre-042: insert mét org-kolommen faalt (kolom bestaat niet) → retry e-mail-only
-    # zodat de bestaande unsubscribe-suppressie BLIJFT werken.
+def test_add_suppression_falls_back_without_kvk_before_migration_042():
+    # pre-042: insert mét kvk_number faalt (kolom bestaat niet) → retry zonder kvk
+    # zodat de bestaande unsubscribe-suppressie BLIJFT werken. `domain` (024) blijft.
     class _PreMigrationDB:
         def __init__(self): self.inserts = []
         def table(self, _): return self
@@ -226,13 +226,14 @@ def test_add_suppression_falls_back_to_email_only_before_migration_042():
             self._row = dict(row); return self
         def execute(self):
             self.inserts.append(self._row)
-            if "normalized_domain" in self._row:
-                raise RuntimeError("column \"normalized_domain\" does not exist")
+            if "kvk_number" in self._row:
+                raise RuntimeError("column \"kvk_number\" does not exist")
             class _R: data = [{}]
             return _R()
     db = _PreMigrationDB()
     out = add_suppression(db, email="a@kliniek.nl", suppression_type="unsubscribe", source="webhook")
     assert out["ok"] is True and out.get("org_columns_missing") is True
-    # tweede insert had de org-kolommen NIET meer
-    assert "normalized_domain" not in db.inserts[-1]
+    # tweede insert had kvk_number NIET meer, maar domein (024) WEL
+    assert "kvk_number" not in db.inserts[-1]
+    assert db.inserts[-1]["domain"] == "kliniek.nl"
     assert db.inserts[-1]["normalized_email"] == "a@kliniek.nl"

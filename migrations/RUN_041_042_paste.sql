@@ -22,14 +22,13 @@ CREATE INDEX IF NOT EXISTS idx_website_intel_receptie_hook
   ON heatr_website_intelligence(workspace_id, receptie_hook_code)
   WHERE receptie_hook_code IS NOT NULL;
 
--- ── 042: org-brede suppressie op domein + KvK ─────────────────────────────────
-ALTER TABLE suppressions ADD COLUMN IF NOT EXISTS normalized_domain text;
-ALTER TABLE suppressions ADD COLUMN IF NOT EXISTS kvk_number        text;
+-- ── 042: org-brede suppressie op KvK ──────────────────────────────────────────
+-- Tabel = heatr_suppressions (heatr_-prefix!). `domain` bestaat al sinds 024,
+-- dus alleen kvk_number is nieuw.
+ALTER TABLE heatr_suppressions ADD COLUMN IF NOT EXISTS kvk_number text;
 
-CREATE INDEX IF NOT EXISTS idx_suppressions_domain
-  ON suppressions(normalized_domain) WHERE normalized_domain IS NOT NULL AND revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_suppressions_kvk
-  ON suppressions(kvk_number) WHERE kvk_number IS NOT NULL AND revoked_at IS NULL;
+  ON heatr_suppressions (kvk_number) WHERE kvk_number IS NOT NULL AND revoked_at IS NULL;
 
 -- Sanity na afloop:
 --   SELECT column_name FROM information_schema.columns
