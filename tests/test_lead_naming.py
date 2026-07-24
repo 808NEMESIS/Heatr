@@ -58,3 +58,29 @@ def test_inject_variables_uses_safe_first_name():
     # Niet 'Hoi Ceciledebooij' — fallback 'daar' wordt gebruikt
     assert "Ceciledebooij" not in out
     assert "Hoi daar" in out
+
+
+# ── Junk-'namen' afvangen (sample-bevinding 2026-07-24) ──────────────────────
+def test_safe_first_name_rejects_generic_words():
+    for junk in ("Afspraak", "Contact", "Info", "Receptie", "Team", "Boeking"):
+        assert safe_first_name({"contact_first_name": junk}) == "", junk
+
+
+def test_safe_first_name_rejects_business_fragment():
+    # domein-/merkfragment als naam ('Glowclinicnl' = glowclinic + nl).
+    assert safe_first_name({"contact_first_name": "Glowclinicnl"}) == ""
+    assert safe_first_name({"contact_first_name": "Skinstudio"}) == ""
+
+
+def test_safe_first_name_rejects_initial_and_digits():
+    assert safe_first_name({"contact_first_name": "A."}) == ""
+    assert safe_first_name({"contact_first_name": "J"}) == ""
+    assert safe_first_name({"contact_first_name": "Team2"}) == ""
+
+
+def test_safe_first_name_keeps_eponymous_owner_names():
+    # echte voornamen die ook in de klinieknaam zitten mogen NIET sneuvelen.
+    assert safe_first_name({"contact_first_name": "Joost", "company_name": "Joost Kroon"}) == "Joost"
+    assert safe_first_name({"contact_first_name": "Frodo", "company_name": "Kliniek Dokter Frodo"}) == "Frodo"
+    assert safe_first_name({"contact_first_name": "Dunya"}) == "Dunya"
+    assert safe_first_name({"contact_first_name": "Bo"}) == "Bo"  # korte echte naam

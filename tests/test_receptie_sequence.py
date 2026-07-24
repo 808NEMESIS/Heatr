@@ -44,10 +44,37 @@ def test_sendable_with_both_tokens_and_first_name():
     assert PRIV in r["body"] and UNSUB in r["body"]
 
 
-def test_gate_blocks_bare_greeting_without_first_name():
+def test_no_first_name_falls_back_to_hallo_not_bare():
+    # geen voornaam → "Hallo," (grammaticaal correct), nooit "Hoi ," — en sendable.
     lead = {**LEAD, "contact_first_name": None}
     r = render_receptie_mail(1, lead, hook_code="Q4", privacy_notice=PRIV, unsubscribe=UNSUB)
-    assert r["sendable"] is False and r["block_reason"] == "bare_greeting"
+    assert r["body"].startswith("Hallo,")
+    assert "Hoi ," not in r["body"] and r["sendable"] is True
+
+
+def test_junk_first_name_falls_back_to_hallo():
+    # 'Afspraak'/'Glowclinicnl' zijn junk → behandeld als geen naam → 'Hallo,'.
+    for junk in ("Afspraak", "Glowclinicnl", "A."):
+        lead = {**LEAD, "contact_first_name": junk}
+        r = render_receptie_mail(1, lead, hook_code="Q4", privacy_notice=PRIV, unsubscribe=UNSUB)
+        assert r["body"].startswith("Hallo,"), f"{junk} niet afgevangen"
+        assert junk not in r["body"]
+
+
+def test_real_first_name_used_in_greeting():
+    r = render_receptie_mail(1, LEAD, hook_code="Q4", privacy_notice=PRIV, unsubscribe=UNSUB)
+    assert r["body"].startswith("Hoi Sanne,")
+
+
+def test_mail2_overgang_causal_only_for_reinforcing_pair():
+    # Q4+Q7 = versterkend → causale overgang. Q7+P1 = los → neutraal, geen causale claim.
+    q4q7 = render_receptie_mail(2, LEAD, hook_code="Q4", second_hook="Q7",
+                                privacy_notice=PRIV, unsubscribe=UNSUB)["body"]
+    q7p1 = render_receptie_mail(2, LEAD, hook_code="Q7", second_hook="P1",
+                                privacy_notice=PRIV, unsubscribe=UNSUB)["body"]
+    assert "dit maakt het eerste lastiger" in q4q7
+    assert "dit maakt het eerste lastiger" not in q7p1
+    assert "op een heel ander punt" in q7p1
 
 
 def test_gate_catches_unresolved_token():

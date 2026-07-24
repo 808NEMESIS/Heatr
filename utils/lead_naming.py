@@ -18,6 +18,18 @@ import re
 _CONFIDENCE_RE = re.compile(r"confidence:\s*(\d+)\s*%", re.IGNORECASE)
 _MIN_GREETING_CONFIDENCE = 30
 
+# Junk-'namen' (sample-bevinding 2026-07-24): generieke woorden i.p.v. een naam.
+_GENERIC_NAME_RE = re.compile(
+    r"^(afspraak|contact|informatie|info|kliniek|clinic|praktijk|receptie|balie|"
+    r"admin|noreply|no-reply|team|mail|e-?mail|hallo|hello|webshop|order|orders|"
+    r"sales|support|aanmelden|nieuwsbrief|boeking|booking|klantenservice|"
+    r"welkom|website|home)$", re.IGNORECASE)
+# Een echte voornaam bevat geen business-/sectorwoord. Vangt domein-/merkfragmenten
+# als 'Glowclinicnl' zonder eponieme namen (Joost, Frodo, Liem) te raken.
+_BUSINESS_WORD_RE = re.compile(
+    r"clinic|kliniek|skin|beauty|laser|huid|praktijk|studio|medisch|cosmetic|"
+    r"aesthetic|esthetic|derma|salon|\.nl|\.com|\.be", re.IGNORECASE)
+
 
 def extract_contact_confidence(lead: dict) -> int:
     """Parse confidence-percentage uit lead.contact_why_chosen.
@@ -58,6 +70,16 @@ def safe_first_name(lead: dict) -> str:
             return ""
     if len(raw) > 12 and " " not in raw:
         return ""
+    # Junk-namen afvangen (sample-bevinding 2026-07-24): liever geen naam dan een
+    # neppe. Een lege return laat de greeting terugvallen op 'Hallo,'.
+    if raw.endswith(".") or len(raw) <= 1:
+        return ""                                    # initiaal ('A.') / te kort
+    if any(c.isdigit() for c in raw):
+        return ""                                    # bevat cijfers
+    if _GENERIC_NAME_RE.match(raw):
+        return ""                                    # generiek woord ('Afspraak')
+    if _BUSINESS_WORD_RE.search(raw):
+        return ""                                    # domein-/merkfragment ('Glowclinicnl')
     return raw
 
 

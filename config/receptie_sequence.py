@@ -30,7 +30,7 @@ _SUBJECT = "{{bedrijfsnaam}}, één ding dat me opviel"
 
 # Mail 1 — dag 0. {{haakje}} = mail-1 haak, {{zonde_brug}} = review-onderbouwing.
 _RC_MAIL1 = (
-    "Hoi {{first_name}},\n\n"
+    "{{begroeting}}\n\n"
     "{{haakje}}\n\n"
     "Het vervelende is dat je dat nooit ziet: ze belt je niet om te zeggen dat "
     "ze afhaakte. {{zonde_brug}}\n\n"
@@ -45,20 +45,31 @@ _RC_MAIL1 = (
 )
 
 # Mail 2 — dag 3. Alleen bij een tweede thema-haak. {{haakje_2}} = second_hook.
+# {{overgang}} is CONDITIONEEL (Sami 2026-07-24): versterkende combinaties (het gat
+# wordt onzichtbaar dóór het tweede signaal, bv. Q4+Q7: niet kunnen vastleggen én
+# niet meten) krijgen de causale zin; losse combinaties iets neutraals zónder
+# causale claim (geen prijs maakt geen-meting niet lastiger).
 _RC_MAIL2 = (
-    "Hoi {{first_name}},\n\n"
-    "Nog één ding dat me opviel, en dit maakt het eerste lastiger dan het lijkt. "
-    "{{haakje_2}}\n\n"
+    "{{begroeting}}\n\n"
+    "{{overgang}} {{haakje_2}}\n\n"
     "Zal ik het je even laten zien? Twee minuten, op je eigen site.\n\n"
     "Sami\n\n"
     "{{privacy_notice}}\n"
     "{{unsubscribe}}"
 )
 
+_MAIL2_OVERGANG_VERSTERKEND = (
+    "Nog één ding dat me opviel, en dit maakt het eerste lastiger dan het lijkt."
+)
+_MAIL2_OVERGANG_NEUTRAAL = "Nog één ding dat me opviel, op een heel ander punt."
+# Versterkende paren: het tweede signaal maakt het eerste gat onzichtbaar/erger.
+# Q4 (niet kunnen vastleggen) + Q7 (niet meten) = het lek is onzichtbaar.
+_VERSTERKENDE_PAREN = frozenset([frozenset({"Q4", "Q7"})])
+
 # Mail 3 — dag 5. Capaciteit-schaarste, geen deadline/teller. {{lek_doorloop}}
 # is haak-specifiek zodat de urgentie uit het mail-1-lek komt (niet generiek).
 _RC_MAIL3 = (
-    "Hoi {{first_name}},\n\n"
+    "{{begroeting}}\n\n"
     "Laatste van mijn kant, beloofd.\n\n"
     "Ik doe dit met een handjevol praktijken tegelijk, vijf om precies te zijn, "
     "omdat ik er bij elke persoonlijk naast zit. Dat is geen verkooptruc, het is "
@@ -138,6 +149,9 @@ def render_receptie_mail(
     from utils.lead_naming import display_first_name
     first = display_first_name(lead, fallback="")
     company = (lead.get("company_name") or "").strip()
+    # Voornaam-gate (Sami 2026-07-24): een geldige voornaam → "Hoi {naam},";
+    # geen (of junk, afgevangen in safe_first_name) → "Hallo," — nooit "Hoi ,".
+    begroeting = f"Hoi {first}," if first else "Hallo,"
 
     if step == 2 and not second_hook:
         return {"step": 2, "skipped": True, "subject": None, "body": None,
@@ -150,15 +164,19 @@ def render_receptie_mail(
     haakje_2 = build_haakje(second_hook, seed or lead.get("id"), kliniek=company or None,
                             variant=second_variant, stad=lead.get("city")) if second_hook else ""
     lek = _LEK_DOORLOOP.get(hook_code or "", "")
+    # mail-2 overgang: causaal alleen bij een versterkend paar (bv. Q4+Q7).
+    overgang = (_MAIL2_OVERGANG_VERSTERKEND
+                if frozenset({hook_code, second_hook}) in _VERSTERKENDE_PAREN
+                else _MAIL2_OVERGANG_NEUTRAAL)
 
     body = {1: _RC_MAIL1, 2: _RC_MAIL2, 3: _RC_MAIL3}.get(step, _RC_MAIL1)
     subject = _SUBJECT.replace("{{bedrijfsnaam}}", company)
     if step in (2, 3):
         subject = "Re: " + subject
     repl = {
-        "{{first_name}}": first, "{{bedrijfsnaam}}": company,
+        "{{begroeting}}": begroeting, "{{bedrijfsnaam}}": company,
         "{{haakje}}": haakje, "{{zonde_brug}}": zonde, "{{haakje_2}}": haakje_2,
-        "{{lek_doorloop}}": lek,
+        "{{overgang}}": overgang, "{{lek_doorloop}}": lek,
         "{{privacy_notice}}": privacy_notice, "{{unsubscribe}}": unsubscribe,
     }
     for k, v in repl.items():
