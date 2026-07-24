@@ -74,6 +74,18 @@ _RC_MAIL2 = (
     "{{unsubscribe}}"
 )
 
+def receptie_shells() -> list[tuple[str, str]]:
+    """(subject, body-shell) per receptie-mail (1/2/3), voor de Warmr campaign-
+    create. De ECHTE body wordt live geresolved door _render_receptie_marker op
+    het verzendmoment (met haakje/tokens/gates); dit is enkel de shell die de
+    campaign-create accepteert. Cadence 0/3/5 zit in receptie_faseA_steps."""
+    return [
+        (_SUBJECT, _RC_MAIL1),
+        ("Re: " + _SUBJECT, _RC_MAIL2),
+        ("Re: " + _SUBJECT, _RC_MAIL3),
+    ]
+
+
 _MAIL2_OVERGANG_VERSTERKEND = (
     "Nog één ding dat me opviel, en dit maakt het eerste lastiger dan het lijkt."
 )

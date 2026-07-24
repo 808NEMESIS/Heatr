@@ -1694,6 +1694,14 @@ def _resolve_template_for_lead(
         if t:
             return body_template_id, t, t["default_steps"]
 
+    # Receptie-brug (Q4/Q7/Q2/P1-ladder): expliciete forced-brug voor de hele
+    # cohort, net als de v3_1_-forced-mode. render_faseA_marker leest per lead de
+    # receptie_hook_code en past de compliance-gates toe; leads zonder hook of
+    # zonder tokens/rechtspersoon worden bij het renderen geblokkeerd/overgeslagen.
+    if body_template_id == "faseA_receptie":
+        from config.sequence_templates import receptie_faseA_steps
+        return "faseA_receptie", None, receptie_faseA_steps()
+
     # AUTO mode (default sinds 2026-07-21): Fase A-steps. Elke step draagt een
     # subject+body-SHELL (met {{tokens}}, net als v3.1) zodat Warmr's campaign-
     # create ze accepteert — ÉN faseA_brug/faseA_step, zodat process_due_send de

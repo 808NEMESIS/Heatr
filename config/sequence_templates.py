@@ -974,6 +974,26 @@ def _mail3_plekken(free_slots: int) -> str:
     return _FF_MULTI
 
 
+def receptie_faseA_steps() -> list[dict]:
+    """Bouw de 3 Fase-A-markers voor de receptie-brug (Q4/Q7/Q2/P1-ladder).
+
+    Elke step draagt de faseA_brug/faseA_step-marker + een subject/body-SHELL zodat
+    de Warmr campaign-create ze accepteert. De echte body wordt LIVE geresolved door
+    render_faseA_marker → _render_receptie_marker op het verzendmoment (haakje +
+    compliance-gates). Cadence 0/3/5 (Sami-spec). Lead-onafhankelijk: de brug leest
+    receptie_hook_code per lead pas bij het renderen."""
+    from config.receptie_sequence import receptie_shells
+    delays = [0, 3, 5]
+    steps: list[dict] = []
+    for i, (subject, body) in enumerate(receptie_shells()):
+        steps.append({
+            "faseA_brug": "receptie", "faseA_step": i,
+            "subject": subject, "body": body,
+            "delay_days": delays[i], "thread": "new" if i == 0 else "reply",
+        })
+    return steps
+
+
 def resolve_faseA_step(brug: str, step_index: int, lead: dict, *, free_slots: int) -> dict:
     """Kies de juiste (ongerenderde) Fase A-step: subject + body + delay.
 
