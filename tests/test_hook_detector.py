@@ -18,6 +18,7 @@ from website_intelligence.hook_detector import (
     SIGNAL2_MIN_Y,
     _decide_signal,
     classify_booking_mechanism,
+    booking_platform_in_html,
     combine_stable,
     decide_receptie_hook,
     evaluate_booking_entries,
@@ -371,6 +372,15 @@ def test_price_link_in_html_raw_fallback():
     assert price_link_in_html('<a href="/en/pricing">Prices</a>')
     assert not price_link_in_html('<a href="/contact">Contact</a>')
     assert not price_link_in_html("")
+
+
+def test_booking_platform_in_html_raw_fallback():
+    # Q4-steekproef: platform in de GESERVEERDE bron dat JS uit de render strippt.
+    assert booking_platform_in_html('<script src="https://x.clinicminds.com/w.js"></script>')
+    assert booking_platform_in_html('<a href="https://kliniek.salonized.com/boek">Boek</a>')
+    assert booking_platform_in_html('verwijzing via <a href="https://zorgdomein.nl/...">')
+    assert not booking_platform_in_html('<a href="/contact">Contact</a>')
+    assert not booking_platform_in_html("")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

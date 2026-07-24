@@ -46,6 +46,9 @@ BOOKING_PLATFORMS = [
     "appointmentplus", "meetings.hubspot.com",
     # testrun 2026-07-22: aeverclinics.zenoti.com miste → vals "geen boeking"
     "zenoti.com",
+    # Q4-steekproef 2026-07-24: doctorsatsoap gebruikte clinicminds (NL cosmetisch
+    # boekplatform) → vals Q4/Q2-hit. Toegevoegd aan de canonieke lijst.
+    "clinicminds",
 ]
 
 # NL + EN keyword-varianten die op een boekings-CTA wijzen. Woordgrens-match.

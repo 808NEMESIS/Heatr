@@ -486,6 +486,16 @@ def price_link_in_html(html: str | None) -> bool:
     return bool(_PRICE_HREF_RE.search(html or ""))
 
 
+def booking_platform_in_html(html: str | None) -> bool:
+    """True als de HTML naar een bekend boekplatform verwijst (self-booking).
+    Vangnet voor platform-links die JS uit de mobiele render strippt (analoog aan
+    price_link_in_html) — Q4-steekproef 2026-07-24: doctorsatsoap (clinicminds) en
+    dcklinieken (zorgdomein) hadden het platform in de bron, niet in de render →
+    vals Q4/Q2-hit. Fail-closed: een platform in de bron laat Q4/Q2 vervallen."""
+    low = (html or "").lower()
+    return any(p.lower() in low for p in ALL_BOOKING_PLATFORMS)
+
+
 def evaluate_price_anchor(price: dict | None, *, fetch_ok: bool) -> dict[str, Any]:
     """P1 — geeft de site een prijsindicatie? Pure tri-state (zie TRISTATE).
 
@@ -1180,18 +1190,24 @@ async def _receptie_one_render(page, *, served_html: str, request_urls: list[str
     page_text = re.sub(r"<[^>]+>", " ", html or "").lower()
     request_only = bool(_REQUEST_ONLY_RE.search(page_text))
     mechanism = classify_booking_mechanism(booking, entries, domain, request_only)
+    # served-HTML-vangnet: een boekplatform dat JS uit de mobiele render strippt
+    # (clinicminds/zorgdomein-steekproef) → behandel als self_booking, zodat Q4/Q2
+    # niet vals vuren op een refuteerbare "geen boeking".
+    served_selfbook = booking_platform_in_html(served_html) or booking_platform_in_html(html)
+    self_booking = (mechanism == "self_booking") or served_selfbook
+    mechanism_eff = "self_booking" if served_selfbook else mechanism
     try:
         form_present = bool(await page.evaluate(_FORM_PRESENT_JS))
     except Exception:
         form_present = False
-    q2 = evaluate_selfbooking(mechanism, form_present=form_present, fetch_ok=fetch_ok)
+    q2 = evaluate_selfbooking(mechanism_eff, form_present=form_present, fetch_ok=fetch_ok)
 
     chat_platform = bool(_CHAT_PLATFORM_RE.search(blob))
     wa = bool(_WA_RE.search(blob))
     messenger = bool(_MESSENGER_RE.search(blob))
     ambiguous_chat = bool(_AMBIG_CHAT_RE.search(page_text)) and not chat_platform
     q4 = evaluate_coverage(chat_platform=chat_platform, wa=wa, messenger=messenger,
-                           self_booking=(mechanism == "self_booking"),
+                           self_booking=self_booking,
                            ambiguous_chat=ambiguous_chat, fetch_ok=fetch_ok)
 
     try:
