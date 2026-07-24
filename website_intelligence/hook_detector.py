@@ -441,32 +441,64 @@ def evaluate_tracking(request_urls: list[str] | None, html: str | None, *,
     return {"state": "hit", "evidence": ["geen_analytics_geen_pixel_client_side"], "found": []}
 
 
-_PRICE_SCAN_JS = """
+# De prijs kan op een APARTE pagina staan (tarieven/diensten/behandeling), niet op
+# de home — en het label kan Engels zijn ("Prices"/"Pricing"). De scan zoekt daarom
+# over ALLE links (niet enkel header/nav; steekproef 2026-07-24: thebodyshaper had
+# de tarieven-link buiten de nav) en levert een `service_link` op die de writer/
+# meting rendert om óók dáár op een €-bedrag te controleren.
+_PRICE_SCAN_JS = r"""
 () => {
   const low = s => (s || '').toLowerCase();
   const bodyTxt = low(document.body ? document.body.innerText : '');
-  const euro = /€\\s?\\d{2,}|\\bvanaf\\s?€|\\d{2,}\\s*euro\\b|prijs vanaf/.test(bodyTxt);
-  const navA = [...document.querySelectorAll('header a, nav a, [role=navigation] a')];
-  const tarieven_nav = navA.some(a => {
+  const euro = /€\s?\d{2,}|\bvanaf\s?€|\d{2,}\s*euro\b|prijs vanaf/.test(bodyTxt);
+  const links = [...document.querySelectorAll('a')];
+  const hrefRe = /tarie|prijz|prijslijst|\/kosten|\/prices?\b|\/pricing|price-list/;
+  const txtRe  = /tarief|tarieven|prijzen|prijslijst|\bprices?\b|pricing/;
+  let price_page_link = false, service_link = null;
+  for (const a of links) {
     const h = low(a.getAttribute('href') || ''), t = low(a.innerText || '');
-    return /tarie|prijz|prijslijst|\\/kosten/.test(h) || /tarief|tarieven|prijzen|prijslijst/.test(t);
-  });
+    if (hrefRe.test(h) || txtRe.test(t)) price_page_link = true;
+    if (!service_link && /\/(diensten|behandel|behandeling|services?|treatments?)/.test(h)
+        && a.href && a.href.startsWith('http')) service_link = a.href;
+  }
   const clickers = [...document.querySelectorAll('a,button,summary,[role=button]')];
-  const teaser = clickers.some(el => /prijs|tarief|tarieven|kosten|prijslijst/.test(low(el.innerText || '')));
-  return {euro_amount: euro, tarieven_nav: tarieven_nav, price_teaser_no_amount: teaser && !euro};
+  const teaser = clickers.some(el => /prijs|tarief|tarieven|kosten|prijslijst|price|pricing/.test(low(el.innerText || '')));
+  return {euro_amount: euro, price_page_link: price_page_link,
+          service_link: service_link, price_teaser_no_amount: teaser && !euro};
 }
 """
+
+# Raw-HTML-vangnet voor de prijzen-/tarieven-link: sommige sites strippen de link
+# op mobiel uit de gerenderde DOM (JS-reflow), terwijl de GESERVEERDE HTML 'm wél
+# heeft (steekproef thebodyshaper: /tarieven/ zat in de bron, niet in de render).
+# Een prijs-pagina in de bron = de claim "geen prijsindicatie" is één-klik-
+# weerlegbaar → de scanner OR't deze over de JS-uitslag heen (belt-and-braces,
+# zelfde patroon als de booking-nav-sweep).
+_PRICE_HREF_RE = re.compile(
+    r"href=[\"'][^\"']*(?:tarieven|prijzen|prijslijst|/prijs|/kosten|/prices?\b|/pricing|price-list)[^\"']*",
+    re.IGNORECASE,
+)
+
+
+def price_link_in_html(html: str | None) -> bool:
+    """True als de (geserveerde) HTML naar een tarieven-/prijzen-/prices-pagina
+    linkt. Vangnet voor links die JS uit de mobiele render weglaat."""
+    return bool(_PRICE_HREF_RE.search(html or ""))
 
 
 def evaluate_price_anchor(price: dict | None, *, fetch_ok: bool) -> dict[str, Any]:
     """P1 — geeft de site een prijsindicatie? Pure tri-state (zie TRISTATE).
 
-    - "geen"      : een €-bedrag op de pagina, óf een tarieven-/prijzen-pagina in
-                    de nav → er IS een prijsanker (geen hit).
-    - "onbepaald" : een prijs-/tarief-element zonder zichtbaar bedrag (accordion/
-                    tab) → de prijs zit mogelijk achter een interactie die we niet
-                    openden → niet hard, nooit als hit.
-    - "hit"       : geen bedrag én geen tarievenpagina → geen prijsanker.
+    Verwacht gecombineerde signalen over de home ÉN (indien aanwezig) de
+    diensten-/behandelpagina:
+    - "geen"      : een €-bedrag ergens gezien, óf een tarieven-/prijzen-/prices-
+                    pagina gelinkt (waar dan ook) → er IS een prijsanker.
+    - "onbepaald" : er is een diensten-/behandelpagina die we NIET op prijs konden
+                    controleren (`service_unchecked`), óf een prijs-/tarief-element
+                    zonder zichtbaar bedrag → prijs mogelijk elders/achter een klik
+                    → nooit als hit (fail-closed, streng-boven-mis; steekproef-les).
+    - "hit"       : geen bedrag, geen prijzen-/tarieven-link, en geen ongecontro-
+                    leerde prijs-pagina → geen prijsanker.
     """
     if not fetch_ok:
         return {"state": "onbepaald", "evidence": ["fetch_failed"]}
@@ -474,13 +506,15 @@ def evaluate_price_anchor(price: dict | None, *, fetch_ok: bool) -> dict[str, An
     ev: list[str] = []
     if p.get("euro_amount"):
         ev.append("euro_bedrag_op_pagina")
-    if p.get("tarieven_nav"):
-        ev.append("tarieven_pagina_in_nav")
+    if p.get("price_page_link"):
+        ev.append("tarieven_of_prijzen_pagina_gelinkt")
     if ev:
         return {"state": "geen", "evidence": ev}
+    if p.get("service_unchecked"):
+        return {"state": "onbepaald", "evidence": ["diensten_behandelpagina_niet_op_prijs_gecontroleerd"]}
     if p.get("price_teaser_no_amount"):
         return {"state": "onbepaald", "evidence": ["prijs_element_zonder_bedrag_mogelijk_achter_interactie"]}
-    return {"state": "hit", "evidence": ["geen_bedrag_geen_tarievenpagina"]}
+    return {"state": "hit", "evidence": ["geen_bedrag_geen_prijzenpagina"]}
 
 
 def combine_stable(state_a: str | None, state_b: str | None) -> str:

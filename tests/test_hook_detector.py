@@ -24,6 +24,7 @@ from website_intelligence.hook_detector import (
     evaluate_price_anchor,
     evaluate_tap_targets,
     evaluate_tracking,
+    price_link_in_html,
 )
 
 
@@ -313,35 +314,53 @@ def test_q7_onbepaald_when_fetch_failed():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_p1_geen_hit_when_euro_amount_on_page():
-    r = evaluate_price_anchor({"euro_amount": True, "tarieven_nav": False,
-                               "price_teaser_no_amount": False}, fetch_ok=True)
+    r = evaluate_price_anchor({"euro_amount": True}, fetch_ok=True)
     assert r["state"] == "geen"
 
 
-def test_p1_geen_hit_when_tarieven_page_in_nav():
-    r = evaluate_price_anchor({"euro_amount": False, "tarieven_nav": True,
-                               "price_teaser_no_amount": False}, fetch_ok=True)
+def test_p1_geen_hit_when_price_page_linked():
+    # tarieven-/prijzen-/prices-pagina gelinkt (waar dan ook) → prijsanker bestaat.
+    r = evaluate_price_anchor({"euro_amount": False, "price_page_link": True}, fetch_ok=True)
     assert r["state"] == "geen"
 
 
 def test_p1_hit_when_no_price_anywhere():
-    r = evaluate_price_anchor({"euro_amount": False, "tarieven_nav": False,
-                               "price_teaser_no_amount": False}, fetch_ok=True)
+    r = evaluate_price_anchor({"euro_amount": False, "price_page_link": False,
+                               "service_unchecked": False, "price_teaser_no_amount": False},
+                              fetch_ok=True)
     assert r["state"] == "hit"
+
+
+def test_p1_onbepaald_when_service_page_unchecked():
+    # steekproef-les (allure/salonized): prijs stond op de /services-pagina, niet op
+    # de home. Een ongecontroleerde diensten-/behandelpagina → onbepaald, nooit hit.
+    r = evaluate_price_anchor({"euro_amount": False, "price_page_link": False,
+                               "service_unchecked": True}, fetch_ok=True)
+    assert r["state"] == "onbepaald"
 
 
 def test_p1_onbepaald_when_price_teaser_without_amount():
     # 'Bekijk tarieven'-accordion zonder zichtbaar bedrag → prijs mogelijk achter
     # interactie → onbepaald, nooit hit.
-    r = evaluate_price_anchor({"euro_amount": False, "tarieven_nav": False,
-                               "price_teaser_no_amount": True}, fetch_ok=True)
+    r = evaluate_price_anchor({"euro_amount": False, "price_page_link": False,
+                               "service_unchecked": False, "price_teaser_no_amount": True},
+                              fetch_ok=True)
     assert r["state"] == "onbepaald"
 
 
 def test_p1_onbepaald_when_fetch_failed():
-    r = evaluate_price_anchor({"euro_amount": False, "tarieven_nav": False,
-                               "price_teaser_no_amount": False}, fetch_ok=False)
+    r = evaluate_price_anchor({"euro_amount": False, "price_page_link": False}, fetch_ok=False)
     assert r["state"] == "onbepaald"
+
+
+def test_price_link_in_html_raw_fallback():
+    # steekproef-les (thebodyshaper): /tarieven/-link zat in de GESERVEERDE HTML
+    # maar niet in de mobiele render → raw-HTML-vangnet moet 'm alsnog vinden.
+    assert price_link_in_html('<a href="https://x.nl/tarieven/">Tarieven</a>')
+    assert price_link_in_html('<nav><a href="/prijzen">Prijzen</a></nav>')
+    assert price_link_in_html('<a href="/en/pricing">Prices</a>')
+    assert not price_link_in_html('<a href="/contact">Contact</a>')
+    assert not price_link_in_html("")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
