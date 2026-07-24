@@ -35,9 +35,53 @@ Nu blokkeert de rechtsvorm-gate iedereen, want `heatr_leads.kvk_legal_form` best
 - **Handeling:** volg `docs/receptie_seed_test_plaintext.md` (één mail naar je eigen adres, hard vergrendeld met `HEATR_SEND_ALLOWLIST`); check `Content-Type: text/plain`.
 - **Waar:** jij, met je eigen adres. Geen prospect-send.
 
-### 7. KVEG-voornaam — niet blokkerend
-- **Handeling:** vul de voornaam uit Slack in op de KVEG-lead (anders krijgt KVEG "Hallo,"). 14/32 leads hebben sowieso geen bruikbare voornaam → "Hallo,"; dit verbetert er één.
-- **Waar:** DB / enrichment.
+### 7. Handmatige narekening vóór launch — twee lijsten (Sami)
+
+**7a. De 6 Q4-leads met ONbevestigd formulier — apart houden tot je ze zelf op de
+site checkt** (de Fairday-val: "alleen een formulier" terwijl het een nieuwsbrief
+of zoekveld kan zijn). Hun Q4-claim rust op een DOM-form dat niet als aanvraag-
+formulier bevestigd is. Sluit ze uit van de eerste launch-cohort tot je bevestigt:
+
+| kliniek | site — narekenen: is er een écht contact/afspraak-formulier? |
+|---|---|
+| Dr. liem clinic | https://drliemclinic.nl |
+| Huidarsenaal | https://huidarsenaal.nl |
+| Kliniek Dokter Frodo | https://dokterfrodo.nl |
+| Kliniek Vrijdag | https://kliniekvrijdag.nl |
+| Piuralift | https://piuralift.nl |
+| laserskin kliniek | https://laserskinkliniek.nl |
+
+De **4 Q4-leads mét bevestigd formulier (Q2 hit)** mogen wél mee (mits de andere
+gates): DC Klinieken Groningen · Joost Kroon · SKIN Amsterdam Centrum · SR Clinic.
+
+**7b. De 14 leads zonder bruikbare voornaam — namen handmatig opzoeken** (de
+enrichment pakt structureel het domein/een initiaal i.p.v. de eigenaar; de gate
+vangt het af met "Hallo,", maar voor deze founding-cohort wil je de echte naam):
+
+| kliniek | site — voornaam eigenaar opzoeken | huidige (junk/leeg) |
+|---|---|---|
+| Huidarsenaal | https://huidarsenaal.nl | "C." |
+| Kliniek Vrijdag | https://kliniekvrijdag.nl | "Afspraak" |
+| Piuralift | https://piuralift.nl | "F." |
+| SR Clinic | https://srclinic.nl | "A." |
+| laserskin kliniek | https://laserskinkliniek.nl | leeg |
+| Allure Laser Clinic | https://allure-laser-clinics.salonized.com | leeg |
+| Beauty Clinic Nederland | https://beautyclinic.global | leeg |
+| Clinic LuxaSkin | https://clinic-luxaskin.nl | leeg |
+| Glow Clinic Utrecht | https://glowclinicutrecht.nl | "Glowclinicnl" |
+| LaserQueens | https://laserqueens.nl | leeg |
+| Knapste | https://knapste.nl | leeg |
+| Mourits huidtherapie | https://mouritshuidtherapie.nl | leeg |
+| HyperHidrosis Kliniek | https://hyperhidrosis-kliniek.nl | leeg |
+| Skin Studios | https://skinstudios.nl | leeg |
+
+**7c. KVEG-voornaam** — vul de voornaam uit Slack in op de KVEG-lead. **Waar:** DB.
+
+**7d. Bedrijfsnaam-check** — `empclinics.com` had een SEO-title als naam; die is nu
+geschoond naar "EMPCLINICS Emphair Haartransplantatie" (geen pipes meer, ≤4 woorden
+→ komt door de gate). Eyeball 'm even; wil je 'm strakker ("EMPCLINICS"), corrigeer
+de company_name in de DB. Namen die na schoonmaak nog vervuild zijn, blokkeert de
+render zelf (`company_name_needs_review`).
 
 ### 8. Kill-switch aan — JOUW expliciete beslissing, als laatste
 - **Handeling:** `ENABLE_PROSPECT_SENDS=true`. Dit is de enige schakel die "niets verstuurt" omzet in "sends kunnen". Ik zet 'm niet autonoom.
