@@ -29,29 +29,52 @@ _RECHTSPERSOON_RE = re.compile(
     r"besloten vennootschap|\bb\.?v\.?\b|naamloze vennootschap|\bn\.?v\.?\b|"
     r"stichting|co[öo]peratie|vereniging|holding|rechtspersoon", re.IGNORECASE)
 
+# Gratis, zekere rechtspersoon-afleiding uit bedrijfsnaam/footer (Sami 2026-07-25,
+# zonder betaalde KvK-API). POSITIEF-ONLY: "B.V."/"N.V."/besloten vennootschap =
+# rechtspersoon; afwezigheid zegt NIETS (een BV zet 'BV' niet altijd in de handels-
+# naam) → dan blijft het onbepaald, nooit 'natuurlijk_persoon'. Streng: standalone
+# BV/B.V.-token, niet een substring.
+_RECHTSPERSOON_SIGNAL_RE = re.compile(
+    r"\bB\.?V\.?\b|besloten vennootschap|\bN\.?V\.?\b|naamloze vennootschap|"
+    r"\bco[öo]peratie\b|\bcoöperatief\b|\bB\.?V\.?\s*i\.?o\.?\b")
 
-def classify_legal_form(lead: dict) -> str:
-    """'rechtspersoon' | 'natuurlijk_persoon' | 'onbepaald' uit kvk_legal_form.
 
-    Leeg/onbekend → 'onbepaald' (KvK opt-in uit → rechtsvorm niet vastgesteld).
-    Fail-closed: bij twijfel 'onbepaald', nooit optimistisch 'rechtspersoon'."""
+def derive_rechtspersoon(text: str | None) -> str | None:
+    """Return 'rechtspersoon' als de tekst (bedrijfsnaam of footer) een B.V./N.V.-
+    signaal draagt, anders None (= niet af te leiden, NIET natuurlijk persoon).
+    Hoofdlettergevoelig voor de kale 'BV'/'NV'-token om ruis te beperken."""
+    if not text:
+        return None
+    return "rechtspersoon" if _RECHTSPERSOON_SIGNAL_RE.search(text) else None
+
+
+def classify_legal_form(lead: dict, page_text: str | None = None) -> str:
+    """'rechtspersoon' | 'natuurlijk_persoon' | 'onbepaald'.
+
+    Bronnen, in volgorde: (1) kvk_legal_form (handmatig ingevoerd of ooit via API),
+    (2) gratis B.V.-afleiding uit de bedrijfsnaam, (3) idem uit de meegegeven footer/
+    page_text. Leeg/onbekend → 'onbepaald'. Fail-closed: nooit optimistisch."""
     raw = (lead.get("kvk_legal_form") or "").strip()
-    if not raw:
+    if raw:
+        if _NATUURLIJK_RE.search(raw):
+            return "natuurlijk_persoon"
+        if _RECHTSPERSOON_RE.search(raw):
+            return "rechtspersoon"
         return "onbepaald"
-    if _NATUURLIJK_RE.search(raw):
-        return "natuurlijk_persoon"
-    if _RECHTSPERSOON_RE.search(raw):
+    # Geen expliciete rechtsvorm → probeer de gratis, zekere B.V.-afleiding.
+    if derive_rechtspersoon(lead.get("company_name")) or derive_rechtspersoon(page_text):
         return "rechtspersoon"
     return "onbepaald"
 
 
-def receptie_avg_safe(lead: dict) -> tuple[bool, str]:
+def receptie_avg_safe(lead: dict, page_text: str | None = None) -> tuple[bool, str]:
     """Cold-mail-gate voor de receptie-campagne (AVG-02). Alleen een bevestigde
     rechtspersoon is veilig; natuurlijk persoon vereist opt-in; onbepaald wordt
     (conservatief, policy onder voorbehoud) geblokkeerd tot de rechtsvorm bekend is.
 
+    `page_text` (optioneel) laat de gratis B.V.-afleiding ook de footer meenemen.
     Returns (ok, reason). Bewust GEEN raise: de send-gate leest de reason."""
-    lf = classify_legal_form(lead)
+    lf = classify_legal_form(lead, page_text=page_text)
     if lf == "rechtspersoon":
         return True, "rechtspersoon"
     if lf == "natuurlijk_persoon":

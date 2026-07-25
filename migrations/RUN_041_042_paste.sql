@@ -30,6 +30,11 @@ ALTER TABLE heatr_suppressions ADD COLUMN IF NOT EXISTS kvk_number text;
 CREATE INDEX IF NOT EXISTS idx_suppressions_kvk
   ON heatr_suppressions (kvk_number) WHERE kvk_number IS NOT NULL AND revoked_at IS NULL;
 
+-- ── 043: rechtsvorm-veld op leads (AVG-02, handmatig + gratis B.V.-afleiding) ──
+ALTER TABLE heatr_leads ADD COLUMN IF NOT EXISTS kvk_legal_form text;
+
 -- Sanity na afloop:
 --   SELECT column_name FROM information_schema.columns
 --    WHERE table_name='heatr_website_intelligence' AND column_name LIKE 'receptie_%';
+--   SELECT column_name FROM information_schema.columns
+--    WHERE table_name='heatr_leads' AND column_name='kvk_legal_form';
