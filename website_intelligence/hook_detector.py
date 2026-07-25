@@ -391,7 +391,12 @@ _GA_RE = re.compile(
     r"googletagmanager\.com/(?:gtm|gtag)|google-analytics\.com|/gtag/js|/g/collect|"
     r"analytics\.google\.com|\bgtag\s*\(|\bdataLayer\b|plausible\.io|cdn\.matomo|"
     r"matomo\.(?:php|js)|piwik|stats\.g\.doubleclick|clarity\.ms|(?:static\.)?hotjar|"
-    r"mc\.yandex|segment\.(?:com|io)/analytics|cdn\.segment",
+    r"mc\.yandex|segment\.(?:com|io)/analytics|cdn\.segment|"
+    # verificatie-batch 2026-07-25: WordPress/Jetpack-stats + andere privacy-
+    # analytics die _GA_RE miste → vals Q7-hit op WP-SMB-sites. Streng-boven-mis:
+    # méér herkennen = strengere Q7-hit.
+    r"stats\.wp\.com|pixel\.wp\.com|usefathom|simpleanalytics(?:cdn)?\.com|"
+    r"/umami\.js|umami\.is|posthog|mixpanel|heapanalytics|mouseflow|luckyorange|crazyegg",
     re.IGNORECASE,
 )
 # Advertentie-/remarketing-pixels tellen óók als 'meten' (conversie/retargeting).

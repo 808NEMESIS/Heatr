@@ -290,6 +290,24 @@ def test_q7_geen_hit_when_meta_pixel_loads():
     assert r["state"] == "geen" and "pixel" in r["found"]
 
 
+def test_q7_geen_hit_when_jetpack_wp_stats():
+    # verificatie-batch: WordPress/Jetpack stats.wp.com is meting → geen Q7-hit.
+    r = evaluate_tracking(["https://stats.wp.com/e-202530.js"], "",
+                          consent_accepted=True, fetch_ok=True)
+    assert r["state"] == "geen" and "analytics" in r["found"]
+    # ook in de HTML (script-snippet)
+    r2 = evaluate_tracking([], "<script src='https://stats.wp.com/w.js'></script>",
+                           consent_accepted=True, fetch_ok=True)
+    assert r2["state"] == "geen"
+
+
+def test_q7_dns_prefetch_alone_is_not_tracking():
+    # een dns-prefetch-hint naar googletagmanager (zonder echte load) is GEEN meting.
+    r = evaluate_tracking([], "<link rel='dns-prefetch' href='//www.googletagmanager.com'>",
+                          consent_accepted=True, fetch_ok=True)
+    assert r["state"] == "hit"
+
+
 def test_q7_hit_when_no_tracking_and_no_cmp():
     # bekende HIT: geen analytics, geen pixel, geen consent-manager → site meet niets.
     r = evaluate_tracking(["https://kliniek.nl/style.css", "https://kliniek.nl/logo.png"],
