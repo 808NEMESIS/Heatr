@@ -64,6 +64,7 @@ from typing import Any, Awaitable, Callable
 
 from utils.enrichment_check import compliance_check
 from utils.suppression import check_suppressed
+from utils.testmail_guard import TestSendBlocked, enforce_and_reroute
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +385,7 @@ async def dispatch_outbound(
     leads: list[dict] | None = None,
     enforce_idempotency: bool = True,
     metadata: dict | None = None,
+    confirm_test: bool = False,
 ) -> DispatchResult:
     """Voer een outbound side-effect uit via de verplichte doorgang.
 
@@ -399,6 +401,10 @@ async def dispatch_outbound(
             er één leveren; operator_email mag zonder.
         enforce_idempotency: False = record-only (gebruikt door alerts,
             waar suppressie gevaarlijker is dan een dubbele melding).
+        confirm_test: expliciete --confirm-test-bevestiging voor de test-send-
+            guard. Alleen relevant als TEST_MODE aanstaat; dan verplicht (anders
+            DispatchHalted). Default False → in productie (TEST_MODE uit) volledig
+            genegeerd.
 
     Raises:
         DispatchBlocked: compliance-fail op (één van) de target(s). Het
@@ -428,6 +434,22 @@ async def dispatch_outbound(
             workspace_id=workspace_id, actor=actor, lead_id=lead_id,
             lead_count=lead_count, reason=reason,
         )
+
+    # 0-pre. Test-send-guard (Sami 2026-07-27) — NO-OP tenzij TEST_MODE aanstaat.
+    #   In TEST_MODE: batch-guard (élk target moet is_test_lead zijn, anders wordt
+    #   de HELE batch geabort → test en echt nooit samen), reroute van elk target
+    #   naar TEST_RECIPIENT (in-place; de send-callable sluit over hetzelfde dict),
+    #   en verplichte confirm_test. Monotoon restrictief: dit kan een send alleen
+    #   blokkeren of herschrijven naar het testadres, nooit iets toestaan dat de
+    #   kill-switch (0) of allowlist (0b) hieronder niet al toestaan. De reroute
+    #   loopt VÓÓR de allowlist zodat die het rerouted adres valideert.
+    try:
+        rerouted_from = enforce_and_reroute(targets, confirm_test=confirm_test)
+    except TestSendBlocked as e:
+        _decide("blocked_test_guard", str(e))
+        raise DispatchHalted(str(e)) from e
+    if rerouted_from:
+        _decide("test_reroute", f"{len(rerouted_from)} target(s) → TEST_RECIPIENT")
 
     # 0. Master-kill-switch — absoluut en centraal (WP-A stap 7): élk
     #    prospect-pad (launch, follow-up, ad-hoc push, review-mail) stopt
