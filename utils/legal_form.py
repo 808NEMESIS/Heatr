@@ -34,18 +34,21 @@ _RECHTSPERSOON_RE = re.compile(
 # rechtspersoon; afwezigheid zegt NIETS (een BV zet 'BV' niet altijd in de handels-
 # naam) → dan blijft het onbepaald, nooit 'natuurlijk_persoon'. Streng: standalone
 # BV/B.V.-token, niet een substring.
-_RECHTSPERSOON_SIGNAL_RE = re.compile(
-    r"\bB\.?V\.?\b|besloten vennootschap|\bN\.?V\.?\b|naamloze vennootschap|"
-    r"\bco[öo]peratie\b|\bcoöperatief\b|\bB\.?V\.?\s*i\.?o\.?\b")
+# Dotted/uitgeschreven vorm: hoofdletter-ongevoelig (B.V./b.v./Besloten Vennootschap).
+_RP_SPELLED_RE = re.compile(
+    r"\bb\.v\.|\bn\.v\.|besloten vennootschap|naamloze vennootschap|co[öo]perati", re.IGNORECASE)
+# Kale 'BV'/'NV'-token: ALLEEN hoofdletters (ruis van lowercase 'bv' in woorden/URLs voorkomen).
+_RP_BARE_RE = re.compile(r"\bBV\b|\bNV\b")
 
 
 def derive_rechtspersoon(text: str | None) -> str | None:
     """Return 'rechtspersoon' als de tekst (bedrijfsnaam of footer) een B.V./N.V.-
     signaal draagt, anders None (= niet af te leiden, NIET natuurlijk persoon).
-    Hoofdlettergevoelig voor de kale 'BV'/'NV'-token om ruis te beperken."""
+    Kale 'BV'/'NV' alleen in hoofdletters om ruis te beperken; 'B.V.'/'besloten
+    vennootschap' hoofdletter-ongevoelig."""
     if not text:
         return None
-    return "rechtspersoon" if _RECHTSPERSOON_SIGNAL_RE.search(text) else None
+    return "rechtspersoon" if (_RP_SPELLED_RE.search(text) or _RP_BARE_RE.search(text)) else None
 
 
 def classify_legal_form(lead: dict, page_text: str | None = None) -> str:
