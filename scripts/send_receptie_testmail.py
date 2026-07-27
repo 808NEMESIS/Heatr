@@ -110,6 +110,7 @@ def _guard_demo() -> None:
 
 def _env_checklist() -> list[tuple[str, bool, str]]:
     from utils.testmail_guard import test_mode_active
+    from config.receptie_sequence import receptie_unsubscribe_via_warmr
     def _set(k):
         return bool((os.getenv(k) or "").strip())
     return [
@@ -119,11 +120,11 @@ def _env_checklist() -> list[tuple[str, bool, str]]:
         ("ENABLE_PROSPECT_SENDS=true",
          (os.getenv("ENABLE_PROSPECT_SENDS") or "").strip().lower() == "true",
          "kill-switch (ephemeer aan voor de run)"),
-        ("RECEPTIE_PRIVACY_NOTICE", _set("RECEPTIE_PRIVACY_NOTICE"), "AVG art.14 — jij levert"),
-        ("RECEPTIE_UNSUBSCRIBE_TEMPLATE", _set("RECEPTIE_UNSUBSCRIBE_TEMPLATE"),
-         "afmeldlink met echte gehoste URL — jij levert"),
+        ("RECEPTIE_PRIVACY_NOTICE", _set("RECEPTIE_PRIVACY_NOTICE"), "AVG art.14 — Heatr levert (staat)"),
+        ("RECEPTIE_UNSUBSCRIBE_VIA_WARMR=true", receptie_unsubscribe_via_warmr(),
+         "Warmr bezit de afmeldlink; POST-send geverifieerd op unsubscribe_tokens"),
         ("WARMR_TEST_CAMPAIGN_ID", _set("WARMR_TEST_CAMPAIGN_ID"),
-         "Warmr-campagne + ready inbox om in te pushen"),
+         "verse campagne: sequence-body {{custom:custom_body}} + subject {{custom:custom_subject}} + ready inbox"),
     ]
 
 

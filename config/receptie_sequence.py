@@ -28,13 +28,30 @@ from typing import Any
 from config.hook_templates import build_haakje, build_zonde_brug
 
 
+def receptie_unsubscribe_via_warmr() -> bool:
+    """True = Warmr BEZIT de afmeldlink (Sami 2026-07-27, keuze B). Warmr's
+    campaign_scheduler roept generate_unsubscribe_link + append_unsubscribe_footer
+    aan op het verzendmoment, dus Heatr rendert er GEEN eigen link (zou een kapotte
+    dubbel zijn — het token is een random rij in unsubscribe_tokens, geen lead-id).
+
+    De afmeld-eis valt hierdoor NIET stil: hij verschuift van een render-gate naar
+    een POST-send-verificatie op de unsubscribe_tokens-rij
+    (utils/warmr_unsubscribe.unsubscribe_token_present). Heatr kan de footer niet
+    pré-send in de uitgaande mail zien — Warmr stelt die ná de push samen."""
+    return (os.getenv("RECEPTIE_UNSUBSCRIBE_VIA_WARMR") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def receptie_compliance_tokens(lead: dict) -> tuple[str, str]:
-    """Privacyzin (AVG art.14) + afmeldlink uit env — Sami levert die aan. Leeg →
-    de render-gate (receptie_mail_sendable) blokkeert de send (gewenst gedrag).
+    """Privacyzin (AVG art.14, Heatr levert) + afmeldlink. Bij RECEPTIE_UNSUBSCRIBE_
+    VIA_WARMR=true rendert Heatr GEEN afmeldlink (Warmr plakt 'm; post-send geverifieerd);
+    anders uit RECEPTIE_UNSUBSCRIBE_TEMPLATE ({email}/{id}). Leeg privacy → gate blokkeert.
 
     RECEPTIE_PRIVACY_NOTICE: de herkomst-/privacyzin met link.
-    RECEPTIE_UNSUBSCRIBE_TEMPLATE: afmeldregel met {email}/{id}-placeholders."""
+    RECEPTIE_UNSUBSCRIBE_TEMPLATE: afmeldregel met {email}/{id}-placeholders (alleen als
+    Warmr NIET de afmeldlink bezit)."""
     privacy = (os.getenv("RECEPTIE_PRIVACY_NOTICE") or "").strip()
+    if receptie_unsubscribe_via_warmr():
+        return privacy, ""                      # Warmr bezit de afmeldlink
     tmpl = (os.getenv("RECEPTIE_UNSUBSCRIBE_TEMPLATE") or "").strip()
     unsub = ""
     if tmpl:
@@ -129,13 +146,20 @@ _F4_TIME_CLAIM = re.compile(
 )
 
 
-def receptie_mail_sendable(body: str, *, privacy_notice: str, unsubscribe: str) -> tuple[bool, str]:
+def receptie_mail_sendable(body: str, *, privacy_notice: str, unsubscribe: str,
+                           warmr_owns_unsubscribe: bool = False) -> tuple[bool, str]:
     """Harde render-gate. Weigert zolang een compliance-token leeg is of er iets
-    onopgelost/verboden in de body staat. Fail-closed: bij twijfel niet-sendable."""
+    onopgelost/verboden in de body staat. Fail-closed: bij twijfel niet-sendable.
+
+    warmr_owns_unsubscribe=True (keuze B): Heatr rendert geen afmeldlink omdat Warmr
+    'm op het verzendmoment plakt. De afmeld-eis VERVALT hier niet stilzwijgend — dit
+    is een bewuste opt-in en de aanwezigheid wordt POST-send geverifieerd
+    (utils/warmr_unsubscribe.unsubscribe_token_present). Heatr kan de footer niet
+    pré-send zien; die verificatie hoort dus expliciet ná de send / op de testmail."""
     if not (privacy_notice or "").strip():
         return False, "privacy_notice_missing"      # AVG art. 14 — Sami levert aan
-    if not (unsubscribe or "").strip():
-        return False, "unsubscribe_missing"          # afmeldlink — Sami verifieert
+    if not (unsubscribe or "").strip() and not warmr_owns_unsubscribe:
+        return False, "unsubscribe_missing"          # afmeldlink — Heatr-modus
     if not body or not body.strip():
         return False, "empty_body"
     if "{{" in body or re.search(r"{[a-z_]+}", body):
@@ -213,7 +237,8 @@ def render_receptie_mail(
         body = body.replace(k, v or "")
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
 
-    ok, reason = receptie_mail_sendable(body, privacy_notice=privacy_notice, unsubscribe=unsubscribe)
+    ok, reason = receptie_mail_sendable(body, privacy_notice=privacy_notice, unsubscribe=unsubscribe,
+                                        warmr_owns_unsubscribe=receptie_unsubscribe_via_warmr())
     if company_needs_review:
         ok, reason = False, "company_name_needs_review"
     return {"step": step, "skipped": False, "subject": subject, "body": body,
