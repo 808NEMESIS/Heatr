@@ -22,6 +22,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv(str(Path(__file__).resolve().parent.parent / ".env"))
+
 WORKSPACE = "aerys"
 CONCURRENCY = 5
 
@@ -47,19 +50,34 @@ async def _one(sem, sb, pw, browser, lead, apply):
                 "second_hook": result.get("second_hook"), "persisted": persisted}
 
 
-async def main(apply: bool = False, limit: int = 500) -> int:
+async def main(apply: bool = False, limit: int = 500, domains_file: str | None = None) -> int:
     from config.database import get_heatr_supabase
     from utils.playwright_helpers import new_browser_context
     from playwright.async_api import async_playwright
 
     sb = get_heatr_supabase()
-    rows = (sb.table("leads").select("id, domain, workspace_id, status")
-            .eq("workspace_id", WORKSPACE)
-            .not_.is_("domain", "null")
-            .limit(limit).execute().data or [])
+    q = (sb.table("leads").select("id, domain, workspace_id, status")
+         .eq("workspace_id", WORKSPACE)
+         .not_.is_("domain", "null"))
+    # --domains-file scopet de backfill exact op een cohort (bv. de eerste 32).
+    # `.in_("domain", ...)` kan per constructie nooit buiten die lijst schrijven,
+    # dus dit is NIET de brede base-scan (STAP 1) — alleen de meegegeven domeinen.
+    cohort: list[str] | None = None
+    if domains_file:
+        cohort = [d.strip() for d in Path(domains_file).read_text().splitlines()
+                  if d.strip() and not d.startswith("#")]
+        q = q.in_("domain", cohort)
+    rows = (q.limit(limit).execute().data or [])
     rows = [r for r in rows if (r.get("domain") or "").strip()]
     mode = "APPLY (schrijft naar WI, vereist migratie 041)" if apply else "DRY-RUN (schrijft niets)"
-    print(f"Receptie-backfill over {len(rows)} leads — {mode}. GEEN mail.\n")
+    scope = f"cohort-filter ({len(cohort)} domeinen gevraagd)" if cohort else "hele base (STAP 1)"
+    print(f"Receptie-backfill over {len(rows)} leads — {mode} — {scope}. GEEN mail.")
+    if cohort:
+        found = {(r.get("domain") or "").strip() for r in rows}
+        missing = [d for d in cohort if d not in found]
+        if missing:
+            print(f"  ⚠ {len(missing)} cohort-domein(en) niet als lead gevonden: {missing}")
+    print()
 
     async with async_playwright() as pw:
         browser, _ = await new_browser_context(pw)
@@ -83,5 +101,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="schrijf naar heatr_website_intelligence")
     ap.add_argument("--limit", type=int, default=500)
+    ap.add_argument("--domains-file", default=None,
+                    help="scope exact op deze domeinen (één per regel); NIET de brede base-scan")
     args = ap.parse_args()
-    raise SystemExit(asyncio.run(main(apply=args.apply, limit=args.limit)))
+    raise SystemExit(asyncio.run(main(apply=args.apply, limit=args.limit, domains_file=args.domains_file)))
