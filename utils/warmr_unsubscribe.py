@@ -51,3 +51,25 @@ def unsubscribe_token_present(
     row = rows[0]
     tok = str(row.get("token") or "")
     return True, f"token aanwezig ({tok[:10]}…, used={row.get('used')})"
+
+
+def verify_and_flag(
+    raw_supabase: Any, heatr_supabase: Any, *,
+    workspace_id: str, lead_id: str, campaign_id: str | None = None,
+) -> tuple[bool, str]:
+    """Post-send-verificatie MET harde vlag. Ontbreekt de unsubscribe_tokens-rij, dan
+    zet dit een persistente compliance-vlag (heatr_compliance_flags, migratie 044) —
+    geen logregel — die de drip-pre-gate (assert_no_open_flags) laat blokkeren.
+
+    raw_supabase = ONgeprefixt (unsubscribe_tokens = Warmr's tabel);
+    heatr_supabase = de heatr_-wrapper (schrijft de vlag).
+    Returns (ok, detail); ok=False betekent: vlag gezet, drip moet stoppen."""
+    from utils.compliance_flags import FLAG_MISSING_UNSUBSCRIBE, raise_flag
+    ok, detail = unsubscribe_token_present(raw_supabase, lead_id, campaign_id)
+    if not ok:
+        raise_flag(
+            heatr_supabase, workspace_id=workspace_id,
+            flag_type=FLAG_MISSING_UNSUBSCRIBE, lead_id=lead_id,
+            campaign_id=campaign_id, detail=detail,
+        )
+    return ok, detail

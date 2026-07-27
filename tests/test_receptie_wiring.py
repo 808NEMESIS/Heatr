@@ -25,8 +25,9 @@ def _run(coro):
 
 
 class _FakeSb:
-    def __init__(self, wi=None, supp_rows=None):
-        self.wi, self.supp_rows, self._t = wi or {}, supp_rows or [], None
+    def __init__(self, wi=None, supp_rows=None, flags=None):
+        self.wi, self.supp_rows = wi or {}, supp_rows or []
+        self.flags, self._t = flags or [], None
 
     def table(self, name): self._t = name; return self
     def select(self, *_): return self
@@ -36,8 +37,14 @@ class _FakeSb:
     def limit(self, *_): return self
 
     def execute(self):
-        data = [self.wi] if (self._t == "website_intelligence" and self.wi) else \
-               (self.supp_rows if self._t == "suppressions" else [])
+        if self._t == "website_intelligence":
+            data = [self.wi] if self.wi else []
+        elif self._t == "suppressions":
+            data = self.supp_rows
+        elif self._t == "compliance_flags":
+            data = self.flags
+        else:
+            data = []
         return type("R", (), {"data": data})()
 
 
@@ -59,6 +66,24 @@ def test_blocks_without_compliance_tokens(monkeypatch):
 def _set_tokens(monkeypatch):
     monkeypatch.setenv("RECEPTIE_PRIVACY_NOTICE", "Herkomst: aeryssolution.nl/privacy")
     monkeypatch.setenv("RECEPTIE_UNSUBSCRIBE_TEMPLATE", "Afmelden: aeryssolution.nl/uit?e={email}")
+
+
+# ── drip-pre-gate: een open compliance-vlag stopt de volgende receptie-send ──────
+def test_drip_blocks_on_open_unsubscribe_flag(monkeypatch):
+    # Warmr-bezit-modus + een open missing_unsubscribe-vlag → send geblokkeerd.
+    monkeypatch.setenv("RECEPTIE_PRIVACY_NOTICE", "Herkomst: aeryssolution.nl/privacy")
+    monkeypatch.setenv("RECEPTIE_UNSUBSCRIBE_VIA_WARMR", "true")
+    flag = {"id": "f1", "flag_type": "missing_unsubscribe", "lead_id": "lx",
+            "acknowledged_at": None}
+    out = _run(_render_receptie_marker(MARK, LEAD, _FakeSb(wi=WI, flags=[flag])))
+    assert out["sendable"] is False and out["block_reason"].startswith("compliance_hold")
+
+
+def test_drip_proceeds_without_open_flag(monkeypatch):
+    monkeypatch.setenv("RECEPTIE_PRIVACY_NOTICE", "Herkomst: aeryssolution.nl/privacy")
+    monkeypatch.setenv("RECEPTIE_UNSUBSCRIBE_VIA_WARMR", "true")
+    out = _run(_render_receptie_marker(MARK, LEAD, _FakeSb(wi=WI, flags=[])))
+    assert out["sendable"] is True and out["block_reason"] == "ok"
 
 
 def test_blocks_when_rechtsvorm_onbepaald(monkeypatch):

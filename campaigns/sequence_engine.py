@@ -513,6 +513,23 @@ async def _render_receptie_marker(
     if supp:
         out["block_reason"] = f"suppressed:{supp}"
         return out
+    # Compliance-hold (Sami 2026-07-27): in Warmr-bezit-modus verifieert een sweep de
+    # afmeldlink POST-send; een missende link zet een open vlag. Zolang die open staat
+    # gaat GEEN verdere receptie-send door — de drip stopt tot de vlag is afgehandeld.
+    # Fail-closed (assert_no_open_flags raist ook bij een onleesbare vlag-tabel).
+    from config.receptie_sequence import receptie_unsubscribe_via_warmr
+    if receptie_unsubscribe_via_warmr():
+        from utils.compliance_flags import (
+            ComplianceHold, FLAG_MISSING_UNSUBSCRIBE, assert_no_open_flags,
+        )
+        try:
+            assert_no_open_flags(
+                supabase_client, lead.get("workspace_id") or "aerys",
+                FLAG_MISSING_UNSUBSCRIBE,
+            )
+        except ComplianceHold as e:
+            out["block_reason"] = f"compliance_hold:{str(e)[:100]}"
+            return out
     out["sendable"] = True
     out["block_reason"] = "ok"
     return out
