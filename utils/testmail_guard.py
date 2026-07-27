@@ -79,4 +79,8 @@ def enforce_and_reroute(targets: list[dict], *, confirm_test: bool) -> list[str]
     for t in targets:
         originals.append((t.get("email") or "").strip())
         t["email"] = rcpt
+        # Markeer het record als gererouteerd. _build_lead_payload leest dit en
+        # onderdrukt de 017-BCC (reroute wint van BCC): de test-mail gaat ALLEEN
+        # naar TEST_RECIPIENT, nooit naar het originele to: of de 017-BCC-bestemming.
+        t["_testmail_rerouted"] = True
     return originals

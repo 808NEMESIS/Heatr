@@ -208,6 +208,59 @@ def test_dispatch_mixed_batch_blocks_before_send(monkeypatch):
     assert targets[1]["email"] == "prospect@kliniek.nl"   # echt record onaangeraakt
 
 
+def _build_payload(lead: dict) -> dict:
+    """Direct _build_lead_payload (zonder live WarmrClient-init), als test_warmr_test_mode."""
+    from integrations.warmr_client import WarmrClient
+    client = WarmrClient.__new__(WarmrClient)
+    client._sb = None
+    client.workspace_id = "aerys"
+    return client._build_lead_payload(lead, campaign_id="test-campaign", preferred_inbox_id=None)
+
+
+def test_reroute_wins_over_017_bcc(monkeypatch):
+    """KERN (Sami keuze A): een record dat ZOWEL de 017-BCC-flow ALS de reroute-
+    guard triggert, mag NOOIT resulteren in mail naar het originele to: of naar de
+    017-BCC-bestemming — alleen naar TEST_RECIPIENT.
+
+    Reroute overschrijft to: én zet _testmail_rerouted, waardoor _build_lead_payload
+    de 017-BCC (en de [TEST]-prefix) onderdrukt. Bewijs: payload.email == TEST_RECIPIENT,
+    geen bcc, geen subject_prefix, en het originele adres komt nergens in de payload voor.
+    """
+    monkeypatch.setenv("TEST_MODE", "1")
+    monkeypatch.setenv("TEST_RECIPIENT", "info@aeryssolution.nl")
+    monkeypatch.setenv("HEATR_TEST_BCC_EMAIL", "intern-bcc@aerys.nl")   # 017-trigger AAN
+    lead = {
+        "id": "test-both", "email": "origineel@test-aerys.local",
+        "is_test_lead": True,   # triggert 017-BCC
+        "contact_first_name": "Sami", "company_name": "Testkliniek",
+    }
+    # 1. reroute-guard draait (zoals in de dispatcher) → to: herschreven + vlag gezet.
+    originals = enforce_and_reroute([lead], confirm_test=True)
+    assert originals == ["origineel@test-aerys.local"]
+    assert lead["email"] == "info@aeryssolution.nl"
+    assert lead["_testmail_rerouted"] is True
+
+    # 2. Warmr-payload gebouwd → BCC + prefix onderdrukt, alleen TEST_RECIPIENT.
+    payload = _build_payload(lead)
+    assert payload["email"] == "info@aeryssolution.nl"     # reroute won voor to:
+    assert "bcc" not in payload                            # 017-BCC onderdrukt
+    assert "subject_prefix" not in payload                 # [TEST]-prefix mee-onderdrukt
+    # Het originele adres én de BCC-bestemming komen NERGENS in de payload voor:
+    blob = repr(payload)
+    assert "origineel@test-aerys.local" not in blob
+    assert "intern-bcc@aerys.nl" not in blob
+
+
+def test_017_bcc_still_works_without_reroute(monkeypatch):
+    """Regressiewacht: buiten TEST_MODE + zonder reroute-vlag blijft 017-BCC intact."""
+    monkeypatch.delenv("TEST_MODE", raising=False)
+    monkeypatch.setenv("HEATR_TEST_BCC_EMAIL", "intern-bcc@aerys.nl")
+    lead = {"id": "x", "email": "real@prospect.nl", "is_test_lead": True}
+    payload = _build_payload(lead)
+    assert payload["bcc"] == "intern-bcc@aerys.nl"         # 017 ongemoeid
+    assert payload["subject_prefix"] == "[TEST] "
+
+
 def test_dispatch_unchanged_when_test_mode_off(monkeypatch):
     # TEST_MODE uit → de guard is no-op; een niet-allowlisted echt adres volgt
     # het normale pad (hier: kill-switch aan, geen allowlist → gewoon versturen).

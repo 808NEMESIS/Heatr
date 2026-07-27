@@ -495,7 +495,17 @@ class WarmrClient:
         # Lead-flag is_test_lead wordt door /campaigns/launch via lead-row meegegeven.
         # Zonder env-var blijft BCC leeg → Warmr gedraagt zich normaal.
         is_test = bool(lead.get("is_test_lead"))
-        test_bcc = (os.getenv("HEATR_TEST_BCC_EMAIL") or "").strip() if is_test else ""
+        # REROUTE WINT VAN BCC (Sami 2026-07-27, keuze A): staat de testmail-reroute-
+        # guard aan (TEST_MODE) of is dit record al gererouteerd, dan MAG er geen
+        # 017-BCC bij — de koude receptie-testfire gaat ALLEEN naar TEST_RECIPIENT,
+        # nooit naar het originele to: of naar HEATR_TEST_BCC_EMAIL. Onderdrukt dan
+        # ook de [TEST]-subjectprefix (die hangt aan dezelfde test_bcc-tak).
+        from utils.testmail_guard import test_mode_active
+        _reroute_active = test_mode_active() or bool(lead.get("_testmail_rerouted"))
+        test_bcc = (
+            "" if _reroute_active
+            else ((os.getenv("HEATR_TEST_BCC_EMAIL") or "").strip() if is_test else "")
+        )
 
         payload: dict = {
             "email": lead.get("email", ""),
