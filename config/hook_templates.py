@@ -48,7 +48,7 @@ SIGNAL_NAMES: dict = {
     6: "vision_element",
     # Receptie-ladder (Sami 2026-07-24).
     "Q4": "geen_dekking_buiten_uren",
-    "Q7": "geen_meting",
+    "Q7": "gemiste_contacten",
     "Q2": "alleen_aanvraag",
     "P1": "geen_prijsanker",
 }
@@ -131,12 +131,12 @@ HOOK_VARIANTS: dict = {
         "meteen vastleggen, en de volgende ochtend is dat moment vaak weg.",
     ),
     "Q7": (
-        "Op de site van {kliniek} draait geen enkele vorm van meting; geen "
-        "statistieken, geen tracking. Je ziet dus wie er belt of mailt, maar niet "
-        "hoeveel mensen er zijn geweest en zonder iets te doen weer weg zijn.",
-        "Er meet niets wat bezoekers op de site van {kliniek} doen. Daardoor "
-        "blijft onzichtbaar hoeveel mensen er wél waren maar niets hebben "
-        "achtergelaten.",
+        "Op de site van {kliniek} komen mensen die niet bellen en niet mailen; ze "
+        "kijken rond en gaan weer weg. Op de momenten dat er niemand bereikbaar is, "
+        "vangt niemand ze op, en die contacten ben je kwijt zonder ze ooit te zien.",
+        "Een deel van wie op de site van {kliniek} kijkt, twijfelt nog en neemt op "
+        "dat moment geen contact op. Gebeurt dat 's avonds of in het weekend, dan is "
+        "er niemand die ze opvangt en zijn ze weg voordat je het doorhad.",
     ),
     "Q2": (
         "Op de site van {kliniek} kan een bezoeker alleen een aanvraag "
@@ -260,3 +260,59 @@ def build_zonde_brug(reviews: int | None = None, rating: float | None = None) ->
     if r >= 3:
         return f"Bij {r} reviews is dat zonde: {core}"
     return f"En dat is zonde: {core}"
+
+
+def _positive_opener_parts(lead: dict) -> tuple[str, str]:
+    """(bron, tekst) voor de mail-1-opener. bron ∈ {treatment, reviews, factual, none}.
+
+    Ladder (meest → minst site-specifiek), stopt bij het eerste betrouwbare gegeven:
+      1. treatment_focus  → een behandeling die aantoonbaar op hún site staat;
+      2. reviews + rating → hun reputatie (op de cohort altijd gevuld);
+      3. dichtstbijzijnd feitelijk gegeven (naam + stad) — NEUTRAAL, geen compliment,
+         F4-veilig (geen "ik keek/…"-tijdclaim die de mail-1-gate blokkeert).
+    Em-dash-vrij: behandelnamen met een em-dash worden overgeslagen (QA-gate bant ze).
+    """
+    tf = lead.get("treatment_focus")
+    if isinstance(tf, (list, tuple)) and tf:
+        clean = [str(t).strip() for t in tf
+                 if str(t).strip() and "—" not in str(t) and "–" not in str(t)][:2]
+        if len(clean) == 1:
+            return "treatment", f"Ik zag dat jullie onder andere {clean[0]} doen."
+        if len(clean) >= 2:
+            return "treatment", f"Ik zag dat jullie onder andere {clean[0]} en {clean[1]} doen."
+
+    try:
+        r = int(lead.get("google_review_count") or 0)
+    except (TypeError, ValueError):
+        r = 0
+    try:
+        star = float(lead.get("google_rating") or 0)
+    except (TypeError, ValueError):
+        star = 0.0
+    city = (lead.get("city") or "").strip()
+    if r >= 3 and star > 0:
+        sterren = f"{star:.1f}".replace(".", ",")
+        loc = f" in {city}" if city else ""
+        return "reviews", f"Met {r} reviews op een {sterren}{loc} staan jullie sterk aangeschreven."
+
+    from utils.lead_naming import clean_company_name
+    name, _ = clean_company_name(lead.get("company_name"))
+    if name and city:
+        return "factual", f"Dit gaat specifiek over {name} in {city}."
+    if city:
+        return "factual", f"Dit gaat specifiek over jullie praktijk in {city}."
+    return "none", ""
+
+
+def build_positive_opener(lead: dict) -> str:
+    """Eén concreet, WAAR, site-specifiek positief detail vóór de haak (mail-1), uit
+    bestaande leaddata — nooit een verzonnen of generieke complimentzin. Zie de ladder
+    in _positive_opener_parts. Leeg → mail-1 valt terug op groet -> haak."""
+    return _positive_opener_parts(lead)[1]
+
+
+def opener_cites_reviews(lead: dict) -> bool:
+    """True als de opener de reviewcijfers noemt (reputatie-tier). De render laat de
+    zonde-brug dan de cijfers weg, zodat hetzelfde getal niet twee keer in de mail
+    staat (merge-tell vermijden)."""
+    return _positive_opener_parts(lead)[0] == "reviews"

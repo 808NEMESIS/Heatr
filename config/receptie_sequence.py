@@ -25,7 +25,9 @@ import os
 import re
 from typing import Any
 
-from config.hook_templates import build_haakje, build_zonde_brug
+from config.hook_templates import (
+    build_haakje, build_positive_opener, build_zonde_brug, opener_cites_reviews,
+)
 
 
 def receptie_unsubscribe_via_warmr() -> bool:
@@ -64,6 +66,7 @@ _SUBJECT = "{{bedrijfsnaam}}, één ding dat me opviel"
 # Mail 1 — dag 0. {{haakje}} = mail-1 haak, {{zonde_brug}} = review-onderbouwing.
 _RC_MAIL1 = (
     "{{begroeting}}\n\n"
+    "{{positief}}\n\n"
     "{{haakje}}\n\n"
     "Het vervelende is dat je dat nooit ziet: ze belt je niet om te zeggen dat "
     "ze afhaakte. {{zonde_brug}}\n\n"
@@ -214,7 +217,16 @@ def render_receptie_mail(
 
     haakje = build_haakje(hook_code, seed or lead.get("id"), kliniek=company or None,
                           variant=hook_variant, stad=lead.get("city"))
-    zonde = build_zonde_brug(lead.get("google_review_count"), lead.get("google_rating"))
+    # Review-ontdubbeling: noemt de opener de reviewcijfers al (reputatie-tier), dan
+    # laat de zonde-brug ze weg ("En dat is zonde: ..."); zo staat hetzelfde getal
+    # niet twee keer in de mail (merge-tell). Anders draagt de zonde-brug de cijfers.
+    if opener_cites_reviews(lead):
+        zonde = build_zonde_brug(None, None)
+    else:
+        zonde = build_zonde_brug(lead.get("google_review_count"), lead.get("google_rating"))
+    # Positieve opener (mail-1): één waar, site-specifiek detail vóór de haak, uit
+    # bestaande leaddata. Alleen _RC_MAIL1 draagt {{positief}}; mail 2/3 negeren 't.
+    positief = build_positive_opener(lead)
     haakje_2 = build_haakje(second_hook, seed or lead.get("id"), kliniek=company or None,
                             variant=second_variant, stad=lead.get("city")) if second_hook else ""
     lek = _LEK_DOORLOOP.get(hook_code or "", "")
@@ -228,7 +240,7 @@ def render_receptie_mail(
     if step in (2, 3):
         subject = "Re: " + subject
     repl = {
-        "{{begroeting}}": begroeting, "{{bedrijfsnaam}}": company,
+        "{{begroeting}}": begroeting, "{{bedrijfsnaam}}": company, "{{positief}}": positief,
         "{{haakje}}": haakje, "{{zonde_brug}}": zonde, "{{haakje_2}}": haakje_2,
         "{{overgang}}": overgang, "{{lek_doorloop}}": lek,
         "{{privacy_notice}}": privacy_notice, "{{unsubscribe}}": unsubscribe,
