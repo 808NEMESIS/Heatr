@@ -213,6 +213,11 @@ class WarmrClient:
                 payload["custom_fields"]["custom_subject"] = custom_subject
             if custom_body:
                 payload["custom_fields"]["custom_body"] = custom_body
+                # Route C (2026-07-27): vlag de lead zodat Warmr's scheduler de body
+                # OPAAK verstuurt (geen process_content → geen 200-tekens-truncatie,
+                # spintax, her-substitutie, signature-append of link-wrap). Wat de
+                # QA-gate goedkeurde gaat zo byte-voor-byte de deur uit (I8).
+                payload["custom_fields"]["render_owner"] = "heatr"
                 # DELIV-02 (audit 2026-07-24): plain-text-intentie EXPLICIET op de
                 # wire zetten i.p.v. Warmrs onbekende default. Koude receptie-mail
                 # gaat plain-text (geen HTML, geen tracking-pixel). Warmr-side handler
