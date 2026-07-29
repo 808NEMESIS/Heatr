@@ -1,58 +1,65 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, AlertTriangle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ExternalLink, AlertTriangle, ImageOff } from 'lucide-react';
 import { api } from '@/lib/api';
-import { fmtInt, priorityFromScore, scoreColor } from '@/lib/format';
-import type { Lead, LeadsResponse } from '@/lib/types';
+import { fmtInt, scoreColor } from '@/lib/format';
 import { SECTOR_LABEL } from '@/lib/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
 
-function topIssueFromScore(s: number): string {
-  if (s < 20) return 'Website technisch en visueel sterk verouderd';
-  if (s < 35) return 'Voldoet niet meer aan moderne conversie-standaarden';
-  if (s < 50) return 'Ontbrekende conversie-elementen (booking / chat / WhatsApp)';
-  return 'Kleinere verbeterpunten aan de flow';
+/** Eén website-opportunity uit GET /website-opportunities (WI-rij + lead-join). */
+interface Opportunity {
+  lead_id: string;
+  company_name: string | null;
+  city: string | null;
+  sector: string | null;
+  domain: string | null;
+  total_score: number | null;
+  priority: string | null;                       // urgent | high | medium | low
+  opportunity_types: string[] | null;
+  opportunity_reasons: Record<string, string> | null;
+  screenshot_desktop_url: string | null;
 }
+
+const OPP_LABEL: Record<string, string> = {
+  website_rebuild: 'Website',
+  conversie_optimalisatie: 'Conversie',
+  chatbot: 'Chatbot',
+  ai_audit: 'AI Audit',
+};
+
+const PRIO: Record<string, { label: string; variant: 'danger' | 'warning' | 'accent' | 'neutral' }> = {
+  urgent: { label: 'Urgent', variant: 'danger' },
+  high: { label: 'Hoog', variant: 'warning' },
+  medium: { label: 'Medium', variant: 'accent' },
+  low: { label: 'Laag', variant: 'neutral' },
+};
 
 export function WebsiteKansenPage() {
   const [sector, setSector] = useState('');
   const [priority, setPriority] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['leads-for-kansen', 500],
-    queryFn: () => api.get<LeadsResponse>('/leads?limit=500'),
+    queryKey: ['website-opportunities', 500],
+    queryFn: () => api.get<{ opportunities: Opportunity[]; total: number }>('/website-opportunities?limit=500'),
   });
 
   const filtered = useMemo(() => {
-    return (data?.leads || [])
-      .filter((l) => l.status !== 'archived')
-      .filter((l) => l.website_score != null && l.website_score > 0)
-      .filter((l) => !sector || l.sector === sector)
-      .filter((l) => {
-        // Drempels: config/scoring_thresholds.py (herijking 2026-07-21).
-        const s = l.website_score || 0;
-        if (priority === 'urgent') return s < 41;
-        if (priority === 'hoog') return s >= 41 && s < 49;
-        if (priority === 'medium') return s >= 49 && s < 56;
-        return true;
-      })
-      .sort((a, b) => (a.website_score || 0) - (b.website_score || 0));
+    return (data?.opportunities || [])
+      // total_score 0 = niet (volledig) geanalyseerd → geen echte kans
+      .filter((o) => (o.total_score ?? 0) > 0)
+      .filter((o) => !sector || o.sector === sector)
+      .filter((o) => !priority || o.priority === priority);
+    // endpoint levert al worst-first (total_score ASC)
   }, [data, sector, priority]);
 
   const counts = useMemo(() => {
-    const urgent = filtered.filter((l) => (l.website_score || 0) < 41).length;
-    const hoog = filtered.filter((l) => {
-      const s = l.website_score || 0;
-      return s >= 41 && s < 49;
-    }).length;
-    const medium = filtered.filter((l) => {
-      const s = l.website_score || 0;
-      return s >= 49 && s < 56;
-    }).length;
-    return { urgent, hoog, medium };
+    const c = { urgent: 0, high: 0, medium: 0, low: 0 } as Record<string, number>;
+    for (const o of filtered) if (o.priority && o.priority in c) c[o.priority]++;
+    return c;
   }, [filtered]);
 
   return (
@@ -90,9 +97,10 @@ export function WebsiteKansenPage() {
           className="ml-auto h-10 px-3 rounded-md border border-[var(--color-border)] bg-white text-sm"
         >
           <option value="">Alle prioriteiten</option>
-          <option value="urgent">Urgent (&lt;30)</option>
-          <option value="hoog">Hoog (30-44)</option>
-          <option value="medium">Medium (45-69)</option>
+          <option value="urgent">Urgent</option>
+          <option value="high">Hoog</option>
+          <option value="medium">Medium</option>
+          <option value="low">Laag</option>
         </select>
       </div>
 
@@ -100,7 +108,7 @@ export function WebsiteKansenPage() {
         <span><strong className="text-[var(--color-stone-800)]">{fmtInt(filtered.length)}</strong> kansen</span>
         <span>·</span>
         <span>🔴 <strong className="text-[var(--color-stone-800)]">{counts.urgent}</strong> urgent</span>
-        <span>🟠 <strong className="text-[var(--color-stone-800)]">{counts.hoog}</strong> hoog</span>
+        <span>🟠 <strong className="text-[var(--color-stone-800)]">{counts.high}</strong> hoog</span>
         <span>🟡 <strong className="text-[var(--color-stone-800)]">{counts.medium}</strong> medium</span>
       </div>
 
@@ -111,97 +119,78 @@ export function WebsiteKansenPage() {
         {!isLoading && filtered.length === 0 && (
           <Card className="p-12 text-center text-[var(--color-stone-500)]">
             <AlertTriangle className="h-6 w-6 mx-auto mb-3 text-[var(--color-stone-300)]" />
-            Geen kansen met deze filters. Draai enrichment om website-scores te genereren.
+            Geen kansen met deze filters. Draai de website-analyse om scores te genereren.
           </Card>
         )}
-        {filtered.map((l) => <KansenCard key={l.id} lead={l} />)}
+        {filtered.map((o) => <KansenCard key={o.lead_id} o={o} />)}
       </div>
     </div>
   );
 }
 
-function KansenCard({ lead }: { lead: Lead }) {
-  const score = lead.website_score || 0;
-  const prio = priorityFromScore(score);
+function KansenCard({ o }: { o: Opportunity }) {
+  const score = o.total_score || 0;
   const color = scoreColor(score);
-  const topIssue = topIssueFromScore(score);
-  const vsMkt = (lead as unknown as { score_vs_market?: number }).score_vs_market;
+  const prio = o.priority ? PRIO[o.priority] : undefined;
+  const reasons = Object.entries(o.opportunity_reasons || {});
 
   return (
-    <Card
-      className={cn('grid grid-cols-[96px_1fr_220px] gap-5 p-5 transition-colors hover:border-[var(--color-stone-200)]')}
-      style={{ borderLeft: `4px solid ${prio.border}` }}
-    >
-      {/* Score */}
-      <div className="flex flex-col items-center justify-center">
-        <div className="font-display text-4xl font-semibold leading-none tracking-tight" style={{ color }}>
-          {score}
-        </div>
-        <div className="text-[10px] mt-1 text-[var(--color-stone-500)]">/ 100</div>
-        <div className="w-full h-1.5 rounded-full bg-[var(--color-ivory-200)] mt-3 overflow-hidden">
-          <div className="h-full rounded-full" style={{ width: `${score}%`, background: color }} />
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="min-w-0">
-        <div className="flex items-baseline gap-2 mb-1 flex-wrap">
-          <span className="font-display text-xl font-semibold text-[var(--color-stone-800)]">
-            {lead.company_name || '?'}
-          </span>
-          <Badge variant="accent">{SECTOR_LABEL[lead.sector || ''] || lead.sector || '—'}</Badge>
-        </div>
-        <div className="text-xs text-[var(--color-stone-500)] mb-3">
-          {lead.domain && (
-            <a
-              href={`https://${lead.domain}`}
-              target="_blank"
-              rel="noopener"
-              className="text-[var(--color-blush-500)] hover:underline inline-flex items-center gap-0.5"
-            >
-              {lead.domain} <ExternalLink className="h-2.5 w-2.5" />
-            </a>
-          )}
-          {lead.city && <> · {lead.city}</>}
-          {lead.google_rating && <> · {lead.google_rating}★ ({lead.google_review_count || 0})</>}
-        </div>
-        <div className="rounded-md bg-[var(--color-blush-50)] border-l-[3px] border-[var(--color-blush-500)] px-3 py-2 mb-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-blush-500)] mb-0.5">
-            Grootste probleem
-          </div>
-          <div className="text-sm text-[var(--color-stone-800)]">{topIssue}</div>
-        </div>
-        {lead.personalized_opener && (
-          <div className="text-sm text-[var(--color-stone-600)] italic leading-relaxed mt-2">
-            "{lead.personalized_opener}"
-          </div>
-        )}
-      </div>
-
-      {/* Right */}
-      <div className="flex flex-col gap-2 items-end">
-        <span
-          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider"
-          style={{ background: prio.bg, color: prio.color }}
-        >
-          {prio.label}
-        </span>
-        <div className="w-full rounded-md bg-[var(--color-ivory-50)] px-3 py-2 text-right">
-          <div className="text-[10px] uppercase tracking-wider text-[var(--color-stone-500)]">
-            vs markt {lead.city || ''}
-          </div>
-          {vsMkt == null ? (
-            <div className="text-xs italic text-[var(--color-stone-400)] mt-0.5">niet berekend</div>
+    <Link to={`/leads/${o.lead_id}`} className="block">
+      <Card className="grid grid-cols-[132px_1fr_180px] gap-5 p-4 transition-colors hover:border-[var(--color-stone-200)]">
+        {/* Screenshot */}
+        <div className="aspect-[4/3] rounded-md overflow-hidden bg-[var(--color-ivory-100)] border border-[var(--color-border)] flex items-center justify-center">
+          {o.screenshot_desktop_url ? (
+            <img src={o.screenshot_desktop_url} alt={o.company_name || ''} loading="lazy" className="w-full h-full object-cover object-top" />
           ) : (
-            <div
-              className="font-semibold tabular-nums"
-              style={{ color: vsMkt < 0 ? 'var(--color-danger)' : vsMkt > 0 ? 'var(--color-success)' : 'inherit' }}
-            >
-              {vsMkt < 0 ? '↓' : vsMkt > 0 ? '↑ +' : ''} {vsMkt} pts
-            </div>
+            <ImageOff className="h-6 w-6 text-[var(--color-stone-300)]" />
           )}
         </div>
-      </div>
-    </Card>
+
+        {/* Content */}
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2 mb-1 flex-wrap">
+            <span className="font-display text-lg font-semibold text-[var(--color-stone-800)]">{o.company_name || '?'}</span>
+            <Badge variant="accent">{SECTOR_LABEL[o.sector || ''] || o.sector || '—'}</Badge>
+          </div>
+          <div className="text-xs text-[var(--color-stone-500)] mb-2">
+            {o.domain && (
+              <a
+                href={`https://${o.domain}`}
+                target="_blank"
+                rel="noopener"
+                onClick={(e) => e.stopPropagation()}
+                className="text-[var(--color-blush-500)] hover:underline inline-flex items-center gap-0.5"
+              >
+                {o.domain} <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
+            {o.city && <> · {o.city}</>}
+          </div>
+          {/* Dienst-tags uit opportunity_types */}
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {(o.opportunity_types || []).map((t) => (
+              <Badge key={t} variant="neutral">{OPP_LABEL[t] || t}</Badge>
+            ))}
+          </div>
+          {/* Echte pijnpunten uit opportunity_reasons */}
+          {reasons.length > 0 && (
+            <ul className="text-xs text-[var(--color-stone-600)] space-y-0.5">
+              {reasons.slice(0, 3).map(([t, reason]) => (
+                <li key={t}><span className="text-[var(--color-stone-400)]">{OPP_LABEL[t] || t}:</span> {reason}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Score + priority */}
+        <div className="flex flex-col items-end justify-between">
+          {prio && <Badge variant={prio.variant}>{prio.label}</Badge>}
+          <div className="text-right">
+            <div className="font-display text-4xl font-semibold leading-none tracking-tight" style={{ color }}>{score}</div>
+            <div className="text-[10px] mt-1 text-[var(--color-stone-500)]">/ 100 website-score</div>
+          </div>
+        </div>
+      </Card>
+    </Link>
   );
 }
