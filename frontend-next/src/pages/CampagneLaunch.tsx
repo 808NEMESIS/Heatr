@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { ArrowLeft, Eye, Mail, ShieldOff, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Eye, ShieldOff, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { fmtInt } from '@/lib/format';
@@ -224,16 +224,6 @@ export function CampagneLaunchPage() {
       }),
   });
 
-  const launchMut = useMutation({
-    mutationFn: () =>
-      api.post('/campaigns/launch', {
-        name: campaignName,
-        lead_ids: Array.from(selectedLeadIds),
-        template_id: selectedTemplate,
-        inbox_ids: Array.from(selectedInboxIds),
-      }),
-  });
-
   const tmpl = templates?.templates.find((t) => t.id === selectedTemplate);
 
   const toggleLead = (id: string) => {
@@ -292,14 +282,17 @@ export function CampagneLaunchPage() {
         }
       />
 
-      {/* Hard send-disable banner */}
+      {/* Send-model banner: samenstellen + preview kan in de browser; launch (draft) en
+          activate (verzendmoment) zijn service-key-acties buiten de browser. */}
       <Card className="p-4 mb-6 border-2 border-[var(--color-warning)] bg-amber-50">
         <div className="flex items-start gap-3">
           <ShieldOff className="h-5 w-5 text-[var(--color-warning)] shrink-0 mt-0.5" />
           <div className="text-sm text-[var(--color-stone-700)]">
-            <strong>Versturen staat uit.</strong> Je kan een campagne samenstellen en previewen, maar de
-            launch-knop is geblokkeerd tot <code>ENABLE_CAMPAIGN_SENDS=true</code> staat in de API-env.
-            Op deze manier kan je veilig templates testen zonder ongelukken.
+            <strong>Hier stel je samen en preview je — versturen gebeurt buiten de browser.</strong> Het
+            send-model heeft drie fasen: <em>samenstellen/preview</em> (hier), <em>launch</em> = draft
+            aanmaken en <em>activate</em> = het verzendmoment. Launch én activate zijn service-key-acties
+            (CLI) zodat een browser nooit per ongeluk verstuurt. De kill-switch op activate is{' '}
+            <code>ENABLE_PROSPECT_SENDS</code> (legacy-fallback <code>ENABLE_CAMPAIGN_SENDS</code>).
           </div>
         </div>
       </Card>
@@ -491,21 +484,12 @@ export function CampagneLaunchPage() {
               <Eye className="h-4 w-4" />
               {previewMut.isPending ? 'Renderen…' : `Preview (${selectedLeadIds.size} leads)`}
             </button>
-            <button
-              onClick={() => launchMut.mutate()}
-              disabled
-              title="Versturen is uitgeschakeld (ENABLE_CAMPAIGN_SENDS=false)"
-              className="w-full inline-flex items-center justify-center gap-2 h-11 rounded-md border border-[var(--color-stone-300)] bg-[var(--color-ivory-100)] text-[var(--color-stone-500)] font-medium cursor-not-allowed"
-            >
-              <Mail className="h-4 w-4" />
-              Launch — uitgeschakeld
-            </button>
-            {launchMut.isError && (
-              <div className="text-xs text-[var(--color-danger)] flex items-start gap-1.5">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>API blokkeerde launch — kill-switch staat uit.</span>
-              </div>
-            )}
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-ivory-100)] p-3 text-xs text-[var(--color-stone-600)]">
+              <div className="font-medium text-[var(--color-stone-700)] mb-1">Volgende stap: handoff (buiten de browser)</div>
+              Draft aanmaken (<code>launch</code>) en activeren (<code>activate</code>, het verzendmoment)
+              lopen via de service-key/CLI — de browser kan ze niet aanroepen. Stel hier samen en preview;
+              de arming zelf gebeurt buiten de browser (kill-switch <code>ENABLE_PROSPECT_SENDS</code>).
+            </div>
           </div>
         </div>
 
