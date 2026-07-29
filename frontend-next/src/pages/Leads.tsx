@@ -37,6 +37,7 @@ export function LeadsPage() {
   const [sectorFilter, setSectorFilter] = useState('');
   const [minScore, setMinScore] = useState(0);
   const [sortBy, setSortBy] = useState('score');
+  const [receptieOnly, setReceptieOnly] = useState(false);
 
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['leads', 500],
@@ -51,6 +52,7 @@ export function LeadsPage() {
       .filter((l) => {
         if (sectorFilter && l.sector !== sectorFilter) return false;
         if ((l.score || 0) < minScore) return false;
+        if (receptieOnly && !l.receptie_hook_code) return false;
         if (!q) return true;
         return (
           (l.company_name || '').toLowerCase().includes(q) ||
@@ -70,7 +72,7 @@ export function LeadsPage() {
             return (b.score || 0) - (a.score || 0);
         }
       });
-  }, [data, search, sectorFilter, minScore, sortBy]);
+  }, [data, search, sectorFilter, minScore, sortBy, receptieOnly]);
 
   return (
     <div className="max-w-7xl mx-auto px-10 py-8">
@@ -106,6 +108,19 @@ export function LeadsPage() {
               </button>
             ))}
           </div>
+
+          <button
+            onClick={() => setReceptieOnly((v) => !v)}
+            className={cn(
+              'px-3 py-1.5 text-xs rounded-md border transition-colors font-medium',
+              receptieOnly
+                ? 'bg-[var(--color-blush-100)] border-[var(--color-blush-500)] text-[var(--color-blush-700)]'
+                : 'bg-white border-[var(--color-border)] text-[var(--color-stone-600)] hover:border-[var(--color-blush-400)]'
+            )}
+            title="Toon alleen leads met een receptie-haak (mail-1)"
+          >
+            Receptie-haak
+          </button>
 
           <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-stone-400)]" />
