@@ -5253,6 +5253,40 @@ async def gdpr_register(
 
 
 # =============================================================================
+# COMPLIANCE-VLAGGEN (drip-blokkades zichtbaar/afhandelbaar) — migratie 044
+# =============================================================================
+
+@app.get("/compliance/flags")
+async def list_compliance_flags(
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Open (niet-acknowledged) compliance-vlaggen — de fail-closed drip-blokkades.
+    Eén open vlag legt de hele drip stil (sequence_engine.assert_no_open_flags)."""
+    from utils.compliance_flags import open_flags
+    return {"flags": open_flags(db, workspace_id)}
+
+
+class AcknowledgeFlags(BaseModel):
+    flag_ids: list[str]
+
+
+@app.post("/compliance/flags/acknowledge")
+async def acknowledge_compliance_flags(
+    body: AcknowledgeFlags,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Markeer vlaggen als afgehandeld (deblokkeert de drip). Review-actie via de UI;
+    de echte send blijft achter activate + de kill-switch. Workspace-veilig: alleen
+    eigen open vlaggen worden afgehandeld (id's uit andere workspaces zijn no-op)."""
+    from utils.compliance_flags import open_flags, acknowledge_flags
+    own_ids = {f["id"] for f in open_flags(db, workspace_id)}
+    ids = [fid for fid in body.flag_ids if fid in own_ids]
+    return {"acknowledged": acknowledge_flags(db, ids, by="ui")}
+
+
+# =============================================================================
 # SEQUENCES (n8n integration)
 # =============================================================================
 

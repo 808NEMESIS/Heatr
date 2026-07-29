@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { fmtRelative } from '@/lib/format';
@@ -35,6 +35,15 @@ interface QueueHealth {
   retry_distribution: Record<string, number>;
   top_failing_steps: { step: string; fail_count: number }[];
   diagnostic_hints: string[];
+}
+
+interface ComplianceFlag {
+  id: string;
+  flag_type: string;
+  lead_id: string | null;
+  campaign_id: string | null;
+  detail: string | null;
+  created_at: string;
 }
 
 const STATUS_BADGE: Record<OutboundRecord['status'], 'success' | 'danger' | 'warning' | 'neutral'> = {
@@ -75,6 +84,18 @@ export function ControlPage() {
     refetchInterval: 30_000,
   });
 
+  const qc = useQueryClient();
+  const { data: flagsData } = useQuery({
+    queryKey: ['compliance-flags'],
+    queryFn: () => api.get<{ flags: ComplianceFlag[] }>('/compliance/flags'),
+    refetchInterval: 30_000,
+  });
+  const ackMut = useMutation({
+    mutationFn: (flag_ids: string[]) => api.post('/compliance/flags/acknowledge', { flag_ids }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['compliance-flags'] }),
+  });
+  const flags = flagsData?.flags;
+
   const records = data?.records || [];
 
   return (
@@ -84,6 +105,41 @@ export function ControlPage() {
         title="Control"
         subtitle="Elke outbound side-effect via de dispatcher — ook geblokkeerd, geskipt en gefaald. Append-only."
       />
+
+      {/* Compliance-vlaggen — fail-closed drip-blokkade. Bovenaan: één open vlag legt de hele drip stil. */}
+      {flags && flags.length > 0 ? (
+        <Card className="p-4 mb-6 border-2 border-[var(--color-danger)] bg-[var(--color-danger-bg)]">
+          <h3 className="font-display text-sm font-semibold text-[var(--color-danger)] mb-3">
+            ⚠ {flags.length} open compliance-vlag{flags.length > 1 ? 'gen' : ''} — drip geblokkeerd tot afgehandeld
+          </h3>
+          <div className="space-y-2">
+            {flags.map((f) => (
+              <div key={f.id} className="flex items-center justify-between gap-3 text-sm">
+                <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                  <Badge variant="danger">{f.flag_type}</Badge>
+                  {f.lead_id && (
+                    <Link to={`/leads/${f.lead_id}`} className="text-[var(--color-blush-500)] hover:underline font-mono text-xs">
+                      {f.lead_id.slice(0, 8)}…
+                    </Link>
+                  )}
+                  {f.detail && <span className="text-[var(--color-stone-600)] text-xs truncate">{f.detail}</span>}
+                </div>
+                <button
+                  onClick={() => ackMut.mutate([f.id])}
+                  disabled={ackMut.isPending}
+                  className="shrink-0 rounded-md border border-[var(--color-border)] bg-white px-3 py-1 text-xs hover:bg-[var(--color-ivory-100)] disabled:opacity-50"
+                >
+                  Afhandelen
+                </button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : flags ? (
+        <Card className="p-3 mb-6 text-xs text-[var(--color-success)] border-[var(--color-success)]">
+          ✓ Geen open compliance-vlaggen — de drip is niet geblokkeerd.
+        </Card>
+      ) : null}
 
       {data?.warning && (
         <Card className="p-4 mb-5 border-[var(--color-warning)] text-sm text-[var(--color-warning)]">
