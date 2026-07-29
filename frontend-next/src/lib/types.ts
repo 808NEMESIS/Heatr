@@ -48,6 +48,7 @@ export interface Lead {
   score: number | null;
   website_score: number | null;
   icp_match: number | null;
+  receptie_hook_code?: string | null;
   status: LeadStatus | string | null;
   crm_stage: CrmStage | string | null;
   enrichment_version: number | null;

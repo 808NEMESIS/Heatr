@@ -197,8 +197,11 @@ function LeadRow({ lead }: { lead: Lead }) {
             {(lead.company_name || '?').slice(0, 2).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <div className="font-medium text-[var(--color-stone-800)] truncate">
-              {lead.company_name || '—'}
+            <div className="font-medium text-[var(--color-stone-800)] flex items-center gap-1.5 min-w-0">
+              <span className="truncate">{lead.company_name || '—'}</span>
+              {lead.receptie_hook_code && (
+                <Badge variant="info" className="shrink-0" title="Receptie-haak (mail-1)">{lead.receptie_hook_code}</Badge>
+              )}
             </div>
             <div className="text-xs text-[var(--color-stone-500)] truncate flex items-center gap-1">
               {lead.domain && (
