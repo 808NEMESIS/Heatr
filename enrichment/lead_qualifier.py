@@ -100,12 +100,15 @@ async def qualify_raw_company(
         if re.search(pattern, name, re.IGNORECASE):
             return False, "closed_pattern_in_name", 10
 
-    # Disqualifiers from sector config (globaal + per subcategory)
+    # Disqualifiers uit sector-config — ALLEEN sector-globaal (net als
+    # scoring/icp_matcher.compute_icp_match). Subcategory-disqualifiers zijn
+    # DISAMBIGUATIE (hoort deze lead in déze subcat?), GEEN sector-uitsluiting:
+    # flat globaal toegepast rejecteerde de eigen ICP ('arts' ⊂ 'cosmetisch arts',
+    # 'huidtherapeut'/'schoonheidssalon' = eigen subcats). Zie sectors.py:287-291
+    # en de 2026-07-22 icp_matcher-fix. Drift-audit 2026-07-28.
     try:
         sector_config = get_sector(sector_key)
         disqualifiers: list[str] = list(sector_config.get("disqualifiers") or [])
-        for sub in (sector_config.get("subcategories") or {}).values():
-            disqualifiers.extend(sub.get("disqualifiers") or [])
         name_lower = name.lower()
         category_lower = category.lower()
         for kw in disqualifiers:
