@@ -46,6 +46,14 @@ interface ComplianceFlag {
   created_at: string;
 }
 
+interface DueSend {
+  id: string;
+  lead_id: string | null;
+  step_index?: number | null;
+  next_send_at?: string | null;
+  leads?: { company_name?: string | null; email?: string | null } | null;
+}
+
 const STATUS_BADGE: Record<OutboundRecord['status'], 'success' | 'danger' | 'warning' | 'neutral'> = {
   completed: 'success',
   failed: 'danger',
@@ -95,6 +103,12 @@ export function ControlPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['compliance-flags'] }),
   });
   const flags = flagsData?.flags;
+
+  const { data: dueSends } = useQuery({
+    queryKey: ['due-sends'],
+    queryFn: () => api.get<{ due_sends: DueSend[]; count: number }>('/sequences/due-sends'),
+    refetchInterval: 30_000,
+  });
 
   const records = data?.records || [];
 
@@ -189,6 +203,40 @@ export function ControlPage() {
           )}
         </section>
       )}
+
+      {/* Due-sends outbox — wat de sequence-engine ná arming zou versturen (read-only). */}
+      <section className="mb-6">
+        <Card className="overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
+            <h3 className="font-display text-sm font-semibold">Klaar om te versturen (outbox)</h3>
+            <span className="text-xs text-[var(--color-stone-500)] tabular-nums">{dueSends?.count ?? 0} due</span>
+          </div>
+          {(dueSends?.due_sends?.length ?? 0) === 0 ? (
+            <div className="p-6 text-center text-xs text-[var(--color-stone-500)]">
+              Niets due — geen wachtende sequence-sends (onder de kill-switch verwacht).
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--color-ivory-200)]">
+              {dueSends!.due_sends.map((d) => (
+                <div key={d.id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-sm">
+                  <div className="min-w-0 truncate">
+                    {d.lead_id ? (
+                      <Link to={`/leads/${d.lead_id}`} className="text-[var(--color-blush-500)] hover:underline">
+                        {d.leads?.company_name || `${d.lead_id.slice(0, 8)}…`}
+                      </Link>
+                    ) : '—'}
+                    {d.leads?.email && <span className="text-xs text-[var(--color-stone-500)]"> · {d.leads.email}</span>}
+                  </div>
+                  <div className="shrink-0 flex items-center gap-2 text-xs text-[var(--color-stone-500)]">
+                    {d.step_index != null && <Badge variant="neutral">stap {d.step_index}</Badge>}
+                    {d.next_send_at && <span>{fmtRelative(d.next_send_at)}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </section>
 
       <Card className="overflow-hidden">
         <div className="flex items-center gap-1.5 p-4 border-b border-[var(--color-border)]">
