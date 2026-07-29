@@ -1,8 +1,9 @@
 """tests/test_receptie_opener_q7.py — Q7-herframe + verplichte positieve opener.
 
-Q7 draagt het receptionist/gemiste-contacten-frame (geen tracking/meting), en mail-1
-opent met één WAAR, site-specifiek positief detail uit bestaande leaddata — nooit een
-verzonnen of generieke complimentzin. Alles em-dash-vrij (QA-gate bant ze).
+Q7 volgt het meten-frame (de site meet/houdt niet bij wat bezoekers doen), consistent
+met de detector en mail-3, NIET het receptionist-frame (dat is Q4). Mail-1 opent met één
+WAAR, site-specifiek positief detail uit bestaande leaddata, nooit een verzonnen of
+generieke complimentzin. Alles em-dash-vrij (QA-gate bant ze).
 """
 from __future__ import annotations
 
@@ -13,19 +14,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config.hook_templates import HOOK_VARIANTS, SIGNAL_NAMES, build_positive_opener
 
-_TRACKING_WORDS = ("meting", "tracking", "statistiek", "analytics")
+_RECEPTIONIST_WORDS = ("niemand", "opvangt", "bereikbaar", "vangt")   # Q4's verhaal, niet Q7
+_METEN_MARKERS = ("bijgehouden", "bijhoudt", "onzichtbaar", "nergens terug", "misloopt")
 _GENERIC_COMPLIMENTS = ("mooie", "moderne", "prachtig", "strak", "professioneel", "fraai")
 
 
-# ── Q7-herframe ──────────────────────────────────────────────────────────────
-def test_q7_carries_receptionist_frame_not_tracking():
-    assert SIGNAL_NAMES["Q7"] == "gemiste_contacten"
+# ── Q7-uitlijning (drift-audit 2026-07-28): copy volgt de detector (meten-frame),
+# NIET het receptionist-frame (dat is Q4's verhaal) ──────────────────────────
+def test_q7_carries_meten_frame_not_receptionist():
+    assert SIGNAL_NAMES["Q7"] == "geen_meting"
     variants = HOOK_VARIANTS["Q7"]
     assert len(variants) == 2
     for i, v in enumerate(variants):
         low = v.lower()
-        assert not any(w in low for w in _TRACKING_WORDS), f"Q7[{i}] draagt nog het tracking-frame: {v!r}"
-        assert "niemand" in low, f"Q7[{i}] mist het receptionist-frame (niemand opvangt): {v!r}"
+        assert any(w in low for w in _METEN_MARKERS), f"Q7[{i}] mist het meten-frame: {v!r}"
+        assert not any(w in low for w in _RECEPTIONIST_WORDS), f"Q7[{i}] draagt nog receptionist-frame: {v!r}"
         assert "—" not in v and "–" not in v, f"Q7[{i}] bevat een em-dash"
 
 

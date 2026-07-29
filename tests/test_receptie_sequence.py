@@ -101,11 +101,11 @@ def test_mail2_skipped_without_second_hook():
 def test_mail2_rendered_with_second_hook():
     r = _m(2, hook_code="Q4", second_hook="Q7", second_variant="A")
     assert r["skipped"] is False and r["sendable"] is True
-    # de tweede haak (Q7, receptionist/gemiste-contacten-frame) staat in de body,
-    # en het oude tracking-frame is weg (regressie-guard).
+    # de tweede haak (Q7, meten-frame na drift-audit 2026-07-28) staat in de body,
+    # en het receptionist-frame is weg (regressie-guard: dat is Q4's verhaal).
     body = r["body"].lower()
-    assert "niemand" in body                      # nieuwe Q7 (mensen die niemand opvangt)
-    assert "meting" not in body and "tracking" not in body and "statistieken" not in body
+    assert any(w in body for w in ("bijgehouden", "bijhoudt", "nergens terug", "onzichtbaar", "misloopt"))
+    assert "niemand" not in body and "opvangt" not in body
 
 
 # ── mail 3: haak-specifiek ───────────────────────────────────────────────────

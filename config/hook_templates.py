@@ -48,7 +48,7 @@ SIGNAL_NAMES: dict = {
     6: "vision_element",
     # Receptie-ladder (Sami 2026-07-24).
     "Q4": "geen_dekking_buiten_uren",
-    "Q7": "gemiste_contacten",
+    "Q7": "geen_meting",
     "Q2": "alleen_aanvraag",
     "P1": "geen_prijsanker",
 }
@@ -130,13 +130,16 @@ HOOK_VARIANTS: dict = {
         "via een aanvraag. Wie 's avonds besluit dat ze het wil, kan dat niet "
         "meteen vastleggen, en de volgende ochtend is dat moment vaak weg.",
     ),
+    # Q7 = geen_meting. De copy volgt wat de detector écht waarneemt (de site meet/
+    # houdt niet bij wat bezoekers doen), consistent met mail-3 ("in je cijfers").
+    # NIET het receptionist-frame ("niemand vangt ze op") — dat is Q4. Drift-audit 2026-07-28.
     "Q7": (
-        "Op de site van {kliniek} komen mensen die niet bellen en niet mailen; ze "
-        "kijken rond en gaan weer weg. Op de momenten dat er niemand bereikbaar is, "
-        "vangt niemand ze op, en die contacten ben je kwijt zonder ze ooit te zien.",
-        "Een deel van wie op de site van {kliniek} kijkt, twijfelt nog en neemt op "
-        "dat moment geen contact op. Gebeurt dat 's avonds of in het weekend, dan is "
-        "er niemand die ze opvangt en zijn ze weg voordat je het doorhad.",
+        "Op de site van {kliniek} wordt niet bijgehouden wat bezoekers doen; wie er "
+        "langskomt, rondkijkt en weer weggaat, zie je nergens terug. Je merkt zo niet "
+        "hoeveel mensen twijfelen en afhaken voordat ze contact opnemen.",
+        "Bij {kliniek} houdt de site niet bij wie er kijkt en waar ze afhaken. Daardoor "
+        "blijft onzichtbaar hoeveel mensen zich oriënteren en zonder iets van zich te "
+        "laten horen weer vertrekken; je stuurt op wat binnenkomt, niet op wat je misloopt.",
     ),
     "Q2": (
         "Op de site van {kliniek} kan een bezoeker alleen een aanvraag "
