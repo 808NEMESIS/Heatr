@@ -123,6 +123,7 @@ GDPR_DATA_MAP: dict[str, dict] = {
     "scraping_jobs":         {"action": "none", "export": False, "reason": "job-administratie (sector/stad)"},
     "enrichment_jobs":       {"action": "none", "export": False, "reason": "job-administratie"},
     "blocked_sends":         {"action": "none", "export": False, "reason": "besluit-log, id-only"},
+    "compliance_flags":      {"action": "none", "export": False, "reason": "besluit-log (drip-blokkade), id-only — flag_type + korte reden, geen PII-inhoud"},
     "system_alerts":         {"action": "none", "export": False, "reason": "ops"},
     "daily_metrics":         {"action": "none", "export": False, "reason": "aggregaten"},
     "startup_log":           {"action": "none", "export": False, "reason": "ops"},

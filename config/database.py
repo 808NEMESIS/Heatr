@@ -68,6 +68,11 @@ _HEATR_TABLES = {
     # Founding-Five plekken-teller (migration 038, outreach spec 3) — één rij per
     # vergeven plek per niche.
     "founding_five_slots",
+    # Compliance-vlaggen — post-send afmeld-sweep + fail-closed drip-gate (migration 044).
+    # Ontbrak hier → de wrapper queryde de ongeprefixte (niet-bestaande) compliance_flags
+    # (PGRST205); het hele compliance-vlag-systeem faalde stil aan de runtime-kant (nooit
+    # live gehit door de kill-switch; de Fase-1 endpoints waren de eerste echte call).
+    "compliance_flags",
 }
 
 
