@@ -460,6 +460,23 @@ def test_ladder_q4_gated_without_form_falls_through():
     assert "Q4" not in r["hook_ladder"]
 
 
+def test_ladder_q4_gated_when_q2_not_hit_even_with_form():
+    # Drift-audit 2026-07-28: Q4's copy 'alleen een formulier achterlaten' is alleen
+    # waar als Q2 óók vuurt (Q4 ⊆ Q2). Ambigu boekmechanisme → Q2 'onbepaald'; ook
+    # MÉT een DOM-formulier mag Q4 dan NIET de mail-1-haak worden → val door naar Q7.
+    r = decide_receptie_hook("hit", "hit", "onbepaald", "geen", form_present=True)
+    assert r["q4_gated"] is True
+    assert "Q4" not in r["hook_ladder"]
+    assert r["hook_code"] == "Q7"
+
+
+def test_ladder_q4_suppressed_when_q2_geen():
+    # Q2 'geen' (self-booking bestaat) → Q4's 'alleen een formulier'-claim onwaar;
+    # geen andere haak vuurt → lead niet mailbaar op Q4.
+    r = decide_receptie_hook("hit", "geen", "geen", "geen", form_present=True)
+    assert r["q4_gated"] is True and r["hook_code"] is None
+
+
 def test_ladder_skips_geen_and_onbepaald():
     # alleen Q2 is een hit; Q7 onbepaald, P1 geen → mail-1 = Q2, geen tweede haak.
     r = decide_receptie_hook("geen", "onbepaald", "hit", "geen", form_present=True)

@@ -616,9 +616,12 @@ def decide_receptie_hook(q4: str, q7: str, q2: str, p1: str, *,
     """Wijs de mail-1-haak toe uit de vier tri-state-uitslagen via de receptie-
     ladder Q4→Q7→Q2→P1. Alleen 'hit' telt als gevuurd ('geen'/'onbepaald' niet).
 
-    Q4 als mail-1-haak vereist een formulier (de copy claimt 'alleen een formulier
-    achterlaten'); zonder formulier → `q4_gated`, Q4 valt door naar de volgende
-    rung (invariant-2-les). Q4 ⊆ Q2 geldt, dus als Q4 vuurt vuurt Q2 ook.
+    Q4 als mail-1-haak vereist (a) een formulier-pad én (b) dat Q2 óók 'hit' is: de
+    copy claimt 'alleen een formulier achterlaten', en dat is alleen waar als Q2
+    ('alleen_aanvraag') geldt (Q4 ⊆ Q2). Ontbreekt één van beide — bv. ambigu
+    boekmechanisme → Q2 'onbepaald' — dan `q4_gated`, Q4 valt door naar de volgende
+    rung. Drift-audit 2026-07-28: de Q2-eis stond als invariant in deze docstring maar
+    werd niet afgedwongen (Q4 vuurde op form_present alleen); nu wél.
 
     Returns:
       hook_code    — mail-1-winnaar (of None → lead niet mailbaar)
@@ -630,7 +633,11 @@ def decide_receptie_hook(q4: str, q7: str, q2: str, p1: str, *,
     fired: list[str] = []
     q4_gated = False
     if q4 == "hit":
-        if form_present:
+        # Q4 ⊆ Q2: 'alleen een formulier achterlaten' klopt alleen als Q2 óók vuurt
+        # én er een formulier-pad is. Anders (bv. ambigu mechanisme → Q2 'onbepaald',
+        # of self-booking → Q2 'geen') gaten en doorvallen. Drift-audit 2026-07-28
+        # (was: alleen op form_present — Q4 kon vuren zonder dat Q2 'hit' was).
+        if form_present and q2 == "hit":
             fired.append("Q4")
         else:
             q4_gated = True
@@ -687,12 +694,29 @@ def evaluate_selfbooking(mechanism: str | None, *, form_present: bool,
 # Formulier op de pagina (voor de Q4/Q2-copy die 'een formulier' claimt).
 _FORM_PRESENT_JS = """
 () => {
+  // Een aanvraag-/terugbelformulier (waar de Q4/Q2-copy 'alleen een formulier'
+  // op steunt) — NIET een nieuwsbrief-inschrijving (los e-mailveld) of een zoekbalk.
+  // Drift-audit 2026-07-28: de oude check telde elk <form> met >=1 veld én elk los
+  // e-mailveld mee, waardoor een nieuwsbrief/zoekveld als 'alleen een aanvraag' gold.
+  const textlike = (el) => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'textarea') return true;
+    if (tag !== 'input') return false;
+    const t = (el.type || 'text').toLowerCase();
+    return ['text', 'email', 'tel', 'url', 'number'].includes(t);
+  };
+  const looksSearch = (f) => {
+    if ((f.getAttribute('role') || '').toLowerCase() === 'search') return true;
+    const meta = ((f.className || '') + ' ' + (f.id || '') + ' ' + (f.getAttribute('action') || '')).toLowerCase();
+    return /search|zoek/.test(meta);
+  };
   for (const f of document.querySelectorAll('form')) {
-    const n = [...f.querySelectorAll('input,textarea,select')].filter(i => i.type !== 'hidden').length;
-    if (n >= 1) return true;
+    if (looksSearch(f)) continue;
+    if (f.querySelector('textarea')) return true;             // bericht-veld = contact/aanvraag
+    const n = [...f.querySelectorAll('input,textarea,select')].filter(textlike).length;
+    if (n >= 2) return true;                                   // bv. naam + e-mail/telefoon (geen losse nieuwsbrief)
   }
-  // losse velden buiten een <form> (sommige site-builders)
-  return document.querySelectorAll('input[type=email], textarea').length >= 1;
+  return false;
 }
 """
 
