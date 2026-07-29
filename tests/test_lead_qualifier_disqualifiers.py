@@ -76,9 +76,8 @@ def test_medisch_esthetische_kliniek_not_rejected():
 
 
 # ── Echte sector-brede non-ICP blijft WÉL geblokkeerd (gate niet uitgehold) ──
-# NB: gebruik de LIVE sector-globale lijst (sectors.py:502) — niet de dode
-# duplicaat-lijst op :292 (huisartsenpraktijk/apotheek staan dáár, maar die key
-# wordt overschreven). Zie de duplicate-key-bevinding in de drift-audit.
+# Na de merge (drift-audit 2026-07-29) is er één sector-globale lijst; apotheek/
+# huisartsenpraktijk (voorheen in de dode duplicaat-key) doen nu ook echt mee.
 def test_ziekenhuis_still_blocked():
     ok, reason, _ = _qualify(_lead("Ziekenhuis Sint Anna", "ziekenhuis"))
     assert ok is False and reason == "disqualifier:ziekenhuis"
@@ -92,3 +91,46 @@ def test_oncologie_still_blocked_via_category():
 def test_spoedeisende_hulp_still_blocked():
     ok, reason, _ = _qualify(_lead("Spoedeisende Hulp Post West"))
     assert ok is False and reason == "disqualifier:spoedeisende hulp"
+
+
+def test_apotheek_still_blocked():
+    # stond in de dode duplicaat-lijst; na de merge doet 'ie echt mee.
+    ok, reason, _ = _qualify(_lead("Kruidvat", "apotheek"))
+    assert ok is False and reason == "disqualifier:apotheek"
+
+
+def test_huisartsenpraktijk_still_blocked():
+    ok, reason, _ = _qualify(_lead("Huisartsenpraktijk De Brug", "huisartsenpraktijk"))
+    assert ok is False and reason == "disqualifier:huisartsenpraktijk"
+
+
+# ── Structurele guards tegen terugkeer van de twee gevonden bugs ─────────────
+def test_no_disqualifier_is_substring_of_icp_term():
+    # De ①-val: 'arts' ⊂ 'cosmetisch arts' → eigen ICP rejecten. Deze guard vangt
+    # elke toekomstige disqualifier die een ICP-keyword/-signal binnendringt.
+    from config.sectors import get_sector
+    sc = get_sector(SECTOR)
+    icp = list(sc.get("lead_keywords") or [])
+    for sub in (sc.get("subcategories") or {}).values():
+        icp += list(sub.get("lead_keywords") or []) + list(sub.get("icp_signals") or [])
+    icp_low = [t.lower() for t in icp]
+    for d in (sc.get("disqualifiers") or []):
+        botsing = [t for t in icp_low if d.lower() in t]
+        assert not botsing, f"disqualifier {d!r} is substring van ICP-term(en): {botsing}"
+
+
+def test_sectors_py_has_no_duplicate_dict_keys():
+    # De duplicate-'disqualifiers'-key-bug (292 dood → 502 live). Deze guard faalt
+    # als ooit weer een dict-literal in sectors.py een sleutel dubbel definieert.
+    import ast
+    src = (Path(__file__).resolve().parent.parent / "config" / "sectors.py").read_text()
+    dupes = []
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Dict):
+            seen = set()
+            for k in node.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    if k.value in seen:
+                        dupes.append((k.value, k.lineno))
+                    seen.add(k.value)
+    assert not dupes, f"duplicate dict-keys in sectors.py: {dupes}"

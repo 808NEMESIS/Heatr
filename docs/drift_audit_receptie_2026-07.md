@@ -126,9 +126,11 @@ Volle suite **954 groen** (was 939 + 15 nieuwe tests), alleen de 2 pre-existing 
   (interval 1800s, `--apply`). +`tests/test_unsubscribe_sweep_scheduling.py` (6). Sami: `launchctl
   load` + env vullen.
 
-### Twee open beslis-items (NIET gefixt — gok niet)
-1. **Duplicate `"disqualifiers"`-key** in `sectors.py` (292 dood → 502 live). Live lijst mist
-   apotheek/huisartsenpraktijk/drogisterij/verpleeghuis/zorginstelling. "Gate te los" — welke
-   non-ICP hoort de globale gate te blokkeren? Sami's keuze (raakt discovery, niet de 32).
-2. **③ raakt alleen toekomstige analyse.** De 32 hebben hun receptie-hook al gepersisteerd met de
-   oude losse logica → vóór verzenden herdetecteren (of Q4/Q2-hooks nalopen).
+### Beide open items opgelost (2026-07-29)
+1. **Duplicate `"disqualifiers"`-key — SAMENGEVOEGD.** Dode (292) + live (502) tot één lijst van 19,
+   duplicate-key opgeheven. apotheek/huisartsenpraktijk/drogisterij/verpleeghuis/zorginstelling erin;
+   `SEH` bewust weggelaten (⊂ namen, redundant met 'spoedeisende hulp'). Geen enkele term is substring
+   van een ICP-keyword (getoetst). +2 structurele guard-tests (geen-substring-botsing, geen-duplicate-key).
+2. **De 32 → 25, GEPERSISTEERD + geverifieerd.** `run_receptie_backfill.py --apply` op het cohort;
+   DB onafhankelijk teruggelezen: 31/31 rijen, 25 met een haak, 6 op `None` (oude fout-haken gewist),
+   alle 31 vers herschreven (18–20 min). De verzendlaag draagt nu de nieuwe haken.

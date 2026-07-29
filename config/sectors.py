@@ -284,16 +284,6 @@ SECTORS: dict[str, SectorConfig] = {
             "96099": "Catch-all. PMU, tattoo, permanente wimpers, nagelstudios vaak hier.",
             "86230": "Tandartsen. Alleen relevant bij expliciete cosmetische tandheelkunde focus.",
         },
-        # Sector-BREDE uitsluitingen: ECHTE non-ICP (reguliere/acute zorg, apotheek).
-        # BEWUST NIET "medisch"/"arts"/"huidtherapeut"/"schoonheidssalon"/"wellness":
-        # dat IS de ICP (medisch-esthetisch) of een ICP-subcategorie. Die termen
-        # staan in subcategory-disqualifiers als DISAMBIGUATIE en horen niet
-        # sector-globaal te vuren (zie scoring/icp_matcher.compute_icp_match).
-        "disqualifiers": [
-            "ziekenhuis", "UMC", "academisch medisch centrum",
-            "spoedeisende hulp", "huisartsenpraktijk", "huisartsenpost",
-            "apotheek", "drogisterij", "verpleeghuis", "zorginstelling",
-        ],
         "subcategories": {
             "injectables_anti_aging": {
                 "label": "Injectables en anti-aging",
@@ -499,13 +489,23 @@ SECTORS: dict[str, SectorConfig] = {
             "esthetisch centrum",
             "cosmetisch centrum",
         ],
+        # Sector-BREDE uitsluitingen — de ENIGE "disqualifiers"-sleutel. Drift-audit
+        # 2026-07-29: dit was een DUPLICAAT-key (een dode lijst boven de subcategories
+        # + deze); samengevoegd tot één, dode key opgeheven. ECHTE non-ICP: reguliere/
+        # acute/kliniek-zorg, apotheek/drogist, verpleeg-/zorginstelling, pure wellness.
+        # BEWUST NIET "medisch"/"arts"/"huidtherapeut"/"schoonheidssalon"/"wellness":
+        # dat IS de ICP of een ICP-subcategorie — die horen in subcategory-disqualifiers
+        # als DISAMBIGUATIE, niet sector-globaal (zie icp_matcher + lead_qualifier).
+        # Geen enkele term is substring van een ICP-keyword (getoetst in tests). 'SEH'
+        # bewust weggelaten (⊂ namen als '...seh...'; 'spoedeisende hulp' dekt het al).
         "disqualifiers": [
-            "ziekenhuis", "UMC", "academisch medisch centrum",
-            "spoedeisende hulp", "SEH",
+            "ziekenhuis", "UMC", "academisch medisch centrum", "spoedeisende hulp",
+            "huisartsenpraktijk", "huisartsenpost", "apotheek", "drogisterij",
+            "verpleeghuis", "zorginstelling",
             "dermatologie vergoed",  # puur medische dermatologie zonder cosmetische focus
             "oncologie", "kinderkliniek",
-            # Pure wellness zonder medische component — gefilterd uit globaal,
-            # subcategorieën als 'schoonheidssalons' hebben eigen specifieke ICP-logica.
+            # Pure wellness zonder medische component (subcats als 'schoonheidssalons'
+            # hebben hun eigen ICP-logica):
             "alleen massage", "wellness resort", "sauna only", "zonnebank",
             "alleen pedicure", "alleen kapper",
         ],
