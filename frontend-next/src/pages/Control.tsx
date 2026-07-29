@@ -27,8 +27,14 @@ interface LedgerResponse {
 }
 
 interface QueueHealth {
-  queues?: Record<string, { pending?: number; running?: number; failed?: number }>;
-  [k: string]: unknown;
+  total_jobs: number;
+  recent_24h: number;
+  completion_rate_pct: number;
+  fail_rate_pct: number;
+  status_counts: Record<string, number>;
+  retry_distribution: Record<string, number>;
+  top_failing_steps: { step: string; fail_count: number }[];
+  diagnostic_hints: string[];
 }
 
 const STATUS_BADGE: Record<OutboundRecord['status'], 'success' | 'danger' | 'warning' | 'neutral'> = {
@@ -86,18 +92,45 @@ export function ControlPage() {
       )}
 
       {queueHealth && (
-        <section className="mb-6 grid grid-cols-2 md:grid-cols-4 gap-3">
-          {Object.entries(queueHealth.queues || {}).map(([name, q]) => (
-            <Card key={name} className="p-4">
-              <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">{name}</div>
-              <div className="mt-1 text-sm tabular-nums">
-                {q.pending ?? 0} pending · {q.running ?? 0} running
-                {(q.failed ?? 0) > 0 && (
-                  <span className="text-[var(--color-danger)]"> · {q.failed} failed</span>
-                )}
+        <section className="mb-6 space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {Object.entries(queueHealth.status_counts || {}).map(([status, n]) => (
+              <Card key={status} className="p-4">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">{status}</div>
+                <div className="mt-1 text-2xl font-display font-semibold tabular-nums">{n}</div>
+              </Card>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <Badge variant="neutral">{queueHealth.total_jobs} jobs</Badge>
+            <Badge variant="neutral">{queueHealth.recent_24h} in 24u</Badge>
+            <Badge variant={queueHealth.completion_rate_pct >= 80 ? 'success' : 'neutral'}>
+              {queueHealth.completion_rate_pct}% completed
+            </Badge>
+            <Badge variant={queueHealth.fail_rate_pct > 20 ? 'danger' : queueHealth.fail_rate_pct > 0 ? 'warning' : 'success'}>
+              {queueHealth.fail_rate_pct}% failed
+            </Badge>
+          </div>
+          {queueHealth.top_failing_steps?.length > 0 && (
+            <Card className="p-4">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)] mb-2">Top failing steps</div>
+              <div className="flex flex-wrap gap-3 text-xs tabular-nums">
+                {queueHealth.top_failing_steps.map((s) => (
+                  <span key={s.step}>
+                    <span className="text-[var(--color-stone-700)]">{s.step}</span>
+                    <span className="text-[var(--color-danger)]"> ×{s.fail_count}</span>
+                  </span>
+                ))}
               </div>
             </Card>
-          ))}
+          )}
+          {queueHealth.diagnostic_hints?.length > 0 && (
+            <Card className="p-4 border-[var(--color-warning)]">
+              <div className="text-xs text-[var(--color-warning)] space-y-1">
+                {queueHealth.diagnostic_hints.map((h, i) => <div key={i}>⚠ {h}</div>)}
+              </div>
+            </Card>
+          )}
         </section>
       )}
 
