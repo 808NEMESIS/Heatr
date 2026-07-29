@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ExternalLink, Mail, Phone, Building2, MapPin, Calendar, Globe, Camera, Hash, Store, Megaphone, Clock, FlaskConical } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Mail, Phone, Building2, MapPin, Calendar, Globe, Camera, Hash, Store, Megaphone, Clock, FlaskConical, Download, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtInt, fmtRelative, priorityFromScore, scoreColor } from '@/lib/format';
 import type { Lead } from '@/lib/types';
@@ -38,6 +38,28 @@ export function LeadDetailPage() {
       api.post(`/leads/${id}/test-mode`, { is_test_lead: next }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['lead', id] }),
   });
+
+  // AVG art.17 — recht op vergetelheid (anonimiseert PII + stopt sequences; onomkeerbaar).
+  const forgetMut = useMutation({
+    mutationFn: () => api.post(`/gdpr/forget/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lead', id] }),
+  });
+  const onForget = (companyName: string | null) => {
+    if (!window.confirm(
+      `AVG art.17 — "${companyName || 'deze lead'}" vergeten? Dit anonimiseert alle PII en stopt ` +
+      `alle sequences. Onomkeerbaar.`
+    )) return;
+    forgetMut.mutate();
+  };
+  // AVG art.15/20 — inzage / dataportabiliteit: alle opgeslagen data als JSON-download.
+  const exportGdpr = async () => {
+    const data = await api.get<Record<string, unknown>>(`/gdpr/export/${id}`);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `gdpr-export-${id}.json`; a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const { data: contacts } = useQuery({
     queryKey: ['lead-contacts', id],
@@ -134,6 +156,21 @@ export function LeadDetailPage() {
           >
             <FlaskConical className="h-3.5 w-3.5" />
             {lead.is_test_lead ? 'Test-mode aan' : 'Mark as test lead'}
+          </button>
+          <button
+            onClick={exportGdpr}
+            title="AVG art.15/20 — exporteer alle opgeslagen data van deze lead (JSON)"
+            className="inline-flex items-center gap-2 h-10 px-3 rounded-md border border-[var(--color-border)] text-sm hover:bg-[var(--color-ivory-100)]"
+          >
+            <Download className="h-3.5 w-3.5" /> Exporteer (AVG)
+          </button>
+          <button
+            onClick={() => onForget(lead.company_name)}
+            disabled={forgetMut.isPending}
+            title="AVG art.17 — recht op vergetelheid; anonimiseert PII + stopt sequences (onomkeerbaar)"
+            className="inline-flex items-center gap-2 h-10 px-3 rounded-md border border-[var(--color-danger)] text-[var(--color-danger)] text-sm hover:bg-[var(--color-danger-bg)] disabled:opacity-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" /> {forgetMut.isPending ? 'Vergeten…' : 'Vergeten (AVG)'}
           </button>
           <button className="inline-flex items-center gap-2 h-10 px-4 rounded-md bg-[var(--color-blush-500)] text-white text-sm font-medium hover:bg-[var(--color-blush-600)]">
             Review email sturen

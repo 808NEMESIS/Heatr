@@ -12,6 +12,7 @@ import {
   BarChart3,
   Activity,
   Phone,
+  ShieldCheck,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -38,6 +39,7 @@ const NAV = [
   { to: '/gesprekken', icon: Phone, label: 'Gesprekken' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/control', icon: Activity, label: 'Control' },
+  { to: '/compliance', icon: ShieldCheck, label: 'Compliance' },
 ];
 
 export function Sidebar() {

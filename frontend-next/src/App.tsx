@@ -19,6 +19,7 @@ import { CRMActivityPage } from '@/pages/CRMActivity';
 import { GesprekkenPage } from '@/pages/Gesprekken';
 import { AnalyticsPage } from '@/pages/Analytics';
 import { ControlPage } from '@/pages/Control';
+import { CompliancePage } from '@/pages/Compliance';
 import { AuthGate } from '@/components/AuthGate';
 
 /** 401/403 worden al gemeld via de AuthErrorBanner (heatr:auth-error event)
@@ -66,6 +67,7 @@ export default function App() {
               <Route path="/gesprekken" element={<GesprekkenPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
               <Route path="/control" element={<ControlPage />} />
+              <Route path="/compliance" element={<CompliancePage />} />
             </Route>
           </Routes>
         </BrowserRouter>
