@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>            <string>nl.aerys.heatr.unsubscribe-compliance</string>
+  <!-- Post-send afmeld-sweep (drift-audit 2026-07-28, gat 4): zet automatisch een
+       compliance-vlag als een verstuurde mail geen afmeldlink kreeg. De drip-pre-gate
+       (sequence_engine.assert_no_open_flags) blokkeert de volgende batch tot afgehandeld.
+       Zonder deze job werd de vlag NOOIT automatisch gezet (was: alleen handmatig CLI).
+       Onder de kill-switch (geen sends) is dit een no-op tot er echt verstuurd wordt. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3</string>
+    <string>/Users/nemesis/Heatr/scripts/verify_unsubscribe_compliance.py</string>
+    <string>--apply</string>
+  </array>
+  <key>WorkingDirectory</key> <string>/Users/nemesis/Heatr</string>
+  <key>RunAtLoad</key>        <true/>
+  <key>StartInterval</key>    <integer>1800</integer>
+  <key>StandardOutPath</key>  <string>/Users/nemesis/Heatr/logs/unsubscribe-compliance.out.log</string>
+  <key>StandardErrorPath</key> <string>/Users/nemesis/Heatr/logs/unsubscribe-compliance.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>                          <string>/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONUNBUFFERED</key>              <string>1</string>
+    <!-- Sami: vul de receptie-campaign-id(s) in (komma-gescheiden). Leeg = de sweep
+         faalt hard met een duidelijke melding en zet niets (geen stille no-op). -->
+    <key>RECEPTIE_SWEEP_CAMPAIGN_IDS</key>   <string></string>
+  </dict>
+</dict>
+</plist>

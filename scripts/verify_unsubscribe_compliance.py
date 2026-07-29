@@ -2,16 +2,21 @@
 
 Sami 2026-07-27: Warmr's afmeld-footer is best-effort (campaign_scheduler try/except),
 dus af en toe gaat een mail ZONDER afmeldlink de deur uit. Deze sweep draait NÁ de
-send (tussen drip-batches, via cron): voor elke lead die Warmr verstuurd heeft
-(email_events.event_type='sent') controleert 'ie of er een unsubscribe_tokens-rij is.
-Ontbreekt die → een HARDE, zichtbare compliance-vlag (heatr_compliance_flags, 044),
-die de drip-pre-gate (sequence_engine) laat blokkeren tot afgehandeld.
+send (tussen drip-batches, via launchd nl.aerys.heatr.unsubscribe-compliance): voor
+elke lead die Warmr verstuurd heeft (email_events.event_type='sent') controleert 'ie
+of er een unsubscribe_tokens-rij is. Ontbreekt die → een HARDE, zichtbare compliance-
+vlag (heatr_compliance_flags, 044), die de drip-pre-gate (sequence_engine) laat
+blokkeren tot afgehandeld.
 
 Zichtbaarheid boven stilte: het aantal sent-leads wordt altijd gerapporteerd, zodat
 "0 gevonden" opvalt i.p.v. stil als "alles ok" door te gaan.
 
   python3 scripts/verify_unsubscribe_compliance.py --campaign-id <uuid>            # dry-run
   python3 scripts/verify_unsubscribe_compliance.py --campaign-id <uuid> --apply    # zet vlaggen
+
+Gepland (drift-audit 2026-07-28, gat ④): de launchd-job draait ZONDER --campaign-id en
+leest RECEPTIE_SWEEP_CAMPAIGN_IDS (komma-gescheiden) uit de env, zodat de vlag
+automatisch tussen drip-batches gezet wordt zonder een hardcoded UUID in het plist.
 """
 from __future__ import annotations
 
@@ -75,10 +80,32 @@ def main(campaign_id: str, workspace: str, apply: bool) -> int:
     return 0
 
 
+def _resolve_campaign_ids(cli_id: str | None, env_value: str | None) -> list[str]:
+    """Campagne-id('s) voor de sweep. CLI --campaign-id heeft voorrang; anders de env
+    RECEPTIE_SWEEP_CAMPAIGN_IDS (komma-gescheiden) — zo draait de geplande launchd-job
+    zonder hardcoded UUID en zonder Warmr-schema te raden. Lege/witruimte-entries eruit;
+    lege lijst = niets te doen (de caller faalt hard met een duidelijke melding)."""
+    if cli_id and cli_id.strip():
+        return [cli_id.strip()]
+    return [c.strip() for c in (env_value or "").split(",") if c.strip()]
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--campaign-id", required=True)
+    ap.add_argument("--campaign-id", default=None,
+                    help="losse campagne; weglaten → RECEPTIE_SWEEP_CAMPAIGN_IDS (geplande job)")
     ap.add_argument("--workspace", default="aerys")
     ap.add_argument("--apply", action="store_true", help="zet compliance-vlaggen bij missende afmeldlink")
     args = ap.parse_args()
-    raise SystemExit(main(args.campaign_id, args.workspace, args.apply))
+
+    campaign_ids = _resolve_campaign_ids(args.campaign_id, os.getenv("RECEPTIE_SWEEP_CAMPAIGN_IDS"))
+    if not campaign_ids:
+        print("Geen campagne opgegeven: geef --campaign-id <uuid>, of zet "
+              "RECEPTIE_SWEEP_CAMPAIGN_IDS (komma-gescheiden) voor de geplande sweep.",
+              file=sys.stderr)
+        raise SystemExit(2)
+
+    rc = 0
+    for cid in campaign_ids:
+        rc |= main(cid, args.workspace, args.apply)
+    raise SystemExit(rc)
