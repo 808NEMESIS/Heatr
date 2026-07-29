@@ -1014,6 +1014,25 @@ async def get_lead_website(
     return res.data or {}
 
 
+@app.get("/leads/{lead_id}/receptie")
+async def get_lead_receptie(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Receptie-preview voor één lead: de gepersisteerde haak (migratie 041, Q4/Q7/Q2/P1 +
+    axis-states) plus de gerenderde mail 1/2/3. Read-only — rendert via de pure
+    build_receptie_preview, verstuurt niets (LeadDetail-Receptie-tab)."""
+    from config.receptie_sequence import build_receptie_preview
+    lead_res = (db.table("leads").select("*")
+                .eq("id", lead_id).eq("workspace_id", workspace_id).maybe_single().execute())
+    if not lead_res.data:
+        raise HTTPException(status_code=404, detail="lead niet gevonden")
+    wi_res = (db.table("website_intelligence").select("*")
+              .eq("lead_id", lead_id).eq("workspace_id", workspace_id).maybe_single().execute())
+    return build_receptie_preview(lead_res.data, wi_res.data)
+
+
 @app.post("/leads/{lead_id}/audit")
 async def run_lead_audit(
     lead_id: str,

@@ -256,3 +256,41 @@ def render_receptie_mail(
     return {"step": step, "skipped": False, "subject": subject, "body": body,
             "sendable": ok, "block_reason": reason,
             "hook_code": hook_code, "second_hook": second_hook if step == 2 else None}
+
+
+def build_receptie_preview(lead: dict, wi: dict | None) -> dict[str, Any]:
+    """Assembleer de receptie-preview voor één lead (PUUR — geen DB/Playwright/send).
+
+    Neemt de lead-rij + de heatr_website_intelligence-rij (migratie 041) en levert de
+    gepersisteerde haak + axis-states plus de gerenderde mail 1/2/3 (via render_receptie_mail,
+    met de ECHTE compliance-tokens, dus sendable/block_reason tonen de werkelijke gate-stand).
+    Read-only: rendert, verstuurt niets. Voor de LeadDetail-Receptie-tab + offline testbaar.
+
+    Bij geen WI-rij of geen gedetecteerde haak → hook_code None + lege mails (UI: 'nog niet
+    gedetecteerd'). Mail 2 wordt alleen gerenderd als er een second_hook is."""
+    wi = wi or {}
+    hook_code = wi.get("receptie_hook_code")
+    second_hook = wi.get("receptie_second_hook")
+    out: dict[str, Any] = {
+        "hook_code": hook_code,
+        "second_hook": second_hook,
+        "axes": {ax: wi.get(f"receptie_{ax}") for ax in ("q4", "q7", "q2", "p1")},
+        "q4_gated": wi.get("receptie_q4_gated"),
+        "form_present": wi.get("receptie_form_present"),
+        "detected_at": wi.get("receptie_detected_at"),
+        "evidence": wi.get("receptie_evidence"),
+        "mails": [],
+    }
+    if not hook_code:
+        return out
+    privacy, unsub = receptie_compliance_tokens(lead)
+    steps = [1, 2, 3] if second_hook else [1, 3]
+    out["mails"] = [
+        {k: r.get(k) for k in ("step", "subject", "body", "sendable", "block_reason", "skipped")}
+        for r in (
+            render_receptie_mail(step, lead, hook_code=hook_code, second_hook=second_hook,
+                                 privacy_notice=privacy, unsubscribe=unsub, seed=lead.get("id"))
+            for step in steps
+        )
+    ]
+    return out

@@ -13,6 +13,14 @@ import { GesprekView } from '@/components/calls/GesprekView';
 
 interface Contact { id: string; name?: string; email?: string; role?: string; source?: string; is_primary?: boolean; confidence?: number; why_chosen?: string; }
 interface TimelineEvent { id: string; event_type: string; title: string; body?: string; created_at: string; }
+interface ReceptieMail { step: number; subject: string | null; body: string | null; sendable: boolean; block_reason: string | null; skipped: boolean; }
+interface ReceptiePreview {
+  hook_code: string | null; second_hook: string | null;
+  axes: Record<string, string | null>;
+  q4_gated: boolean | null; form_present: boolean | null;
+  detected_at: string | null; evidence: string[] | null;
+  mails: ReceptieMail[];
+}
 
 export function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -158,6 +166,7 @@ export function LeadDetailPage() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="website">Website</TabsTrigger>
+          <TabsTrigger value="receptie">Receptie</TabsTrigger>
           <TabsTrigger value="contacts">Contacts ({contacts?.contacts?.length || 0})</TabsTrigger>
           <TabsTrigger value="thread">Thread</TabsTrigger>
           <TabsTrigger value="gesprek">Gesprek</TabsTrigger>
@@ -369,6 +378,10 @@ export function LeadDetailPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="receptie" className="mt-5">
+          <ReceptieView leadId={id!} />
+        </TabsContent>
+
         <TabsContent value="contacts" className="mt-5">
           <Card>
             {(contacts?.contacts || []).length === 0 ? (
@@ -503,6 +516,74 @@ interface ThreadResponse {
   lead_id: string;
   thread: ThreadItem[];
   counts: { total: number; sent: number; received: number };
+}
+
+function ReceptieView({ leadId }: { leadId: string }) {
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['lead-receptie', leadId],
+    queryFn: () => api.get<ReceptiePreview>(`/leads/${leadId}/receptie`),
+  });
+
+  if (isLoading) return <div className="skeleton h-64" />;
+  if (isError || !data) {
+    return (
+      <Card className="p-8 text-center border-[var(--color-danger)]">
+        <p className="text-[var(--color-danger)] font-medium mb-2">Kon receptie-preview niet laden</p>
+        <button onClick={() => refetch()} className="rounded bg-[var(--color-blush-500)] px-3 py-1.5 text-sm text-white">Opnieuw</button>
+      </Card>
+    );
+  }
+  if (!data.hook_code) {
+    return (
+      <Card className="p-8 text-center text-sm text-[var(--color-stone-500)]">
+        Nog geen receptie-haak gedetecteerd voor deze lead. Draai de receptie-backfill
+        (run_receptie_backfill.py) om de haak + mail-preview te genereren.
+      </Card>
+    );
+  }
+
+  const axisVariant = (s: string | null): 'success' | 'warning' | 'neutral' =>
+    s === 'hit' ? 'success' : s === 'onbepaald' ? 'warning' : 'neutral';
+
+  return (
+    <div className="space-y-5">
+      {/* Haak + axis-states */}
+      <Card className="p-5">
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <h3 className="font-display text-base font-semibold">Receptie-haak</h3>
+          <Badge variant="accent">{data.hook_code}</Badge>
+          {data.second_hook && <Badge variant="neutral">mail 2: {data.second_hook}</Badge>}
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap text-xs">
+          {(['q4', 'q7', 'q2', 'p1'] as const).map((ax) => (
+            <Badge key={ax} variant={axisVariant(data.axes?.[ax] ?? null)}>
+              {ax.toUpperCase()}: {data.axes?.[ax] ?? '—'}
+            </Badge>
+          ))}
+          {data.q4_gated && <Badge variant="warning">Q4 doorgevallen</Badge>}
+          <Badge variant="neutral">formulier: {data.form_present ? 'ja' : 'nee'}</Badge>
+        </div>
+        <div className="text-xs text-[var(--color-stone-500)] mt-2">
+          {data.detected_at && <span>Gedetecteerd {fmtRelative(data.detected_at)}</span>}
+          {data.evidence && data.evidence.length > 0 && <span> · {data.evidence.join(', ')}</span>}
+        </div>
+      </Card>
+
+      {/* Gerenderde mails (dry, verstuurt niets) */}
+      {data.mails.map((m) => (
+        <Card key={m.step} className="p-5">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <h4 className="font-display text-sm font-semibold">Mail {m.step}</h4>
+            <Badge variant={m.sendable ? 'success' : 'danger'}>
+              {m.sendable ? 'verzendbaar' : `geblokkeerd: ${m.block_reason}`}
+            </Badge>
+          </div>
+          {m.subject && <div className="text-sm font-medium mb-2">{m.subject}</div>}
+          <pre className="text-sm whitespace-pre-wrap font-sans text-[var(--color-stone-700)] leading-relaxed">{m.body}</pre>
+        </Card>
+      ))}
+    </div>
+  );
 }
 
 function ThreadView({ leadId }: { leadId: string }) {
