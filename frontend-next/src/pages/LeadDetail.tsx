@@ -30,6 +30,7 @@ interface WebsiteIntel {
   score_denominator?: number | null; visual_included?: boolean | null; priority?: string | null;
   opportunity_types?: string[] | null; opportunity_reasons?: Record<string, string> | null;
   screenshot_desktop_url?: string | null; screenshot_mobile_url?: string | null;
+  review_status?: string | null;
 }
 
 export function LeadDetailPage() {
@@ -539,9 +540,14 @@ interface ThreadResponse {
 }
 
 function WebsiteView({ leadId }: { leadId: string }) {
+  const qc = useQueryClient();
   const { data: wi, isLoading } = useQuery({
     queryKey: ['lead-website', leadId],
     queryFn: () => api.get<WebsiteIntel>(`/leads/${leadId}/website`).catch(() => null),
+  });
+  const reviewMut = useMutation({
+    mutationFn: (status: string) => api.patch(`/leads/${leadId}/website-review`, { status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lead-website', leadId] }),
   });
 
   if (isLoading) return <div className="skeleton h-64" />;
@@ -563,6 +569,28 @@ function WebsiteView({ leadId }: { leadId: string }) {
 
   return (
     <div className="space-y-5">
+      {/* Review-triage — schrijft review_status (PATCH). Vereist migratie 045. */}
+      <Card className="p-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)] mr-1">Review-status</span>
+          {([['ok', 'OK'], ['opportunity', 'Kans'], ['urgent', 'Urgent']] as const).map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => reviewMut.mutate(val)}
+              disabled={reviewMut.isPending}
+              className={`px-3 py-1 text-xs rounded-md border font-medium transition-colors disabled:opacity-50 ${
+                wi.review_status === val
+                  ? 'bg-[var(--color-blush-100)] border-[var(--color-blush-500)] text-[var(--color-blush-700)]'
+                  : 'bg-white border-[var(--color-border)] text-[var(--color-stone-600)] hover:bg-[var(--color-ivory-100)]'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {!wi.review_status && <span className="text-xs text-[var(--color-stone-400)]">nog niet getrieerd</span>}
+        </div>
+      </Card>
+
       <Card className="p-5">
         <div className="flex items-start gap-6 flex-wrap">
           <div className="flex flex-col items-center">

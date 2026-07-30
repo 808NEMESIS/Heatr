@@ -22,7 +22,14 @@ interface Opportunity {
   opportunity_types: string[] | null;
   opportunity_reasons: Record<string, string> | null;
   screenshot_desktop_url: string | null;
+  review_status?: string | null;
 }
+
+const REVIEW_BADGE: Record<string, { label: string; variant: 'success' | 'accent' | 'danger' }> = {
+  ok: { label: 'OK', variant: 'success' },
+  opportunity: { label: 'Kans', variant: 'accent' },
+  urgent: { label: 'Urgent', variant: 'danger' },
+};
 
 const OPP_LABEL: Record<string, string> = {
   website_rebuild: 'Website',
@@ -184,7 +191,12 @@ function KansenCard({ o }: { o: Opportunity }) {
 
         {/* Score + priority */}
         <div className="flex flex-col items-end justify-between">
-          {prio && <Badge variant={prio.variant}>{prio.label}</Badge>}
+          <div className="flex flex-col items-end gap-1">
+            {prio && <Badge variant={prio.variant}>{prio.label}</Badge>}
+            {o.review_status && REVIEW_BADGE[o.review_status] && (
+              <Badge variant={REVIEW_BADGE[o.review_status].variant}>{REVIEW_BADGE[o.review_status].label}</Badge>
+            )}
+          </div>
           <div className="text-right">
             <div className="font-display text-4xl font-semibold leading-none tracking-tight" style={{ color }}>{score}</div>
             <div className="text-[10px] mt-1 text-[var(--color-stone-500)]">/ 100 website-score</div>
