@@ -35,6 +35,12 @@ interface GroupedJob {
   active: number;
 }
 
+interface ScrapingLive {
+  counters: { pending: number; running: number; completed_24h: number; failed_24h: number; total_companies_24h: number };
+  recent_companies: { id: string; company_name: string; city?: string | null; domain?: string | null; google_rating?: number | null; created_at: string }[];
+  by_sector_city: { sector: string; city: string; count: number }[];
+}
+
 export function ZoekenPage() {
   const [sector, setSector] = useState<'cosmetische_behandelaars' | 'alternatieve_geneeskunde'>(
     'cosmetische_behandelaars'
@@ -59,6 +65,11 @@ export function ZoekenPage() {
     queryKey: ['scraping-jobs'],
     queryFn: () => api.get<JobsResponse>('/jobs?limit=200&type=scraping'),
     refetchInterval: 6000,
+  });
+  const { data: live } = useQuery({
+    queryKey: ['scraping-live'],
+    queryFn: () => api.get<ScrapingLive>('/analytics/scraping-live').catch(() => null),
+    refetchInterval: 4000,
   });
 
   const startMutation = useMutation({
@@ -328,6 +339,29 @@ export function ZoekenPage() {
 
         {/* History */}
         <div>
+          {live && live.recent_companies.length > 0 && (
+            <Card className="p-4 mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-display text-sm font-semibold">Live binnenkomend (24u)</h3>
+                <span className="text-xs text-[var(--color-stone-500)] tabular-nums">
+                  {fmtInt(live.counters.total_companies_24h)} bedrijven · {live.counters.running} running
+                </span>
+              </div>
+              <div className="divide-y divide-[var(--color-ivory-200)]">
+                {live.recent_companies.slice(0, 8).map((c) => (
+                  <div key={c.id} className="py-1.5 flex items-center justify-between gap-3 text-sm">
+                    <div className="min-w-0 truncate">
+                      <span className="font-medium">{c.company_name}</span>
+                      {c.city && <span className="text-xs text-[var(--color-stone-500)]"> · {c.city}</span>}
+                    </div>
+                    <div className="text-xs text-[var(--color-stone-500)] shrink-0 tabular-nums">
+                      {c.google_rating ? `${c.google_rating}★ · ` : ''}{fmtRelative(c.created_at)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
           <div className="flex items-baseline justify-between mb-3">
             <h2 className="font-display text-xl font-semibold">Gedane zoekopdrachten</h2>
             <button

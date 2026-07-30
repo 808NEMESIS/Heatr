@@ -63,4 +63,16 @@ export const api = {
     apiFetch<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
   del: <T = unknown>(path: string) =>
     apiFetch<T>(path, { method: 'DELETE' }),
+  /** Download een niet-JSON respons (bv. CSV StreamingResponse) als bestand.
+   *  De gewone apiFetch doet JSON.parse; dit pad haalt een blob en triggert een download. */
+  download: async (path: string, filename: string) => {
+    const token = (await getAuthToken()) ?? 'dev-token';
+    const res = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  },
 };

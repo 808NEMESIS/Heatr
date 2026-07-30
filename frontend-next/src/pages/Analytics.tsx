@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Download } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtInt, fmtEuro } from '@/lib/format';
 import type { PipelineStats, EnrichmentCost } from '@/lib/types';
@@ -97,6 +98,14 @@ export function AnalyticsPage() {
         eyebrow="Insights"
         title="Analytics"
         subtitle="Funnel, email coverage, en website-intelligence aggregaten."
+        actions={
+          <button
+            onClick={() => api.download('/analytics/export/leads.csv', 'heatr-leads.csv')}
+            className="inline-flex items-center gap-2 h-10 px-4 rounded-md border border-[var(--color-border)] text-sm hover:bg-[var(--color-ivory-100)]"
+          >
+            <Download className="h-4 w-4" /> Exporteer leads (CSV)
+          </button>
+        }
       />
 
       {/* Funnel */}
