@@ -1043,6 +1043,25 @@ async def get_lead_receptie(
     return build_receptie_preview(lead_res.data, wi_res.data)
 
 
+@app.get("/leads/{lead_id}/audit")
+async def get_lead_audit(
+    lead_id: str,
+    tier: int | None = None,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Laatste (hoogste versie) audit-rapport voor een lead uit heatr_audit_reports —
+    read-only, geen re-run. Optioneel ?tier= voor de laatste tier-N. {} als er geen is.
+    Bevat categories + score_total (die de POST weglaat) zodat de UI de per-categorie-
+    breakdown kan tonen zonder opnieuw te draaien."""
+    q = (db.table("audit_reports").select("*")
+         .eq("lead_id", lead_id).eq("workspace_id", workspace_id))
+    if tier in (1, 2):
+        q = q.eq("tier", tier)
+    res = q.order("version", desc=True).limit(1).execute()
+    return (res.data[0] if res.data else {})
+
+
 @app.post("/leads/{lead_id}/audit")
 async def run_lead_audit(
     lead_id: str,

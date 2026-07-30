@@ -32,6 +32,20 @@ interface WebsiteIntel {
   screenshot_desktop_url?: string | null; screenshot_mobile_url?: string | null;
   review_status?: string | null;
 }
+interface AuditCategory { behaald: number; max: number; label: string; }
+interface AuditFinding {
+  check_id: string; categorie: string; status: string;
+  bewijs?: string | null; severity?: string | null; uitleg?: string | null;
+}
+interface AuditReport {
+  version?: number; tier?: number;
+  score_total?: number | null; score_normalized?: number | null; score_capped_by?: string | null;
+  categories?: Record<string, AuditCategory> | null;
+  findings?: AuditFinding[] | null;
+  benchmark?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
+const _findingRank = (s: string) => (s === 'fail' ? 0 : s === 'not_measurable' ? 1 : 2);
 
 export function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -214,6 +228,7 @@ export function LeadDetailPage() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="website">Website</TabsTrigger>
+          <TabsTrigger value="audit">Audit</TabsTrigger>
           <TabsTrigger value="receptie">Receptie</TabsTrigger>
           <TabsTrigger value="contacts">Contacts ({contacts?.contacts?.length || 0})</TabsTrigger>
           <TabsTrigger value="thread">Thread</TabsTrigger>
@@ -399,6 +414,10 @@ export function LeadDetailPage() {
           <WebsiteView leadId={id!} />
         </TabsContent>
 
+        <TabsContent value="audit" className="mt-5">
+          <AuditView leadId={id!} />
+        </TabsContent>
+
         <TabsContent value="receptie" className="mt-5">
           <ReceptieView leadId={id!} />
         </TabsContent>
@@ -537,6 +556,105 @@ interface ThreadResponse {
   lead_id: string;
   thread: ThreadItem[];
   counts: { total: number; sent: number; received: number };
+}
+
+function AuditView({ leadId }: { leadId: string }) {
+  const qc = useQueryClient();
+  const { data: report, isLoading } = useQuery({
+    queryKey: ['lead-audit', leadId],
+    queryFn: () => api.get<AuditReport>(`/leads/${leadId}/audit`).catch(() => null),
+  });
+  const runMut = useMutation({
+    mutationFn: () => api.post(`/leads/${leadId}/audit`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lead-audit', leadId] }),
+  });
+
+  if (isLoading) return <div className="skeleton h-64" />;
+  const hasReport = report && report.score_normalized != null;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h3 className="font-display text-base font-semibold">Audit (Stap 2)</h3>
+        <button
+          onClick={() => runMut.mutate()}
+          disabled={runMut.isPending}
+          className="inline-flex items-center gap-2 h-9 px-3 rounded-md border border-[var(--color-border)] text-sm hover:bg-[var(--color-ivory-100)] disabled:opacity-50"
+        >
+          {runMut.isPending ? 'Draait…' : 'Draai tier-1 audit'}
+        </button>
+      </div>
+
+      {!hasReport ? (
+        <Card className="p-8 text-center text-sm text-[var(--color-stone-500)]">
+          Nog geen audit-rapport voor deze lead. Klik "Draai tier-1 audit".
+        </Card>
+      ) : (
+        <>
+          <Card className="p-5">
+            <div className="flex items-center gap-6 flex-wrap">
+              <div className="flex flex-col items-center">
+                <div className="font-display text-5xl font-semibold" style={{ color: scoreColor(report.score_normalized!) }}>{report.score_normalized}</div>
+                <div className="text-xs text-[var(--color-stone-500)]">/ 100</div>
+              </div>
+              <div className="flex-1 min-w-[200px] text-xs text-[var(--color-stone-500)] space-y-1">
+                <div>versie {report.version} · tier {report.tier}{report.created_at ? ` · ${fmtRelative(report.created_at)}` : ''}</div>
+                {report.score_capped_by && <div className="text-[var(--color-danger)]">Knock-out cap: {report.score_capped_by}</div>}
+              </div>
+            </div>
+          </Card>
+
+          {report.categories && Object.keys(report.categories).length > 0 && (
+            <Card className="p-5">
+              <h4 className="font-display text-sm font-semibold mb-3">Categorieën</h4>
+              <div className="space-y-2.5">
+                {Object.entries(report.categories).map(([key, c]) => {
+                  const pct = c.max > 0 ? Math.round((c.behaald / c.max) * 100) : 0;
+                  return (
+                    <div key={key}>
+                      <div className="flex justify-between text-xs mb-0.5">
+                        <span className="text-[var(--color-stone-700)]">{c.label}</span>
+                        <span className="tabular-nums text-[var(--color-stone-500)]">{c.behaald}/{c.max}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-[var(--color-ivory-200)] overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: scoreColor(pct) }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          )}
+
+          {report.findings && report.findings.length > 0 && (
+            <Card className="p-5">
+              <h4 className="font-display text-sm font-semibold mb-3">Bevindingen</h4>
+              <div className="space-y-2">
+                {[...report.findings]
+                  .sort((a, b) => _findingRank(a.status) - _findingRank(b.status))
+                  .map((f) => (
+                    <div key={f.check_id} className="flex items-start gap-2 text-sm">
+                      <Badge variant={f.status === 'pass' ? 'success' : f.status === 'fail' ? 'danger' : 'neutral'}>{f.status}</Badge>
+                      <div className="min-w-0">
+                        <div className="text-[var(--color-stone-700)]">{f.uitleg || f.check_id}</div>
+                        {f.bewijs && <div className="text-xs text-[var(--color-stone-500)]">{f.bewijs}</div>}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </Card>
+          )}
+
+          {report.benchmark && (
+            <Card className="p-4 text-xs text-[var(--color-stone-600)]">
+              <span className="font-semibold">Benchmark: </span>
+              {String(report.benchmark.rank_sentence || report.benchmark.niche_label || 'beschikbaar')}
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function WebsiteView({ leadId }: { leadId: string }) {
