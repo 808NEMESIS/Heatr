@@ -21,6 +21,16 @@ interface ReceptiePreview {
   detected_at: string | null; evidence: string[] | null;
   mails: ReceptieMail[];
 }
+const OPP_LABEL: Record<string, string> = {
+  website_rebuild: 'Website', conversie_optimalisatie: 'Conversie', chatbot: 'Chatbot', ai_audit: 'AI Audit',
+};
+interface WebsiteIntel {
+  total_score?: number | null; technical_score?: number | null; visual_score?: number | null;
+  conversion_score?: number | null; sector_score?: number | null;
+  score_denominator?: number | null; visual_included?: boolean | null; priority?: string | null;
+  opportunity_types?: string[] | null; opportunity_reasons?: Record<string, string> | null;
+  screenshot_desktop_url?: string | null; screenshot_mobile_url?: string | null;
+}
 
 export function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -385,34 +395,7 @@ export function LeadDetailPage() {
         </TabsContent>
 
         <TabsContent value="website" className="mt-5">
-          <Card className="p-5">
-            <h3 className="font-display text-base font-semibold mb-3">Website intelligence</h3>
-            {lead.website_score == null ? (
-              <p className="text-sm text-[var(--color-stone-500)]">
-                Deze lead is nog niet geanalyseerd. Draai enrichment om website-intelligence te genereren.
-              </p>
-            ) : (
-              <div className="flex items-center gap-5">
-                <div className="flex flex-col items-center">
-                  <div className="font-display text-5xl font-semibold" style={{ color: scoreColor(lead.website_score) }}>
-                    {lead.website_score}
-                  </div>
-                  <div className="text-xs text-[var(--color-stone-500)]">/ 100</div>
-                </div>
-                <div className="flex-1">
-                  <div className="mb-2 flex items-center gap-2">
-                    <Badge variant="accent">{prio.label}</Badge>
-                  </div>
-                  <div className="h-2 rounded-full bg-[var(--color-ivory-200)] overflow-hidden max-w-sm">
-                    <div
-                      className="h-full rounded-full"
-                      style={{ width: `${lead.website_score}%`, background: scoreColor(lead.website_score) }}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-          </Card>
+          <WebsiteView leadId={id!} />
         </TabsContent>
 
         <TabsContent value="receptie" className="mt-5">
@@ -553,6 +536,97 @@ interface ThreadResponse {
   lead_id: string;
   thread: ThreadItem[];
   counts: { total: number; sent: number; received: number };
+}
+
+function WebsiteView({ leadId }: { leadId: string }) {
+  const { data: wi, isLoading } = useQuery({
+    queryKey: ['lead-website', leadId],
+    queryFn: () => api.get<WebsiteIntel>(`/leads/${leadId}/website`).catch(() => null),
+  });
+
+  if (isLoading) return <div className="skeleton h-64" />;
+  if (!wi || wi.total_score == null) {
+    return (
+      <Card className="p-8 text-center text-sm text-[var(--color-stone-500)]">
+        Deze lead is nog niet geanalyseerd. Draai de website-analyse om website-intelligence te genereren.
+      </Card>
+    );
+  }
+
+  const layers = [
+    { label: 'Technisch', v: wi.technical_score },
+    { label: 'Visueel', v: wi.visual_score },
+    { label: 'Conversie', v: wi.conversion_score },
+    { label: 'Sector', v: wi.sector_score },
+  ];
+  const reasons = Object.entries(wi.opportunity_reasons || {});
+
+  return (
+    <div className="space-y-5">
+      <Card className="p-5">
+        <div className="flex items-start gap-6 flex-wrap">
+          <div className="flex flex-col items-center">
+            <div className="font-display text-5xl font-semibold" style={{ color: scoreColor(wi.total_score) }}>{wi.total_score}</div>
+            <div className="text-xs text-[var(--color-stone-500)]">/ {wi.score_denominator ?? 100}</div>
+            {wi.priority && <Badge variant="accent" className="mt-2">{wi.priority}</Badge>}
+          </div>
+          <div className="flex-1 min-w-[240px] grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {layers.map((l) => (
+              <div key={l.label} className="rounded-md border border-[var(--color-border)] p-3 text-center">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-stone-500)]">{l.label}</div>
+                <div className="font-display text-2xl font-semibold tabular-nums mt-1">{l.v ?? '—'}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {wi.visual_included === false && (
+          <div className="text-xs text-[var(--color-stone-400)] mt-3">
+            Visuele laag niet meegewogen (geen Vision-analyse) — score over {wi.score_denominator ?? 70}.
+          </div>
+        )}
+      </Card>
+
+      {(wi.opportunity_types?.length || reasons.length) ? (
+        <Card className="p-5">
+          <h4 className="font-display text-sm font-semibold mb-2">Kansen</h4>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(wi.opportunity_types || []).map((t) => <Badge key={t} variant="neutral">{OPP_LABEL[t] || t}</Badge>)}
+          </div>
+          {reasons.length > 0 && (
+            <ul className="text-sm text-[var(--color-stone-700)] space-y-1">
+              {reasons.map(([t, r]) => (
+                <li key={t}><span className="text-[var(--color-stone-400)] text-[10px] uppercase tracking-wider mr-1.5">{OPP_LABEL[t] || t}</span>{r}</li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      ) : null}
+
+      {(wi.screenshot_desktop_url || wi.screenshot_mobile_url) && (
+        <Card className="p-5">
+          <h4 className="font-display text-sm font-semibold mb-3">Screenshots</h4>
+          <div className="flex gap-4 flex-wrap items-start">
+            {wi.screenshot_desktop_url && (
+              <a href={wi.screenshot_desktop_url} target="_blank" rel="noopener">
+                <img src={wi.screenshot_desktop_url} alt="desktop" loading="lazy" className="w-80 rounded-md border border-[var(--color-border)]" />
+                <div className="text-[10px] text-[var(--color-stone-500)] mt-1 text-center">Desktop</div>
+              </a>
+            )}
+            {wi.screenshot_mobile_url && (
+              <a href={wi.screenshot_mobile_url} target="_blank" rel="noopener">
+                <img src={wi.screenshot_mobile_url} alt="mobiel" loading="lazy" className="w-40 rounded-md border border-[var(--color-border)]" />
+                <div className="text-[10px] text-[var(--color-stone-500)] mt-1 text-center">Mobiel</div>
+              </a>
+            )}
+          </div>
+        </Card>
+      )}
+
+      <div className="text-xs text-[var(--color-stone-400)] px-1">
+        Vision-analyse (typografie/kleur) en concurrent-vergelijking worden in productie niet berekend en zijn daarom niet zichtbaar.
+      </div>
+    </div>
+  );
 }
 
 function ReceptieView({ leadId }: { leadId: string }) {
