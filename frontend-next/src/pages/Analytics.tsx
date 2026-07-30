@@ -36,6 +36,37 @@ const OUTCOME_NL: Record<string, string> = {
   hard_no: 'Harde nee', onbekend: 'Onbekend',
 };
 
+interface FunnelData {
+  conversions: { email_pct: number; verified_pct_of_email: number; sent_pct_of_verified: number; reply_rate_pct: number; interested_pct_of_replies: number };
+  cohorts: { group: string; week: string; imported: number; has_email: number; has_verified_email: number; sent: number; replied: number; interested: number }[];
+}
+interface CostAttr {
+  groups: { group: string; cost_eur: number; cost_per_lead_eur: number | null; cost_per_reply_eur: number | null; cost_per_interested_eur: number | null }[];
+}
+interface EmailBreakdown {
+  total: number;
+  buckets: { bucket: string; count: number; pct: number }[];
+  diagnostic_hints: string[];
+}
+interface CoverageData {
+  steps: { step: string; completed_count: number; missing_count: number; coverage_pct: number }[];
+  diagnostic_hints: string[];
+}
+interface CostsData {
+  total_eur: number; cache_hits: number;
+  rows: { model: string; cost_eur: number }[];
+}
+interface MetricsData {
+  metrics: { date: string; emails_sent?: number; open_rate?: number; reply_rate?: number }[];
+}
+
+function aggByModel(rows: { model: string; cost_eur: number }[]): [string, number][] {
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.model] = (out[r.model] || 0) + (r.cost_eur || 0);
+  return Object.entries(out).sort((a, b) => b[1] - a[1]);
+}
+const covColor = (p: number) => (p < 50 ? 'var(--color-danger)' : p < 80 ? 'var(--color-warning)' : 'var(--color-success)');
+
 export function AnalyticsPage() {
   const { data: pipe } = useQuery({
     queryKey: ['analytics-pipeline'],
@@ -53,6 +84,12 @@ export function AnalyticsPage() {
     queryKey: ['analytics-calls'],
     queryFn: () => api.get<CallsAgg>('/analytics/calls').catch(() => null),
   });
+  const { data: coverage } = useQuery({ queryKey: ['analytics-coverage'], queryFn: () => api.get<CoverageData>('/analytics/enrichment-coverage').catch(() => null) });
+  const { data: emailBd } = useQuery({ queryKey: ['analytics-email-bd'], queryFn: () => api.get<EmailBreakdown>('/analytics/email-status-breakdown').catch(() => null) });
+  const { data: funnel } = useQuery({ queryKey: ['analytics-funnel'], queryFn: () => api.get<FunnelData>('/analytics/funnel?weeks=8&group_by=archetype').catch(() => null) });
+  const { data: costAttr } = useQuery({ queryKey: ['analytics-cost-attr'], queryFn: () => api.get<CostAttr>('/analytics/cost-attribution?days=30&group_by=archetype').catch(() => null) });
+  const { data: costs } = useQuery({ queryKey: ['analytics-costs'], queryFn: () => api.get<CostsData>('/analytics/costs?days=30').catch(() => null) });
+  const { data: metrics } = useQuery({ queryKey: ['analytics-metrics'], queryFn: () => api.get<MetricsData>('/analytics/metrics?days=30').catch(() => null) });
 
   return (
     <div className="max-w-7xl mx-auto px-10 py-8">
@@ -250,6 +287,165 @@ export function AnalyticsPage() {
                 )}
               </div>
             </div>
+          )}
+        </Card>
+      </section>
+
+      {/* Enrichment-coverage per stap */}
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold mb-3">Enrichment-coverage per stap</h3>
+        <Card className="p-6">
+          {!coverage ? <div className="skeleton h-32" /> : coverage.steps.length === 0 ? (
+            <p className="text-sm text-[var(--color-stone-500)]">Geen data.</p>
+          ) : (
+            <div className="space-y-2.5">
+              {coverage.diagnostic_hints.map((h, i) => <div key={i} className="text-xs text-[var(--color-warning)]">⚠ {h}</div>)}
+              {coverage.steps.map((s) => (
+                <div key={s.step}>
+                  <div className="flex justify-between text-xs mb-0.5">
+                    <span>{s.step}</span>
+                    <span className="tabular-nums text-[var(--color-stone-500)]">{s.coverage_pct}% · {fmtInt(s.missing_count)} mist</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-[var(--color-ivory-200)] overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${s.coverage_pct}%`, background: covColor(s.coverage_pct) }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </section>
+
+      {/* E-mail-status diagnose */}
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold mb-3">E-mail-status diagnose</h3>
+        <Card className="p-6">
+          {!emailBd ? <div className="skeleton h-32" /> : emailBd.total === 0 ? (
+            <p className="text-sm text-[var(--color-stone-500)]">Geen e-mails.</p>
+          ) : (
+            <div>
+              {emailBd.diagnostic_hints.map((h, i) => <div key={i} className="text-xs text-[var(--color-warning)] mb-1">⚠ {h}</div>)}
+              <div className="space-y-1.5 mt-2">
+                {emailBd.buckets.map((b) => (
+                  <div key={b.bucket} className="flex items-center gap-3 text-sm">
+                    <div className="w-44 truncate">{b.bucket}</div>
+                    <div className="flex-1 h-2 rounded-full bg-[var(--color-ivory-200)] overflow-hidden">
+                      <div className="h-full bg-[var(--color-blush-500)] rounded-full" style={{ width: `${b.pct}%` }} />
+                    </div>
+                    <div className="w-24 text-xs tabular-nums text-right">{fmtInt(b.count)} · {b.pct}%</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      </section>
+
+      {/* Funnel-cohort */}
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold mb-3">Funnel-cohort (week × archetype)</h3>
+        <Card className="p-6 overflow-x-auto">
+          {!funnel ? <div className="skeleton h-32" /> : funnel.cohorts.length === 0 ? (
+            <p className="text-sm text-[var(--color-stone-500)]">Geen cohortdata.</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-6 mb-4">
+                <Metric label="Email%" value={`${funnel.conversions.email_pct}%`} />
+                <Metric label="Verified%" value={`${funnel.conversions.verified_pct_of_email}%`} />
+                <Metric label="Sent%" value={`${funnel.conversions.sent_pct_of_verified}%`} />
+                <Metric label="Reply-rate" value={`${funnel.conversions.reply_rate_pct}%`} />
+                <Metric label="Interested%" value={`${funnel.conversions.interested_pct_of_replies}%`} />
+              </div>
+              <table className="w-full text-xs">
+                <thead><tr className="text-left text-[10px] uppercase tracking-wider text-[var(--color-stone-500)]">
+                  <th className="py-1 pr-3">Week</th><th className="pr-3">Groep</th><th className="pr-3">Imp</th><th className="pr-3">Email</th><th className="pr-3">Verif</th><th className="pr-3">Sent</th><th className="pr-3">Reply</th><th>Interested</th>
+                </tr></thead>
+                <tbody>
+                  {funnel.cohorts.slice(0, 24).map((c, i) => (
+                    <tr key={i} className="border-t border-[var(--color-ivory-200)] tabular-nums">
+                      <td className="py-1 pr-3">{c.week}</td><td className="pr-3 text-[var(--color-stone-500)]">{c.group}</td>
+                      <td className="pr-3">{c.imported}</td><td className="pr-3">{c.has_email}</td><td className="pr-3">{c.has_verified_email}</td><td className="pr-3">{c.sent}</td><td className="pr-3">{c.replied}</td><td>{c.interested}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </Card>
+      </section>
+
+      {/* Kosten-attributie */}
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold mb-3">Kosten-attributie per archetype (30d)</h3>
+        <Card className="p-6 overflow-x-auto">
+          {!costAttr ? <div className="skeleton h-32" /> : costAttr.groups.length === 0 ? (
+            <p className="text-sm text-[var(--color-stone-500)]">Geen kostendata.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-[10px] uppercase tracking-wider text-[var(--color-stone-500)]">
+                <th className="py-1 pr-3">Groep</th><th className="pr-3">Kosten</th><th className="pr-3">/lead</th><th className="pr-3">/reply</th><th>/interested</th>
+              </tr></thead>
+              <tbody>
+                {costAttr.groups.map((g) => (
+                  <tr key={g.group} className="border-t border-[var(--color-ivory-200)]">
+                    <td className="py-1.5 pr-3">{g.group}</td>
+                    <td className="pr-3 tabular-nums">{fmtEuro(g.cost_eur)}</td>
+                    <td className="pr-3 tabular-nums text-[var(--color-stone-500)]">{g.cost_per_lead_eur != null ? fmtEuro(g.cost_per_lead_eur) : '—'}</td>
+                    <td className="pr-3 tabular-nums text-[var(--color-stone-500)]">{g.cost_per_reply_eur != null ? fmtEuro(g.cost_per_reply_eur) : '—'}</td>
+                    <td className="tabular-nums text-[var(--color-stone-500)]">{g.cost_per_interested_eur != null ? fmtEuro(g.cost_per_interested_eur) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </section>
+
+      {/* Claude-kosten per model */}
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold mb-3">Claude-kosten per model (30d)</h3>
+        <Card className="p-6">
+          {!costs ? <div className="skeleton h-32" /> : (
+            <div>
+              <div className="flex gap-6 mb-4">
+                <Metric label="Totaal" value={fmtEuro(costs.total_eur)} />
+                <Metric label="Cache-hits" value={fmtInt(costs.cache_hits)} />
+              </div>
+              <div className="space-y-1.5">
+                {aggByModel(costs.rows).map(([model, eur]) => (
+                  <div key={model} className="flex items-center justify-between text-sm">
+                    <span className="truncate">{model}</span>
+                    <span className="tabular-nums">{fmtEuro(eur)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      </section>
+
+      {/* Dagelijkse metrics */}
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold mb-3">Dagelijkse metrics (30d)</h3>
+        <Card className="p-6 overflow-x-auto">
+          {!metrics ? <div className="skeleton h-32" /> : metrics.metrics.length === 0 ? (
+            <p className="text-sm text-[var(--color-stone-500)]">Nog geen historie — de collect-metrics-cron vult daily_metrics.</p>
+          ) : (
+            <table className="w-full text-xs">
+              <thead><tr className="text-left text-[10px] uppercase tracking-wider text-[var(--color-stone-500)]">
+                <th className="py-1 pr-3">Datum</th><th className="pr-3">Verstuurd</th><th className="pr-3">Open-rate</th><th>Reply-rate</th>
+              </tr></thead>
+              <tbody>
+                {metrics.metrics.slice(0, 30).map((m) => (
+                  <tr key={m.date} className="border-t border-[var(--color-ivory-200)] tabular-nums">
+                    <td className="py-1 pr-3">{m.date}</td>
+                    <td className="pr-3">{m.emails_sent ?? 0}</td>
+                    <td className="pr-3">{m.open_rate != null ? `${Math.round(m.open_rate * 100)}%` : '—'}</td>
+                    <td>{m.reply_rate != null ? `${Math.round(m.reply_rate * 100)}%` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </Card>
       </section>
