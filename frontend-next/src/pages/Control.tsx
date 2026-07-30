@@ -54,6 +54,17 @@ interface DueSend {
   leads?: { company_name?: string | null; email?: string | null } | null;
 }
 
+interface OpsHealth {
+  status: string;
+  alerts: { severity: string; message: string }[];
+  snapshot?: {
+    enrichment?: { pending?: number; running?: number; stuck_running?: number; last_completed_at?: string | null };
+    scraping?: { pending?: number; running?: number; stuck_running?: number };
+    stages?: { discovered?: number; enriched?: number };
+    launchable?: number; orphan_discovered?: number;
+  };
+}
+
 const STATUS_BADGE: Record<OutboundRecord['status'], 'success' | 'danger' | 'warning' | 'neutral'> = {
   completed: 'success',
   failed: 'danger',
@@ -109,6 +120,11 @@ export function ControlPage() {
     queryFn: () => api.get<{ due_sends: DueSend[]; count: number }>('/sequences/due-sends'),
     refetchInterval: 30_000,
   });
+  const { data: ops } = useQuery({
+    queryKey: ['ops-health'],
+    queryFn: () => api.get<OpsHealth>('/analytics/ops-health').catch(() => null),
+    refetchInterval: 30_000,
+  });
 
   const records = data?.records || [];
 
@@ -119,6 +135,30 @@ export function ControlPage() {
         title="Control"
         subtitle="Elke outbound side-effect via de dispatcher — ook geblokkeerd, geskipt en gefaald. Append-only."
       />
+
+      {/* Ops-health — pijplijn-verdict + stall-detectie (utils/pipeline_ops). */}
+      {ops && (
+        <Card className={`p-4 mb-4 border-2 ${
+          ops.status === 'stalled' ? 'border-[var(--color-danger)] bg-[var(--color-danger-bg)]'
+            : ops.status === 'degraded' ? 'border-[var(--color-warning)] bg-amber-50'
+              : 'border-[var(--color-success)]'
+        }`}>
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="font-display text-sm font-semibold">Pijplijn</span>
+            <Badge variant={ops.status === 'stalled' ? 'danger' : ops.status === 'degraded' ? 'warning' : 'success'}>{ops.status}</Badge>
+            <span className="text-xs text-[var(--color-stone-500)] tabular-nums">
+              enrichment {ops.snapshot?.enrichment?.pending ?? 0} pending · {ops.snapshot?.enrichment?.running ?? 0} running
+              {(ops.snapshot?.enrichment?.stuck_running ?? 0) > 0 && (
+                <span className="text-[var(--color-danger)]"> · {ops.snapshot?.enrichment?.stuck_running} vastgelopen</span>
+              )}
+              {' · '}{ops.snapshot?.launchable ?? 0} launchbaar
+            </span>
+          </div>
+          {(ops.alerts || []).map((a, i) => (
+            <div key={i} className={`text-xs ${a.severity === 'critical' ? 'text-[var(--color-danger)]' : 'text-[var(--color-warning)]'}`}>⚠ {a.message}</div>
+          ))}
+        </Card>
+      )}
 
       {/* Compliance-vlaggen — fail-closed drip-blokkade. Bovenaan: één open vlag legt de hele drip stil. */}
       {flags && flags.length > 0 ? (

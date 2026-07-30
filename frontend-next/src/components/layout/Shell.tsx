@@ -3,6 +3,7 @@ import { LogOut } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { CostBadge } from './CostBadge';
 import { WorkerStatus } from './WorkerStatus';
+import { AlertsBell } from './AlertsBell';
 import { AuthErrorBanner } from './AuthErrorBanner';
 import { SystemToggle } from './SystemToggle';
 import { signOut } from '@/lib/auth';
@@ -17,6 +18,7 @@ export function Shell() {
           <SystemToggle />
           <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />
           <WorkerStatus />
+          <AlertsBell />
           <CostBadge />
           <button
             onClick={() => signOut()}
