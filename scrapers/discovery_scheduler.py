@@ -201,6 +201,17 @@ async def pause_schedule(schedule_id: str, supabase_client: Any) -> bool:
         return False
 
 
+async def resume_schedule(schedule_id: str, supabase_client: Any) -> bool:
+    """Spiegel van pause_schedule — heractiveer een gepauzeerde schedule (active=True)."""
+    try:
+        supabase_client.table("lead_discovery_schedules").update(
+            {"active": True}
+        ).eq("id", schedule_id).execute()
+        return True
+    except Exception:
+        return False
+
+
 async def delete_schedule(schedule_id: str, supabase_client: Any) -> bool:
     try:
         supabase_client.table("lead_discovery_schedules").delete().eq(

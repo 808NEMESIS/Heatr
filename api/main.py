@@ -5545,6 +5545,18 @@ async def delete_discovery_schedule(
     return {"ok": ok}
 
 
+@app.post("/discovery-schedules/{schedule_id}/resume")
+async def resume_discovery_schedule(
+    schedule_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Heractiveer een gepauzeerde schedule (spiegel van /pause)."""
+    from scrapers.discovery_scheduler import resume_schedule
+    ok = await resume_schedule(schedule_id, db)
+    return {"ok": ok}
+
+
 @app.post("/discovery-schedules/run-due")
 async def run_due_discovery_schedules(
     workspace_id: str = Depends(get_workspace),

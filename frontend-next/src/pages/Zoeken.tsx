@@ -41,6 +41,11 @@ interface ScrapingLive {
   by_sector_city: { sector: string; city: string; count: number }[];
 }
 
+interface Schedule {
+  id: string; sector: string; city: string; frequency_days: number;
+  next_run_at: string | null; last_run_at: string | null; active: boolean;
+}
+
 export function ZoekenPage() {
   const [sector, setSector] = useState<'cosmetische_behandelaars' | 'alternatieve_geneeskunde'>(
     'cosmetische_behandelaars'
@@ -53,6 +58,8 @@ export function ZoekenPage() {
   const [srcMaps, setSrcMaps] = useState(true);
   const [srcDirs, setSrcDirs] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [schedCity, setSchedCity] = useState('');
+  const [schedFreq, setSchedFreq] = useState(14);
   const qc = useQueryClient();
 
   const { data: sectorsFull } = useQuery({
@@ -71,6 +78,18 @@ export function ZoekenPage() {
     queryFn: () => api.get<ScrapingLive>('/analytics/scraping-live').catch(() => null),
     refetchInterval: 4000,
   });
+  const { data: schedules } = useQuery({
+    queryKey: ['discovery-schedules'],
+    queryFn: () => api.get<{ schedules: Schedule[] }>('/discovery-schedules').catch(() => null),
+  });
+  const invalidateSched = () => qc.invalidateQueries({ queryKey: ['discovery-schedules'] });
+  const createSched = useMutation({
+    mutationFn: () => api.post('/discovery-schedules', { sector, city: schedCity.trim(), frequency_days: schedFreq }),
+    onSuccess: () => { invalidateSched(); setSchedCity(''); },
+  });
+  const pauseSched = useMutation({ mutationFn: (id: string) => api.post(`/discovery-schedules/${id}/pause`), onSuccess: invalidateSched });
+  const resumeSched = useMutation({ mutationFn: (id: string) => api.post(`/discovery-schedules/${id}/resume`), onSuccess: invalidateSched });
+  const delSched = useMutation({ mutationFn: (id: string) => api.del(`/discovery-schedules/${id}`), onSuccess: invalidateSched });
 
   const startMutation = useMutation({
     mutationFn: (payload: unknown) => api.post<{ jobs: { query: string; source: string }[]; total_jobs: number }>('/search', payload),
@@ -334,6 +353,52 @@ export function ZoekenPage() {
               {startMutation.isPending ? 'Starten…' : `Zoekopdracht starten${plannedJobs > 0 ? ` (${plannedJobs})` : ''}`}
               <ArrowRight className="h-4 w-4" />
             </button>
+          </Card>
+
+          {/* Herhaal-scrapes (discovery-schedules) */}
+          <Card className="p-5 mt-4">
+            <h3 className="font-display text-base font-semibold mb-1">Herhaal-scrapes</h3>
+            <p className="text-xs text-[var(--color-stone-500)] mb-3">
+              Periodiek automatisch scrapen. Sector = de bovenaan gekozen sector ({SECTOR_LABEL[sector]}).
+            </p>
+            <div className="flex gap-2 mb-3">
+              <Input placeholder="Stad" value={schedCity} onChange={(e) => setSchedCity(e.target.value)} className="flex-1" />
+              <input
+                type="number" min={1} value={schedFreq}
+                onChange={(e) => setSchedFreq(Math.max(1, Number(e.target.value)))}
+                title="Elke X dagen" className="w-16 h-10 rounded-md border border-[var(--color-border)] px-2 text-sm text-center"
+              />
+              <button
+                onClick={() => createSched.mutate()}
+                disabled={!schedCity.trim() || createSched.isPending}
+                title={`Elke ${schedFreq} dagen`}
+                className="h-10 px-4 rounded-md bg-[var(--color-blush-500)] text-white text-sm font-medium disabled:opacity-50"
+              >+</button>
+            </div>
+            {(schedules?.schedules || []).length === 0 ? (
+              <p className="text-xs text-[var(--color-stone-400)]">Nog geen herhaal-scrapes.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {schedules!.schedules.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between gap-2 text-xs border-b border-[var(--color-ivory-200)] pb-1.5 last:border-b-0">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{SECTOR_LABEL[s.sector] || s.sector} · {s.city}</div>
+                      <div className="text-[var(--color-stone-500)]">
+                        elke {s.frequency_days}d · volgende {s.next_run_at ? fmtRelative(s.next_run_at) : '—'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={s.active ? 'success' : 'neutral'}>{s.active ? 'actief' : 'pauze'}</Badge>
+                      <button
+                        onClick={() => (s.active ? pauseSched : resumeSched).mutate(s.id)}
+                        className="text-[var(--color-blush-500)] hover:underline"
+                      >{s.active ? 'pauze' : 'hervat'}</button>
+                      <button onClick={() => delSched.mutate(s.id)} className="text-[var(--color-danger)] hover:underline" title="Verwijderen">×</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
 
