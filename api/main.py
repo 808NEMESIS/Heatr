@@ -1069,6 +1069,45 @@ async def get_lead_website(
     return res.data or {}
 
 
+@app.get("/leads/{lead_id}/contacts")
+async def get_lead_contacts(
+    lead_id: str,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Contactpersonen van één lead (LeadDetail Contacts-tab). Read-only.
+
+    Mapt de DB-kolommen (full_name/title/…) naar het frontend Contact-contract
+    (name/role/…). email blijft leeg: we hebben per contact alleen een pattern,
+    geen geverifieerd adres — dat zou een onwaar 'email' suggereren.
+    """
+    res = (
+        db.table("lead_contacts")
+        .select("*")
+        .eq("lead_id", lead_id)
+        .eq("workspace_id", workspace_id)
+        .order("is_primary", desc=True)
+        .order("confidence", desc=True)
+        .execute()
+    )
+    contacts = [
+        {
+            "id": c.get("id"),
+            "name": (c.get("full_name")
+                     or " ".join(filter(None, [c.get("first_name"), c.get("tussenvoegsel"), c.get("last_name")])).strip()
+                     or None),
+            "role": c.get("title") or None,
+            "source": c.get("source") or None,
+            "linkedin_url": c.get("linkedin_url") or None,
+            "is_primary": c.get("is_primary"),
+            "confidence": c.get("confidence"),
+            "why_chosen": c.get("why_chosen") or None,
+        }
+        for c in (res.data or [])
+    ]
+    return {"contacts": contacts}
+
+
 @app.get("/leads/{lead_id}/receptie")
 async def get_lead_receptie(
     lead_id: str,
@@ -1681,7 +1720,7 @@ async def list_sequence_templates() -> dict:
                 "id": t["id"],
                 "name": t["name"],
                 "version": t["version"],
-                "segment": t["segment"],
+                "segment": t.get("segment"),
                 "sector": t.get("sector"),
                 "language": t["language"],
                 "cadence_days": t["cadence_days"],
@@ -3060,8 +3099,9 @@ async def analytics_pipeline(
         s = l.get("crm_stage") or "ontdekt"
         stage_counts[s] = stage_counts.get(s, 0) + 1
 
-    verified = email_counts.get("verified", 0)
-    catchall = email_counts.get("catch_all", 0)
+    # Bouncer schrijft 'valid'/'catchall_risky'; het oude SMTP-pad schreef 'verified'/'catch_all'.
+    verified = email_counts.get("valid", 0) + email_counts.get("verified", 0)
+    catchall = email_counts.get("catch_all", 0) + email_counts.get("catchall_risky", 0)
     coverage_pct = round((verified + catchall) / total * 100) if total else 0
 
     # heatr_reply_inbox heeft geen 'event_type' kolom — gebruik 'status'/'classification' als die bestaat
@@ -3083,6 +3123,20 @@ async def analytics_pipeline(
     except Exception:
         won_this_month = 0
 
+    # Website-kansen: geanalyseerde sites met een lage score (<50 = pitchbaar, sluit 0/niet-geanalyseerd uit).
+    try:
+        wo_res = (
+            db.table("website_intelligence")
+            .select("id", count="exact")
+            .eq("workspace_id", workspace_id)
+            .gt("total_score", 0)
+            .lt("total_score", 50)
+            .execute()
+        )
+        website_opps = wo_res.count or 0
+    except Exception:
+        website_opps = 0
+
     return {
         "total_leads": total,
         "verified_emails": verified,
@@ -3096,7 +3150,7 @@ async def analytics_pipeline(
         "catchall_emails": catchall,
         "not_found_emails": email_counts.get("not_found", 0),
         "pending_emails": email_counts.get("pending", 0),
-        "website_opportunities": 0,  # filled by website analytics
+        "website_opportunities": website_opps,
         # CRM
         "open_tasks_today": 0,
         "leads_in_pipeline": sum(v for k, v in stage_counts.items() if k not in ("ontdekt", "verloren")),
@@ -4785,7 +4839,7 @@ async def list_tasks(
 ) -> dict:
     params = dict(request.query_params)
 
-    q = db.table("crm_tasks").select("*, leads(company_name, city, sector, crm_stage)").eq("workspace_id", workspace_id)
+    q = db.table("crm_tasks").select("*").eq("workspace_id", workspace_id)
 
     if lead_id := params.get("lead_id"):
         q = q.eq("lead_id", lead_id)
@@ -4798,9 +4852,23 @@ async def list_tasks(
         today_end = datetime.now(timezone.utc).replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
         q = q.gte("due_date", today_start).lte("due_date", today_end)
 
-    q = q.order("due_date", desc=False, nulls_last=True)
+    q = q.order("due_date", desc=False)  # ASC → NULLs sorteren in postgres sowieso als laatste
     res = q.execute()
-    return {"tasks": res.data or []}
+    tasks = res.data or []
+    # Geen FK crm_tasks→leads in de schema-cache → lead-context via batch-query erbij hangen.
+    lead_ids = list({t.get("lead_id") for t in tasks if t.get("lead_id")})
+    if lead_ids:
+        lr = (
+            db.table("leads")
+            .select("id, company_name, city, sector, crm_stage")
+            .eq("workspace_id", workspace_id)
+            .in_("id", lead_ids)
+            .execute()
+        )
+        leads_by_id = {l["id"]: l for l in (lr.data or [])}
+        for t in tasks:
+            t["leads"] = leads_by_id.get(t.get("lead_id"))
+    return {"tasks": tasks}
 
 
 @app.post("/tasks")
@@ -4892,17 +4960,31 @@ async def get_recent_timeline_crm(
     db: Client = Depends(get_supabase),
 ) -> dict:
     """Recent timeline events across all leads — for Focus view activity feed."""
+    # Geen FK heatr_lead_timeline→leads in de schema-cache → geen PostgREST-embed.
+    # Twee-query pattern: timeline-rijen, dan de lead-namen batched per lead_id.
     res = (
         db.table("lead_timeline")
-        .select("*, leads(company_name, city)")
+        .select("*")
         .eq("workspace_id", workspace_id)
         .order("created_at", desc=True)
         .limit(20)
         .execute()
     )
+    rows = res.data or []
+    lead_ids = list({r.get("lead_id") for r in rows if r.get("lead_id")})
+    leads_by_id: dict[str, dict] = {}
+    if lead_ids:
+        lr = (
+            db.table("leads")
+            .select("id, company_name, city")
+            .eq("workspace_id", workspace_id)
+            .in_("id", lead_ids)
+            .execute()
+        )
+        leads_by_id = {l["id"]: l for l in (lr.data or [])}
     events = []
-    for row in (res.data or []):
-        lead = row.pop("leads", {}) or {}
+    for row in rows:
+        lead = leads_by_id.get(row.get("lead_id"), {})
         events.append({**row, "company_name": lead.get("company_name"), "lead_city": lead.get("city")})
     return {"events": events}
 
@@ -4969,26 +5051,6 @@ async def add_timeline_event(
     }
     res = db.table("lead_timeline").insert(row).execute()
     return res.data[0]
-
-
-@app.get("/timeline/recent")
-async def get_recent_timeline(
-    workspace_id: str = Depends(get_workspace),
-    db: Client = Depends(get_supabase),
-) -> dict:
-    res = (
-        db.table("lead_timeline")
-        .select("*, leads(company_name, city)")
-        .eq("workspace_id", workspace_id)
-        .order("created_at", desc=True)
-        .limit(20)
-        .execute()
-    )
-    events = []
-    for row in (res.data or []):
-        lead = row.pop("leads", {}) or {}
-        events.append({**row, "company_name": lead.get("company_name"), "lead_city": lead.get("city")})
-    return {"events": events}
 
 
 # =============================================================================
