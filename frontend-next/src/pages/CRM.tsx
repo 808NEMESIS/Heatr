@@ -37,6 +37,13 @@ interface Task {
   leads?: { company_name?: string; city?: string };
 }
 
+interface RecontactLead {
+  id: string;
+  company_name?: string | null;
+  city?: string | null;
+  _recontact_signals: { has_signal: boolean; signals: { type: string; detail: string; weight: number }[]; score: number; suggested_opener_angle: string };
+}
+
 // Gesprek-uitkomst → badge (check-up follow-up, migratie 032)
 const CALL_OUTCOME_META: Record<string, { label: string; variant: 'success' | 'warning' | 'neutral' | 'danger' }> = {
   won: { label: 'Gewonnen', variant: 'success' },
@@ -232,7 +239,49 @@ function FocusView() {
             </div>
           )}
         </Card>
+
+        <div className="mt-6">
+          <RecontactSignals />
+        </div>
       </div>
+    </div>
+  );
+}
+
+function RecontactSignals() {
+  const { data } = useQuery({
+    queryKey: ['recontact-signals'],
+    queryFn: () => api.get<{ leads: RecontactLead[]; count: number }>('/leads/recontact-ready-signals?limit=25').catch(() => null),
+    refetchInterval: 120_000,
+  });
+  const leads = data?.leads || [];
+  return (
+    <div>
+      <h3 className="font-display text-lg font-semibold mb-3">Recontact-signalen</h3>
+      <Card className="overflow-hidden">
+        {leads.length === 0 ? (
+          <div className="p-6 text-center text-sm text-[var(--color-stone-500)]">
+            Geen verse signalen. Leads verschijnen hier zodra hun site/rating/reviews veranderen na de laatste outreach.
+          </div>
+        ) : (
+          <div className="divide-y divide-[var(--color-ivory-200)]">
+            {leads.map((l) => (
+              <Link key={l.id} to={`/leads/${l.id}`} className="block p-3 hover:bg-[var(--color-ivory-50)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium truncate">{l.company_name || l.id.slice(0, 8)}{l.city && <span className="text-xs text-[var(--color-stone-500)] font-normal"> · {l.city}</span>}</span>
+                  <Badge variant="warning">score {Math.round(l._recontact_signals.score * 100)}</Badge>
+                </div>
+                {l._recontact_signals.signals.slice(0, 2).map((s, i) => (
+                  <div key={i} className="text-xs text-[var(--color-stone-600)] mt-0.5">· {s.detail}</div>
+                ))}
+                {l._recontact_signals.suggested_opener_angle && (
+                  <div className="text-xs text-[var(--color-blush-500)] italic mt-1">"{l._recontact_signals.suggested_opener_angle}"</div>
+                )}
+              </Link>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

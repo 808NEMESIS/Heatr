@@ -238,6 +238,7 @@ export function LeadDetailPage() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-5">
+          <RecontactBlock leadId={id!} />
           <WhyThisLead lead={lead} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <Card className="p-5">
@@ -556,6 +557,28 @@ interface ThreadResponse {
   lead_id: string;
   thread: ThreadItem[];
   counts: { total: number; sent: number; received: number };
+}
+
+function RecontactBlock({ leadId }: { leadId: string }) {
+  const { data } = useQuery({
+    queryKey: ['lead-recontact', leadId],
+    queryFn: () => api.get<{ has_signal: boolean; signals: { type: string; detail: string; weight: number }[]; score: number; suggested_opener_angle: string }>(`/leads/${leadId}/recontact-signals`).catch(() => null),
+  });
+  if (!data || !data.has_signal) return null;
+  return (
+    <Card className="p-4 mb-5 border-[var(--color-warning)]">
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="font-display text-sm font-semibold">Recontact-signaal</h3>
+        <Badge variant="warning">score {Math.round(data.score * 100)}</Badge>
+      </div>
+      <ul className="text-sm text-[var(--color-stone-700)] space-y-0.5">
+        {data.signals.map((s, i) => <li key={i}>· {s.detail}</li>)}
+      </ul>
+      {data.suggested_opener_angle && (
+        <div className="text-xs text-[var(--color-blush-500)] italic mt-2">Suggestie: "{data.suggested_opener_angle}"</div>
+      )}
+    </Card>
+  );
 }
 
 function AuditView({ leadId }: { leadId: string }) {
