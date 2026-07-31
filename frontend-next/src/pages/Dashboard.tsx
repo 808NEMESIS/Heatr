@@ -40,7 +40,7 @@ export function DashboardPage() {
     { label: 'Totale leads', value: fmtInt(stats?.total_leads), sub: 'GDPR-safe', icon: Users },
     { label: 'Verrijkte leads', value: fmtInt(stats?.enriched_leads), sub: 'score ≥ 1', icon: Zap, accent: 'primary' },
     { label: 'Email coverage', value: stats ? `${stats.email_coverage_pct}%` : '—', sub: `${fmtInt(stats?.verified_emails)} verified`, icon: MessageSquare },
-    { label: 'Naar Warmr', value: fmtInt(stats?.sent_to_warmr), sub: `${fmtInt(stats?.total_replies)} replies`, icon: Rocket, accent: 'success' },
+    { label: 'In pipeline', value: fmtInt(stats?.sent_to_warmr), sub: `voorbij 'ontdekt' · ${fmtInt(stats?.total_replies)} replies`, icon: Rocket, accent: 'success' },
     { label: 'Website kansen', value: fmtInt(stats?.website_opportunities), sub: 'score < 50', icon: Target, accent: 'warning' },
     { label: 'Gewonnen deze maand', value: fmtEuro(stats?.won_this_month), sub: 'closed deals', icon: TrendingUp, accent: 'success' },
   ];

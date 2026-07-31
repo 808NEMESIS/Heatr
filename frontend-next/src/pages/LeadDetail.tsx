@@ -197,9 +197,6 @@ export function LeadDetailPage() {
           >
             <Trash2 className="h-3.5 w-3.5" /> {forgetMut.isPending ? 'Vergeten…' : 'Vergeten (AVG)'}
           </button>
-          <button className="inline-flex items-center gap-2 h-10 px-4 rounded-md bg-[var(--color-blush-500)] text-white text-sm font-medium hover:bg-[var(--color-blush-600)]">
-            Review email sturen
-          </button>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Star, Search, ExternalLink, Phone, Mail, Users as UsersIcon, Camera, Calendar } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtInt } from '@/lib/format';
@@ -198,13 +198,14 @@ export function LeadsPage() {
 }
 
 function LeadRow({ lead }: { lead: Lead }) {
+  const navigate = useNavigate();
   const sectorLabel = SECTOR_LABEL[lead.sector || ''] || lead.sector || '—';
   const score = lead.score || 0;
   const scoreColor = score >= 70 ? 'success' : score >= 45 ? 'warning' : score >= 30 ? 'accent' : 'neutral';
   return (
     <tr
       className="border-b border-[var(--color-ivory-200)] hover:bg-[var(--color-ivory-50)] transition-colors cursor-pointer"
-      onClick={() => { window.location.href = `/leads/${lead.id}`; }}
+      onClick={() => navigate(`/leads/${lead.id}`)}
     >
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">

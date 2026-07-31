@@ -12,9 +12,8 @@ interface Campaign {
   name: string;
   status: 'draft' | 'active' | 'paused' | 'completed' | string;
   inbox_count?: number;
-  leads_count?: number;
-  sent_count?: number;
-  reply_count?: number;
+  lead_count?: number;
+  warmr_stats?: { sent?: number; replied?: number; opened?: number; bounced?: number } | null;
   created_at: string;
 }
 
@@ -22,8 +21,8 @@ interface Inbox {
   id: string;
   email: string;
   status: string;
-  daily_cap?: number;
-  warmup_score?: number;
+  daily_campaign_target?: number;
+  reputation_score?: number;
 }
 
 export function CampagnesPage() {
@@ -80,8 +79,8 @@ export function CampagnesPage() {
                   <Badge variant={i.status === 'ready' ? 'success' : 'warning'}>{i.status}</Badge>
                 </div>
                 <div className="flex items-center gap-3 text-xs text-[var(--color-stone-500)]">
-                  {i.daily_cap != null && <span>cap: {i.daily_cap}/dag</span>}
-                  {i.warmup_score != null && <span>warmup: {i.warmup_score}</span>}
+                  {i.daily_campaign_target != null && <span>cap: {i.daily_campaign_target}/dag</span>}
+                  {i.reputation_score != null && <span>reputatie: {i.reputation_score}</span>}
                 </div>
               </Card>
             ))}
@@ -131,9 +130,9 @@ export function CampagnesPage() {
                         {c.status}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums">{fmtInt(c.leads_count)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{fmtInt(c.sent_count)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{fmtInt(c.reply_count)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{fmtInt(c.lead_count)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{fmtInt(c.warmr_stats?.sent)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{fmtInt(c.warmr_stats?.replied)}</td>
                     <td className="px-4 py-3 text-xs text-[var(--color-stone-500)]">{fmtRelative(c.created_at)}</td>
                   </tr>
                 ))}

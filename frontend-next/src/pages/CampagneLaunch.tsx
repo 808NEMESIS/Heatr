@@ -15,8 +15,8 @@ interface Inbox {
   id: string;
   email: string;
   status: string;
-  daily_cap?: number | null;
-  warmup_score?: number | null;
+  daily_campaign_target?: number | null;
+  reputation_score?: number | null;
 }
 
 interface SequenceTemplate {
@@ -207,7 +207,7 @@ export function CampagneLaunchPage() {
   const totalDailyCap = useMemo(() => {
     return availableInboxes
       .filter((i) => selectedInboxIds.has(i.id))
-      .reduce((sum, i) => sum + (i.daily_cap || 0), 0);
+      .reduce((sum, i) => sum + (i.daily_campaign_target || 0), 0);
   }, [availableInboxes, selectedInboxIds]);
 
   const FIRST_MONTH_LIMIT = 40;  // v1.0 spec: max 40 sends/dag eerste maand
@@ -373,8 +373,8 @@ export function CampagneLaunchPage() {
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium truncate">{i.email}</div>
                       <div className="text-[10px] text-[var(--color-stone-500)]">
-                        cap {i.daily_cap ?? '?'}/dag
-                        {i.warmup_score != null && ` · warmup ${i.warmup_score}`}
+                        cap {i.daily_campaign_target ?? '?'}/dag
+                        {i.reputation_score != null && ` · reputatie ${i.reputation_score}`}
                       </div>
                     </div>
                   </label>
