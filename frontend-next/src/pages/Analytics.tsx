@@ -5,7 +5,56 @@ import { fmtInt, fmtEuro } from '@/lib/format';
 import type { PipelineStats, EnrichmentCost } from '@/lib/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
+
+interface FeedbackInsight {
+  type?: string;
+  detail?: string;
+  action?: string;
+  source?: string;
+  sector?: string;
+  reply_rate?: number;
+  replied?: number;
+  total?: number;
+  count?: number;
+  avg_score?: number;
+  avg_personalization?: number;
+}
+interface FeedbackAdjustment {
+  signal: string;
+  direction: string;
+  reason: string;
+  suggested_boost?: number;
+}
+interface FeedbackRun {
+  id: string;
+  period_days: number;
+  leads_analyzed: number;
+  reply_rate: number;
+  bounce_rate: number;
+  insights: FeedbackInsight[];
+  adjustments: FeedbackAdjustment[];
+  created_at: string;
+}
+interface FeedbackHistory {
+  runs: FeedbackRun[];
+}
+
+// Heterogene insight-dicts (scoring/feedback_processor.py) → één leesbare regel.
+function insightLine(ins: FeedbackInsight): string {
+  const pct = (v?: number) => `${Math.round((v ?? 0) * 100)}%`;
+  switch (ins.type) {
+    case 'contact_source_effectiveness':
+      return `Bron "${ins.source}": ${ins.replied}/${ins.total} replies (${pct(ins.reply_rate)})`;
+    case 'sector_reply_rate':
+      return `Sector "${ins.sector}": ${ins.replied}/${ins.total} replies (${pct(ins.reply_rate)})`;
+    case 'replied_patterns':
+      return `Replied-profiel: ${ins.count} leads, gem. score ${Math.round(ins.avg_score ?? 0)}, personalisatie ${(ins.avg_personalization ?? 0).toFixed(1)}`;
+    default:
+      return ins.detail || ins.action || ins.type || 'inzicht';
+  }
+}
 
 interface WebsiteAgg {
   total_analysed: number;
@@ -91,6 +140,7 @@ export function AnalyticsPage() {
   const { data: costAttr } = useQuery({ queryKey: ['analytics-cost-attr'], queryFn: () => api.get<CostAttr>('/analytics/cost-attribution?days=30&group_by=archetype').catch(() => null) });
   const { data: costs } = useQuery({ queryKey: ['analytics-costs'], queryFn: () => api.get<CostsData>('/analytics/costs?days=30').catch(() => null) });
   const { data: metrics } = useQuery({ queryKey: ['analytics-metrics'], queryFn: () => api.get<MetricsData>('/analytics/metrics?days=30').catch(() => null) });
+  const { data: feedback } = useQuery({ queryKey: ['scoring-feedback-history'], queryFn: () => api.get<FeedbackHistory>('/scoring/feedback-history?limit=20').catch(() => null) });
 
   return (
     <div className="max-w-7xl mx-auto px-10 py-8">
@@ -455,6 +505,62 @@ export function AnalyticsPage() {
                 ))}
               </tbody>
             </table>
+          )}
+        </Card>
+      </section>
+
+      {/* Leerlus — feedback-inzichten (display-only, niet auto-toegepast) */}
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold mb-3">Leerlus — feedback-inzichten</h3>
+        <Card className="p-6">
+          <div className="mb-4 rounded-md border border-[var(--color-warning)] px-3 py-2 text-xs text-[var(--color-stone-600)]">
+            <strong className="text-[var(--color-stone-800)]">Advies — niet automatisch toegepast.</strong>{' '}
+            De feedback-lus is inert: de scorer gebruikt vaste gewichten. Deze inzichten en
+            voorgestelde aanpassingen zijn suggesties — pas de scoring desgewenst handmatig aan.
+          </div>
+          {!feedback ? (
+            <div className="skeleton h-24" />
+          ) : feedback.runs.length === 0 ? (
+            <p className="text-sm text-[var(--color-stone-500)]">
+              Nog geen feedback-runs — draai <code>POST /scoring/process-feedback</code> of de cron.
+            </p>
+          ) : (
+            <div className="space-y-5">
+              {feedback.runs.map((run) => (
+                <div key={run.id} className="border-t border-[var(--color-ivory-200)] pt-4 first:border-0 first:pt-0">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className="text-sm font-medium">Laatste {run.period_days} dagen</span>
+                    <Badge variant="neutral">{fmtInt(run.leads_analyzed)} leads</Badge>
+                    <Badge variant="success">reply {Math.round(run.reply_rate * 100)}%</Badge>
+                    <Badge variant={run.bounce_rate > 0.05 ? 'danger' : 'neutral'}>bounce {Math.round(run.bounce_rate * 100)}%</Badge>
+                    <span className="text-xs text-[var(--color-stone-400)] ml-auto tabular-nums">{run.created_at.slice(0, 10)}</span>
+                  </div>
+                  {run.insights.length === 0 && run.adjustments.length === 0 ? (
+                    <p className="text-xs text-[var(--color-stone-500)]">Geen inzichten in deze run (te weinig replies/bounces).</p>
+                  ) : (
+                    <>
+                      {run.insights.length > 0 && (
+                        <ul className="text-xs text-[var(--color-stone-600)] space-y-1 mb-3">
+                          {run.insights.map((ins, i) => <li key={i}>· {insightLine(ins)}</li>)}
+                        </ul>
+                      )}
+                      {run.adjustments.length > 0 && (
+                        <div className="space-y-1">
+                          {run.adjustments.map((a, i) => (
+                            <div key={i} className="text-xs">
+                              <span className="font-medium text-[var(--color-stone-800)]">{a.signal}</span>{' '}
+                              <span className="text-[var(--color-blush-500)]">{a.direction === 'increase_weight' ? 'meer gewicht' : a.direction}</span>
+                              {a.suggested_boost != null && <span className="text-[var(--color-stone-500)]"> (+{a.suggested_boost})</span>}
+                              <span className="text-[var(--color-stone-500)]"> — {a.reason}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </Card>
       </section>
