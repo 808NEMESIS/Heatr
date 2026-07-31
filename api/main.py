@@ -622,6 +622,51 @@ async def list_leads(
     return {"leads": leads, "total": res.count or 0}
 
 
+# --- Literale /leads/<naam>-GET-routes MOETEN vóór /leads/{lead_id} staan ---
+# Anders vangt de parametrische route ze af (lead_id="recontact-ready") en 500t
+# get_lead op .maybe_single() met 0 rijen. Niet naar onderen verplaatsen.
+@app.get("/leads/recontact-ready")
+async def recontact_ready(
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """
+    Return leads whose recontact cooldown has expired and are safe to re-engage.
+    Called by n8n workflow 09-recontact-suggestions.
+    """
+    params = dict(request.query_params)
+    limit = int(params.get("limit", 50))
+    now = datetime.now(timezone.utc).isoformat()
+
+    res = (
+        db.table("leads")
+        .select("id, company_name, city, sector, email, score, next_contact_after, contact_attempt_count")
+        .eq("workspace_id", workspace_id)
+        .eq("status", "no_response")
+        .eq("gdpr_safe", True)
+        .lte("next_contact_after", now)
+        .order("score", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return {"leads": res.data or [], "count": len(res.data or [])}
+
+
+@app.get("/leads/recontact-ready-signals")
+async def recontact_ready_with_signals(
+    request: Request,
+    workspace_id: str = Depends(get_workspace),
+    db: Client = Depends(get_supabase),
+) -> dict:
+    """Trigger-based recontact list — only leads with fresh change signals."""
+    from scoring.recontact_signals import get_recontact_ready
+    params = dict(request.query_params)
+    limit = int(params.get("limit", 25))
+    leads = await get_recontact_ready(workspace_id, db, limit=limit)
+    return {"leads": leads, "count": len(leads)}
+
+
 @app.get("/leads/{lead_id}")
 async def get_lead(
     lead_id: str,
@@ -5388,34 +5433,6 @@ async def reactivate_snoozed_tasks(
 # RECONTACT SUGGESTIONS
 # =============================================================================
 
-@app.get("/leads/recontact-ready")
-async def recontact_ready(
-    request: Request,
-    workspace_id: str = Depends(get_workspace),
-    db: Client = Depends(get_supabase),
-) -> dict:
-    """
-    Return leads whose recontact cooldown has expired and are safe to re-engage.
-    Called by n8n workflow 09-recontact-suggestions.
-    """
-    params = dict(request.query_params)
-    limit = int(params.get("limit", 50))
-    now = datetime.now(timezone.utc).isoformat()
-
-    res = (
-        db.table("leads")
-        .select("id, company_name, city, sector, email, score, next_contact_after, contact_attempt_count")
-        .eq("workspace_id", workspace_id)
-        .eq("status", "no_response")
-        .eq("gdpr_safe", True)
-        .lte("next_contact_after", now)
-        .order("score", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    return {"leads": res.data or [], "count": len(res.data or [])}
-
-
 # =============================================================================
 # ENRICHMENT + WEBSITE ANALYSIS WORKERS (n8n integration)
 # =============================================================================
@@ -5581,20 +5598,6 @@ async def get_lead_recontact_signals(
     """Check if there are new change signals justifying recontact."""
     from scoring.recontact_signals import detect_recontact_signals
     return await detect_recontact_signals(lead_id, workspace_id, db)
-
-
-@app.get("/leads/recontact-ready-signals")
-async def recontact_ready_with_signals(
-    request: Request,
-    workspace_id: str = Depends(get_workspace),
-    db: Client = Depends(get_supabase),
-) -> dict:
-    """Trigger-based recontact list — only leads with fresh change signals."""
-    from scoring.recontact_signals import get_recontact_ready
-    params = dict(request.query_params)
-    limit = int(params.get("limit", 25))
-    leads = await get_recontact_ready(workspace_id, db, limit=limit)
-    return {"leads": leads, "count": len(leads)}
 
 
 @app.post("/leads/{lead_id}/outreach-snapshot")
