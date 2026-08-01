@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ExternalLink, AlertTriangle, ImageOff } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtInt, scoreColor } from '@/lib/format';
@@ -142,13 +142,16 @@ export function WebsiteKansenPage() {
 }
 
 function KansenCard({ o }: { o: Opportunity }) {
+  const navigate = useNavigate();
   const score = o.total_score || 0;
   const color = scoreColor(score);
   const prio = o.priority ? PRIO[o.priority] : undefined;
   const reasons = Object.entries(o.opportunity_reasons || {});
 
   return (
-    <Link to={`/leads/${o.lead_id}`} className="block">
+    // div+navigate i.p.v. <Link>: de kaart bevat een echte domein-<a>, en een
+    // <a> in een <a> is invalide HTML (browser splitst de DOM op).
+    <div onClick={() => navigate(`/leads/${o.lead_id}`)} className="block cursor-pointer">
       <Card className="grid grid-cols-[132px_1fr_180px] gap-5 p-4 transition-colors hover:border-[var(--color-stone-200)]">
         {/* Screenshot */}
         <div className="aspect-[4/3] rounded-md overflow-hidden bg-[var(--color-ivory-100)] border border-[var(--color-border)] flex items-center justify-center">
@@ -209,6 +212,6 @@ function KansenCard({ o }: { o: Opportunity }) {
           </div>
         </div>
       </Card>
-    </Link>
+    </div>
   );
 }
