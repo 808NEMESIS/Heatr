@@ -5921,8 +5921,12 @@ async def bulk_status_endpoint(
         "manual_status_override_at": now if new_status else None,
         "manual_status_override_by": principal.get("created_by") if new_status else None,
     }
-    if new_status == "recontact_later" and body.recontact_after:
-        patch["recontact_after"] = body.recontact_after
+    if new_status == "recontact_later":
+        # Zonder expliciete datum: default 90 dagen. Anders zet de recontact-logica
+        # (die op recontact_after <= now filtert) nooit aan bij drag/bulk-verplaatsing.
+        patch["recontact_after"] = body.recontact_after or (
+            datetime.now(timezone.utc) + timedelta(days=90)
+        ).isoformat()
 
     try:
         res = (

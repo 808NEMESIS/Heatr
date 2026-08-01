@@ -75,6 +75,7 @@ export function CRMActivityPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [statusForBulk, setStatusForBulk] = useState('');
   const [reason, setReason] = useState('');
+  const [recontactDate, setRecontactDate] = useState('');
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
   const [dragLeadId, setDragLeadId] = useState<string | null>(null);
   // Filters — persisted in URL params + localStorage
@@ -100,11 +101,13 @@ export function CRMActivityPage() {
         lead_ids: Array.from(selected),
         status: statusForBulk,
         reason: reason || null,
+        recontact_after: statusForBulk === 'recontact_later' && recontactDate ? recontactDate : undefined,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['leads-activity-board'] });
       setSelected(new Set());
       setReason('');
+      setRecontactDate('');
     },
   });
 
@@ -269,6 +272,15 @@ export function CRMActivityPage() {
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
+            {statusForBulk === 'recontact_later' && (
+              <input
+                type="date"
+                value={recontactDate}
+                onChange={(e) => setRecontactDate(e.target.value)}
+                title="Recontact-datum (leeg = +90 dagen)"
+                className="h-9 px-2 rounded-md border border-[var(--color-border)] bg-white text-sm"
+              />
+            )}
             <input
               type="text"
               value={reason}
