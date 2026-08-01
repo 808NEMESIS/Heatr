@@ -86,7 +86,10 @@ export function Sidebar() {
               <item.icon className="h-4 w-4" />
               <span className="flex-1">{item.label}</span>
               {count !== null && count !== undefined && count > 0 && (
-                <span className="text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full bg-[var(--color-blush-500)] text-white min-w-[18px] text-center">
+                <span
+                  title={item.badge === 'inbox' ? 'replies (laatste 7 dagen)' : item.badge === 'recontact' ? 'recontact-klaar' : undefined}
+                  className="text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full bg-[var(--color-blush-500)] text-white min-w-[18px] text-center"
+                >
                   {count > 99 ? '99+' : count}
                 </span>
               )}

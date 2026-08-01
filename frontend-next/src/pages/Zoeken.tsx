@@ -388,6 +388,9 @@ export function ZoekenPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                      {!(sectorsFull?.sectors.some((x) => x.key === s.sector) ?? true) && (
+                        <Badge variant="warning">sector inactief</Badge>
+                      )}
                       <Badge variant={s.active ? 'success' : 'neutral'}>{s.active ? 'actief' : 'pauze'}</Badge>
                       <button
                         onClick={() => (s.active ? pauseSched : resumeSched).mutate(s.id)}

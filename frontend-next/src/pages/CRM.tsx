@@ -466,7 +466,7 @@ function LijstView() {
     return (
       <Card className="p-10 text-center text-sm text-[var(--color-stone-500)]">
         <AlertCircle className="h-6 w-6 mx-auto mb-2 text-[var(--color-stone-300)]" />
-        Geen leads met een CRM-stage. Zet leads in een stage via de Kanban.
+        Geen leads met een CRM-stage. Zet een lead-stage op de leadpagina, of sleep leads op het CRM-activity-board.
       </Card>
     );
   }

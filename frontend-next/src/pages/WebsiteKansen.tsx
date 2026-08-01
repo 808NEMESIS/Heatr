@@ -50,8 +50,8 @@ export function WebsiteKansenPage() {
   const [priority, setPriority] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['website-opportunities', 500],
-    queryFn: () => api.get<{ opportunities: Opportunity[]; total: number }>('/website-opportunities?limit=500'),
+    queryKey: ['website-opportunities', 2000],
+    queryFn: () => api.get<{ opportunities: Opportunity[]; total: number }>('/website-opportunities?limit=2000'),
   });
 
   const filtered = useMemo(() => {
@@ -113,6 +113,12 @@ export function WebsiteKansenPage() {
 
       <div className="flex gap-5 text-sm text-[var(--color-stone-500)] mb-4 px-1">
         <span><strong className="text-[var(--color-stone-800)]">{fmtInt(filtered.length)}</strong> kansen</span>
+        {data && data.opportunities.length < data.total && (
+          <>
+            <span>·</span>
+            <span className="text-[var(--color-warning)]">⚠ {fmtInt(data.opportunities.length)}/{fmtInt(data.total)} opgehaald</span>
+          </>
+        )}
         <span>·</span>
         <span>🔴 <strong className="text-[var(--color-stone-800)]">{counts.urgent}</strong> urgent</span>
         <span>🟠 <strong className="text-[var(--color-stone-800)]">{counts.high}</strong> hoog</span>

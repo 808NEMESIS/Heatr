@@ -40,8 +40,8 @@ export function LeadsPage() {
   const [receptieOnly, setReceptieOnly] = useState(false);
 
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['leads', 500],
-    queryFn: () => api.get<LeadsResponse>('/leads?limit=500'),
+    queryKey: ['leads', 2000],
+    queryFn: () => api.get<LeadsResponse>('/leads?limit=2000'),
     refetchInterval: 8000,
   });
 
@@ -79,7 +79,7 @@ export function LeadsPage() {
       <PageHeader
         eyebrow="Lead database"
         title="Leads"
-        subtitle={isLoading ? 'Laden…' : `${fmtInt(filtered.length)} leads ${isFetching ? '· ververst…' : ''}`}
+        subtitle={isLoading ? 'Laden…' : `${fmtInt(filtered.length)} leads${data && data.leads.length < data.total ? ` · ⚠ eerste ${fmtInt(data.leads.length)} van ${fmtInt(data.total)} — verfijn met filters` : ''}${isFetching ? ' · ververst…' : ''}`}
         actions={
           <Link
             to="/zoeken"
