@@ -86,6 +86,7 @@ function CreateCall({ leadId }: { leadId: string }) {
 // --- Bestaand gesprek: transcript + uitkomst + rapport + cadans --------------
 function CallDetail({ call, leadId }: { call: CallRecord; leadId: string }) {
   const [openTranscript, setOpenTranscript] = useState(false);
+  const [editingOutcome, setEditingOutcome] = useState(false);
   return (
     <div className="flex flex-col gap-4">
       {/* transcript, inklapbaar */}
@@ -100,7 +101,9 @@ function CallDetail({ call, leadId }: { call: CallRecord; leadId: string }) {
         )}
       </Card>
 
-      {call.outcome ? <OutcomeSummary call={call} /> : <OutcomeForm call={call} leadId={leadId} />}
+      {call.outcome && !editingOutcome
+        ? <OutcomeSummary call={call} onEdit={() => setEditingOutcome(true)} />
+        : <OutcomeForm call={call} leadId={leadId} onSaved={() => setEditingOutcome(false)} />}
 
       {call.outcome && call.outcome !== 'won' && call.outcome !== 'hard_no' && (
         <ReportSection call={call} leadId={leadId} />
@@ -110,7 +113,7 @@ function CallDetail({ call, leadId }: { call: CallRecord; leadId: string }) {
   );
 }
 
-function OutcomeSummary({ call }: { call: CallRecord }) {
+function OutcomeSummary({ call, onEdit }: { call: CallRecord; onEdit: () => void }) {
   const o = OUTCOMES.find((x) => x.key === call.outcome);
   const cd = call.report_status; // (om lint tevreden te houden — niet gebruikt hier)
   void cd;
@@ -122,6 +125,7 @@ function OutcomeSummary({ call }: { call: CallRecord }) {
         {call.timing_target_date && (
           <span className="text-xs text-[var(--color-stone-500)]">richtdatum {call.timing_target_date}</span>
         )}
+        <button onClick={onEdit} className="ml-auto text-xs text-[var(--color-blush-500)] hover:underline">Wijzig</button>
       </div>
       {call.outcome_note && <p className="mt-2 text-sm text-[var(--color-stone-600)]">{call.outcome_note}</p>}
     </Card>
@@ -129,11 +133,11 @@ function OutcomeSummary({ call }: { call: CallRecord }) {
 }
 
 // --- Gate 1: uitkomst kiezen + cijfers invullen -----------------------------
-function OutcomeForm({ call, leadId }: { call: CallRecord; leadId: string }) {
+function OutcomeForm({ call, leadId, onSaved }: { call: CallRecord; leadId: string; onSaved?: () => void }) {
   const qc = useQueryClient();
-  const [outcome, setOutcome] = useState<CallOutcome | null>(null);
-  const [note, setNote] = useState('');
-  const [target, setTarget] = useState('');
+  const [outcome, setOutcome] = useState<CallOutcome | null>((call.outcome as CallOutcome | null) ?? null);
+  const [note, setNote] = useState(call.outcome_note || '');
+  const [target, setTarget] = useState(call.timing_target_date || '');
   const [form, setForm] = useState<Record<string, string>>({});
 
   const checkup = useMemo(() => {
@@ -153,6 +157,7 @@ function OutcomeForm({ call, leadId }: { call: CallRecord; leadId: string }) {
       qc.invalidateQueries({ queryKey: ['lead', leadId] });
       qc.invalidateQueries({ queryKey: ['lead-timeline', leadId] });
       toast('Uitkomst opgeslagen', 'success');
+      onSaved?.();
     },
   });
 
