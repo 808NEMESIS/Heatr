@@ -395,7 +395,7 @@ function ReEnqueueAdmin() {
   // Pre-fetch counts per veld zodat dropdown direct toont waar de meeste pijn zit
   const { data: counts } = useQuery({
     queryKey: ['missing-field-counts'],
-    queryFn: () => api.get<{ missing_field_counts: Record<string, number | null> }>('/admin/missing-field-counts').catch(() => null),
+    queryFn: () => api.get<{ missing_field_counts: Record<string, number | null> }>('/admin/missing-field-counts'),
     enabled: open,  // alleen ophalen als admin-card geopend is
     staleTime: 60_000,
   });

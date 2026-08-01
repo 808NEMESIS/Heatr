@@ -251,7 +251,7 @@ function FocusView() {
 function RecontactSignals() {
   const { data } = useQuery({
     queryKey: ['recontact-signals'],
-    queryFn: () => api.get<{ leads: RecontactLead[]; count: number }>('/leads/recontact-ready-signals?limit=25').catch(() => null),
+    queryFn: () => api.get<{ leads: RecontactLead[]; count: number }>('/leads/recontact-ready-signals?limit=25'),
     refetchInterval: 120_000,
   });
   const leads = data?.leads || [];

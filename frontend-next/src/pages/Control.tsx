@@ -122,7 +122,7 @@ export function ControlPage() {
   });
   const { data: ops } = useQuery({
     queryKey: ['ops-health'],
-    queryFn: () => api.get<OpsHealth>('/analytics/ops-health').catch(() => null),
+    queryFn: () => api.get<OpsHealth>('/analytics/ops-health'),
     refetchInterval: 30_000,
   });
 

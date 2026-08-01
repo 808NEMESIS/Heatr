@@ -75,12 +75,12 @@ export function ZoekenPage() {
   });
   const { data: live } = useQuery({
     queryKey: ['scraping-live'],
-    queryFn: () => api.get<ScrapingLive>('/analytics/scraping-live').catch(() => null),
+    queryFn: () => api.get<ScrapingLive>('/analytics/scraping-live'),
     refetchInterval: 4000,
   });
   const { data: schedules } = useQuery({
     queryKey: ['discovery-schedules'],
-    queryFn: () => api.get<{ schedules: Schedule[] }>('/discovery-schedules').catch(() => null),
+    queryFn: () => api.get<{ schedules: Schedule[] }>('/discovery-schedules'),
   });
   const invalidateSched = () => qc.invalidateQueries({ queryKey: ['discovery-schedules'] });
   const createSched = useMutation({

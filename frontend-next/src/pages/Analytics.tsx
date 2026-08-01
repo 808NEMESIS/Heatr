@@ -124,23 +124,23 @@ export function AnalyticsPage() {
   });
   const { data: web } = useQuery({
     queryKey: ['analytics-website'],
-    queryFn: () => api.get<WebsiteAgg>('/analytics/website').catch(() => null),
+    queryFn: () => api.get<WebsiteAgg>('/analytics/website'),
   });
   const { data: cost } = useQuery({
     queryKey: ['enrichment-cost-7'],
-    queryFn: () => api.get<EnrichmentCost>('/analytics/enrichment-cost?days=30').catch(() => null),
+    queryFn: () => api.get<EnrichmentCost>('/analytics/enrichment-cost?days=30'),
   });
   const { data: calls } = useQuery({
     queryKey: ['analytics-calls'],
-    queryFn: () => api.get<CallsAgg>('/analytics/calls').catch(() => null),
+    queryFn: () => api.get<CallsAgg>('/analytics/calls'),
   });
-  const { data: coverage } = useQuery({ queryKey: ['analytics-coverage'], queryFn: () => api.get<CoverageData>('/analytics/enrichment-coverage').catch(() => null) });
-  const { data: emailBd } = useQuery({ queryKey: ['analytics-email-bd'], queryFn: () => api.get<EmailBreakdown>('/analytics/email-status-breakdown').catch(() => null) });
-  const { data: funnel } = useQuery({ queryKey: ['analytics-funnel'], queryFn: () => api.get<FunnelData>('/analytics/funnel?weeks=8&group_by=archetype').catch(() => null) });
-  const { data: costAttr } = useQuery({ queryKey: ['analytics-cost-attr'], queryFn: () => api.get<CostAttr>('/analytics/cost-attribution?days=30&group_by=archetype').catch(() => null) });
-  const { data: costs } = useQuery({ queryKey: ['analytics-costs'], queryFn: () => api.get<CostsData>('/analytics/costs?days=30').catch(() => null) });
-  const { data: metrics } = useQuery({ queryKey: ['analytics-metrics'], queryFn: () => api.get<MetricsData>('/analytics/metrics?days=30').catch(() => null) });
-  const { data: feedback } = useQuery({ queryKey: ['scoring-feedback-history'], queryFn: () => api.get<FeedbackHistory>('/scoring/feedback-history?limit=20').catch(() => null) });
+  const { data: coverage } = useQuery({ queryKey: ['analytics-coverage'], queryFn: () => api.get<CoverageData>('/analytics/enrichment-coverage') });
+  const { data: emailBd } = useQuery({ queryKey: ['analytics-email-bd'], queryFn: () => api.get<EmailBreakdown>('/analytics/email-status-breakdown') });
+  const { data: funnel } = useQuery({ queryKey: ['analytics-funnel'], queryFn: () => api.get<FunnelData>('/analytics/funnel?weeks=8&group_by=archetype') });
+  const { data: costAttr } = useQuery({ queryKey: ['analytics-cost-attr'], queryFn: () => api.get<CostAttr>('/analytics/cost-attribution?days=30&group_by=archetype') });
+  const { data: costs } = useQuery({ queryKey: ['analytics-costs'], queryFn: () => api.get<CostsData>('/analytics/costs?days=30') });
+  const { data: metrics } = useQuery({ queryKey: ['analytics-metrics'], queryFn: () => api.get<MetricsData>('/analytics/metrics?days=30') });
+  const { data: feedback } = useQuery({ queryKey: ['scoring-feedback-history'], queryFn: () => api.get<FeedbackHistory>('/scoring/feedback-history?limit=20') });
 
   return (
     <div className="max-w-7xl mx-auto px-10 py-8">
