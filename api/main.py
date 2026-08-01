@@ -614,9 +614,13 @@ async def list_leads(
     # op de WI-rij (migratie 041). Voegt alleen receptie_hook_code toe; non-breaking.
     if leads:
         ids = [l["id"] for l in leads if l.get("id")]
-        wi = (db.table("website_intelligence").select("lead_id, receptie_hook_code")
-              .eq("workspace_id", workspace_id).in_("lead_id", ids).execute().data or [])
-        hooks = {w["lead_id"]: w.get("receptie_hook_code") for w in wi}
+        # In batches: .in_() zet alle id's in de querystring; boven ~500 UUIDs
+        # wordt de URL te lang → PostgREST 400 'JSON could not be generated'.
+        hooks: dict[str, str | None] = {}
+        for i in range(0, len(ids), 200):
+            wi = (db.table("website_intelligence").select("lead_id, receptie_hook_code")
+                  .eq("workspace_id", workspace_id).in_("lead_id", ids[i:i + 200]).execute().data or [])
+            hooks.update({w["lead_id"]: w.get("receptie_hook_code") for w in wi})
         for l in leads:
             l["receptie_hook_code"] = hooks.get(l.get("id"))
     return {"leads": leads, "total": res.count or 0}
