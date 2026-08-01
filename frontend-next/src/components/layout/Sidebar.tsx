@@ -43,6 +43,16 @@ const NAV = [
 ];
 
 export function Sidebar() {
+  return (
+    <aside className="hidden lg:flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-white">
+      <SidebarNav />
+    </aside>
+  );
+}
+
+/** Inhoud van de sidebar — herbruikt in de desktop-aside én de mobiele drawer.
+ *  onNavigate sluit de drawer na een nav-klik (mobiel). */
+export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const { data: counts } = useQuery({
     queryKey: ['sidebar-counts'],
     queryFn: () => api.get<SidebarCounts>('/system/sidebar-counts').catch(() => null),
@@ -58,7 +68,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="hidden lg:flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-white">
+    <>
       <div className="flex items-center gap-2 px-5 py-5 border-b border-[var(--color-border)]">
         <img src={`${import.meta.env.BASE_URL}heatr-logo.png`} alt="Heatr" className="h-8 w-auto" />
       </div>
@@ -74,6 +84,7 @@ export function Sidebar() {
               key={item.to}
               to={item.to}
               end={item.end}
+              onClick={onNavigate}
               className={({ isActive }) =>
                 cn(
                   'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
@@ -109,6 +120,6 @@ export function Sidebar() {
           </div>
         </div>
       </div>
-    </aside>
+    </>
   );
 }
