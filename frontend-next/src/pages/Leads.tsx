@@ -42,7 +42,7 @@ export function LeadsPage() {
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['leads', 2000],
     queryFn: () => api.get<LeadsResponse>('/leads?limit=2000'),
-    refetchInterval: 8000,
+    refetchInterval: 30_000,  // volle lijst is ~4,3 MB — 8s was onnodig zwaar
   });
 
   const filtered = useMemo(() => {
