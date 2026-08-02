@@ -6146,9 +6146,14 @@ async def process_unclassified_replies(
     import anthropic
     import os as _os
 
-    unclassified = db.table("reply_inbox").select("*").eq(
-        "workspace_id", workspace_id,
-    ).is_("classification", "null").limit(25).execute()
+    try:
+        unclassified = db.table("reply_inbox").select("*").eq(
+            "workspace_id", workspace_id,
+        ).is_("classification", "null").limit(25).execute()
+    except Exception as e:
+        # Laptop offline op het cron-moment (Errno 51) gaf een kale 500-traceback.
+        # 503 met reden → leesbaar in het (nu timestamped) cron-log; cron retryt vanzelf.
+        raise HTTPException(status_code=503, detail=f"reply_inbox onbereikbaar (offline?): {type(e).__name__}")
 
     rows = unclassified.data or []
     if not rows:
