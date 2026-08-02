@@ -57,7 +57,12 @@ _SMTP_TEMPORARY_CODES = {421, 450, 451, 452}
 # ADRES-kwaliteit; de laatste drie zijn INFRA-fouten die NIET als
 # verzendbaar-twijfelachtig mogen tellen.
 _ADDRESS_STATUSES = {"valid", "invalid", "risky", "catchall_risky"}
-_INFRA_STATUSES = {"timeout", "connection_error", "temporary_failure"}
+# Infra-/API-onbekend: adres WEL bewaren (coarse not_checked, fail-closed, later
+# her-verifieerbaar via reverify_email_full.py). 'not_checked' hoort erbij sinds de
+# Bouncer-migratie: verify_api geeft die status bij 402/401/rate-limit/disabled —
+# zónder deze entry gooide de waterval een GEVONDEN adres weg als 'not_found'
+# zodra het Bouncer-tegoed op was (ontdekt 2026-08-02: 43/43 Breda-leads).
+_INFRA_STATUSES = {"timeout", "connection_error", "temporary_failure", "not_checked"}
 
 # Granulaire status → coarse email_status dat binnen de migratie-023 CHECK
 # valt. Infra-fouten worden 'not_checked' (al toegestaan én al fail-closed in

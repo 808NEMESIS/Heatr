@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -47,6 +48,14 @@ def is_enabled() -> bool:
     return provider() == "bouncer" and bool(os.getenv("BOUNCER_API_KEY", "").strip())
 
 
+# Circuit-breaker: bij Bouncer 402 (tegoed op) is elke volgende call zinloos —
+# de waterval deed anders ~12 calls/lead tegen dezelfde muur (2026-08-02: honderden
+# 402's op één sweep). Na een 402 slaan we de API dit veel seconden over; daarna
+# proberen we opnieuw (tegoed kan opgewaardeerd zijn).
+_NO_CREDITS_TTL_S = 600.0
+_no_credits_until: float = 0.0
+
+
 async def verify_via_api(email: str, *, timeout: float = 20.0) -> dict:
     """Verifieer één adres via de externe API.
 
@@ -55,6 +64,7 @@ async def verify_via_api(email: str, *, timeout: float = 20.0) -> dict:
         status = onze granulaire enum; method = 'bouncer_api' | 'disabled' | 'error'.
     Verstuurt geen mail.
     """
+    global _no_credits_until
     if not email or "@" not in email:
         return {"status": "invalid", "method": "format_check"}
     prov = provider()
@@ -63,6 +73,8 @@ async def verify_via_api(email: str, *, timeout: float = 20.0) -> dict:
     key = os.getenv("BOUNCER_API_KEY", "").strip()
     if not key:
         return {"status": "not_checked", "method": "disabled"}
+    if time.monotonic() < _no_credits_until:
+        return {"status": "not_checked", "method": "error", "raw_reason": "no_credits_402_cached"}
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -75,7 +87,8 @@ async def verify_via_api(email: str, *, timeout: float = 20.0) -> dict:
             logger.error("verify_api: Bouncer 401 — ongeldige API-key.")
             return {"status": "not_checked", "method": "error", "raw_reason": "auth_401"}
         if r.status_code == 402:
-            logger.error("verify_api: Bouncer 402 — geen tegoed meer.")
+            _no_credits_until = time.monotonic() + _NO_CREDITS_TTL_S
+            logger.error("verify_api: Bouncer 402 — geen tegoed meer; API %ds overgeslagen.", int(_NO_CREDITS_TTL_S))
             return {"status": "not_checked", "method": "error", "raw_reason": "no_credits_402"}
         if r.status_code == 429:
             logger.warning("verify_api: Bouncer 429 — rate-limited.")
