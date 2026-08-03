@@ -115,7 +115,10 @@ async def main(live_checks: bool) -> int:
     print("\n[4] DUPLICAAT-REST (fuzzy)")
     by_dom = defaultdict(list)
     for l in leads:
-        d = _norm((l.get("domain") or "").replace("www.", ""))
+        # Domeinen NIET fuzzy-normaliseren (alleen lowercase + www-strip): koppeltekens
+        # zijn betekenisvol — homeopathie-amsterdam.nl ≠ homeopathieamsterdam.nl
+        # (vals alarm gevonden 2026-08-03: drie verschillende praktijken).
+        d = (l.get("domain") or "").lower().removeprefix("www.")
         if d:
             by_dom[d].append(l)
     dom_dups = {k: v for k, v in by_dom.items() if len(v) > 1}
