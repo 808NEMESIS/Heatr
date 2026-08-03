@@ -1070,7 +1070,51 @@ async def get_lead_website(
     db: Client = Depends(get_supabase),
 ) -> dict:
     res = db.table("website_intelligence").select("*").eq("lead_id", lead_id).eq("workspace_id", workspace_id).maybe_single().execute()
-    return res.data or {}
+    wi = res.data or {}
+    if wi.get("total_score"):
+        # score_vs_market v1 — benchmark uit EIGEN data (zelfde sector × stad; geen
+        # Places-key nodig). De kern van de pitch: "X punten onder het stadsgemiddelde".
+        bench = _website_market_benchmark(db, workspace_id, lead_id, wi["total_score"])
+        if bench:
+            wi["market_benchmark"] = bench
+            wi["score_vs_market"] = bench["score_vs_market"]
+    return wi
+
+
+def _website_market_benchmark(db, workspace_id: str, lead_id: str, total_score: float) -> dict | None:
+    """Vergelijk een site-score met het gemiddelde van dezelfde sector×stad uit onze
+    eigen geanalyseerde voorraad. Min. 3 peers, anders sector-breed (gelabeld).
+    Retourneert None als er geen zinvolle benchmark is (geen sector/peers)."""
+    lead = (db.table("leads").select("sector, city")
+            .eq("id", lead_id).eq("workspace_id", workspace_id).limit(1).execute().data or [None])[0]
+    if not lead or not lead.get("sector"):
+        return None
+    sector, city = lead["sector"], lead.get("city")
+
+    def peer_scores(city_filter: str | None) -> list[float]:
+        q = db.table("leads").select("id").eq("workspace_id", workspace_id).eq("sector", sector)
+        if city_filter:
+            q = q.eq("city", city_filter)
+        ids = [l["id"] for l in (q.execute().data or []) if l["id"] != lead_id]
+        scores: list[float] = []
+        for i in range(0, len(ids), 200):
+            rows = (db.table("website_intelligence").select("lead_id, total_score")
+                    .eq("workspace_id", workspace_id).in_("lead_id", ids[i:i + 200])
+                    .gt("total_score", 0).execute().data or [])
+            scores += [r["total_score"] for r in rows]
+        return scores
+
+    scope, scores = "stad", (peer_scores(city) if city else [])
+    if len(scores) < 3:
+        scope, scores = "sector", peer_scores(None)
+    if len(scores) < 3:
+        return None
+    avg = sum(scores) / len(scores)
+    return {
+        "scope": scope, "city": city, "sector": sector,
+        "peer_count": len(scores), "market_avg": round(avg, 1),
+        "score_vs_market": round(total_score - avg, 1),
+    }
 
 
 @app.get("/leads/{lead_id}/contacts")
