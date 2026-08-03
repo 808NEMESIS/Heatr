@@ -97,9 +97,38 @@ async def lookup_legal_form(company_name: str, city: str) -> tuple[str | None, s
     return kvk_number, (rechtsvorm or "").strip() or None
 
 
+async def _preflight_kvk() -> str | None:
+    """Eén test-call naar de Zoeken-API. Return foutmelding of None bij OK.
+
+    Zonder deze check maskeerde een 401 zich als 'geen betrouwbare KvK-match'
+    per lead (ontdekt 2026-08-03) — een stille naad die calls verspilt en het
+    echte probleem (key/abonnement) verbergt."""
+    import os
+
+    import httpx
+    key = os.getenv("KVK_API_KEY", "").strip()
+    if not key:
+        return "KVK_API_KEY is leeg."
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get("https://api.kvk.nl/api/v2/zoeken",
+                             params={"naam": "test"}, headers={"apikey": key})
+    if r.status_code in (401, 403):
+        return (f"KvK-API weigert de key (HTTP {r.status_code}). Check op developers.kvk.nl "
+                "of het 'Zoeken API'- én 'Basisprofiel API'-abonnement actief is voor deze key.")
+    if r.status_code != 200:
+        return f"KvK-API onverwacht HTTP {r.status_code} — probeer later opnieuw."
+    return None
+
+
 async def run(scope: str, apply: bool, sample: int, sector: str | None = None) -> int:
     from config.database import get_heatr_supabase
     from utils.legal_form import classify_legal_form
+
+    if apply or sample:
+        err = await _preflight_kvk()
+        if err:
+            print(f"PRE-FLIGHT GEFAALD: {err}")
+            return 2
 
     db = get_heatr_supabase()
     candidates = select_candidates(db, scope, sector)

@@ -24,9 +24,10 @@ from utils.rate_limiter import wait_for_token
 
 logger = logging.getLogger(__name__)
 
-_KVK_BASE_URL = "https://api.kvk.nl/api/v1"
-_KVK_SEARCH_PATH = "/zoeken"
-_KVK_PROFILE_PATH = "/basisprofielen"
+# Zoeken-API is v2 (v1 is uitgefaseerd — de server verbreekt daar de verbinding
+# zonder respons, ontdekt 2026-08-03); Basisprofiel-API is nog v1.
+_KVK_SEARCH_URL = "https://api.kvk.nl/api/v2/zoeken"
+_KVK_PROFILE_URL = "https://api.kvk.nl/api/v1/basisprofielen"
 
 
 # =============================================================================
@@ -209,7 +210,7 @@ async def search_kvk(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{_KVK_BASE_URL}{_KVK_SEARCH_PATH}",
+                _KVK_SEARCH_URL,
                 params=params,
                 headers={"apikey": api_key},
             )
@@ -251,7 +252,7 @@ async def get_kvk_detail(kvk_number: str) -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{_KVK_BASE_URL}{_KVK_PROFILE_PATH}/{kvk_number}",
+                f"{_KVK_PROFILE_URL}/{kvk_number}",
                 headers={"apikey": api_key},
             )
             if response.status_code == 200:
