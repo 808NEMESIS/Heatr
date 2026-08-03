@@ -30,7 +30,7 @@ load_dotenv(str(Path(__file__).resolve().parent.parent / ".env"))
 WORKSPACE = "aerys"
 
 
-def select_targets(db, city: str | None) -> list[dict]:
+def select_targets(db, city: str | None, since: str | None = None) -> list[dict]:
     q = (db.table("leads")
          .select("id, company_name, domain, city, email, email_status")
          .eq("workspace_id", WORKSPACE)
@@ -38,15 +38,17 @@ def select_targets(db, city: str | None) -> list[dict]:
          .is_("email", "null"))
     if city:
         q = q.eq("city", city)
+    if since:  # alleen leads aangemaakt sinds deze datum (402-slachtoffer-scope)
+        q = q.gte("created_at", since)
     return q.execute().data or []
 
 
-async def run(city: str | None, apply: bool, limit: int) -> int:
+async def run(city: str | None, apply: bool, limit: int, since: str | None = None) -> int:
     from config.database import get_heatr_supabase
     from enrichment.email_waterfall import run_waterfall_for_lead
 
     db = get_heatr_supabase()
-    targets = select_targets(db, city)[:limit]
+    targets = select_targets(db, city, since)[:limit]
     print(f"doelleads (not_found, geen e-mail{f', {city}' if city else ''}): {len(targets)}")
 
     if not apply:
@@ -82,5 +84,6 @@ if __name__ == "__main__":
     ap.add_argument("--city", default=None)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=200)
+    ap.add_argument("--since", default=None, help="alleen leads aangemaakt sinds YYYY-MM-DD")
     args = ap.parse_args()
-    raise SystemExit(asyncio.run(run(args.city, args.apply, args.limit)))
+    raise SystemExit(asyncio.run(run(args.city, args.apply, args.limit, args.since)))
