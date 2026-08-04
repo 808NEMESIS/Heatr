@@ -37,14 +37,15 @@ _CHECK_PHRASING: dict[str, dict[str, str]] = {
         "cta_above_fold": "zet een duidelijke actieknop meteen bovenaan de pagina",
     },
     "website": {
+        # https/schema/sitemap bewust WEG: hygiëne, geen verkoopargument. Alleen
+        # laadsnelheid opent echt een gesprek ("traag op mobiel → klanten haken af").
         "pagespeed_mobile": "laadt op een telefoon binnen enkele seconden",
-        "ssl": "heeft een beveiligde (https) verbinding",
-        "mobile_friendly": "is prettig leesbaar op een telefoon",
+        "pagespeed_desktop": "laadt op desktop vlot",
     },
 }
 # "obv XYZ" — waar we op vergeleken (per as).
 _CRITERIA_LABEL: dict[str, str] = {
-    "website": "mobiele laadsnelheid, beveiliging en leesbaarheid op telefoon",
+    "website": "hoe snel de site laadt op mobiel en desktop",
     "automations": "online kunnen boeken, een chatoptie en een WhatsApp-knop",
 }
 _SECTOR_LABEL: dict[str, str] = {
