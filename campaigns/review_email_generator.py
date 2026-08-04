@@ -174,8 +174,21 @@ async def generate_review_email(
             }
 
         total_score = website_intelligence.get("total_score") or 0
+        # score_vs_market uit EIGEN voorraad (2 assen: website + automations). De oude
+        # competitor_data werd nooit live berekend → altijd 0. Fail-soft: zonder
+        # db-client val terug op competitor_data (backward-compat).
+        website_bench = automations_bench = None
+        if supabase_client is not None and lead.get("id"):
+            try:
+                from scoring.market_benchmark import compute_benchmarks
+                _b = compute_benchmarks(supabase_client, lead.get("workspace_id") or "aerys",
+                                        lead["id"], website_intelligence)
+                website_bench, automations_bench = _b.get("website"), _b.get("automations")
+            except Exception:
+                pass
         comp_data = website_intelligence.get("competitor_data") or {}
-        score_vs_market = comp_data.get("score_vs_market") or 0
+        score_vs_market = ((website_bench or {}).get("score_vs_market")
+                           if website_bench else (comp_data.get("score_vs_market") or 0))
 
         # Sector-poort: alt-zorg/chiro krijgen nooit een chat/AI-angle.
         from config.sectors import get_allowed_offers
@@ -203,12 +216,18 @@ async def generate_review_email(
 
         sender_name = os.environ.get("SENDER_NAME", "Sami")
 
-        # Build prompt exactly per CLAUDE.md regel 273-290
-        market_phrase = (
+        # Build prompt exactly per CLAUDE.md regel 273-290. Marktpositie deterministisch
+        # uit de eigen-data-benchmark (nooit via Claude — respecteert de QA-gate).
+        from scoring.market_benchmark import benchmark_sentence
+        market_phrase = benchmark_sentence("website", website_bench) or (
             f"{abs(score_vs_market)} punten onder concurrenten in {city}"
             if score_vs_market < 0
             else f"vergelijkbaar met concurrenten in {city}"
         )
+        # Automatiserings-as apart — alleen als de sector-poort 'automatisering' toestaat
+        # (alt-zorg/chiro krijgen nooit een chat/AI-angle) én er een echte achterstand is.
+        auto_sentence = benchmark_sentence("automations", automations_bench) if _allow_auto else None
+        auto_line = f"Automatisering (conversie/chat/booking): {auto_sentence}\n" if auto_sentence else ""
 
         prompt = (
             f"Schrijf een email (max 90 woorden) in het Nederlands.\n"
@@ -218,6 +237,7 @@ async def generate_review_email(
             f"Website score: {total_score}/100\n"
             f"Grootste probleem: {top_issue}\n"
             f"Marktpositie: {market_phrase}\n"
+            f"{auto_line}"
             f"Specifieke observatie: {specific_observation}\n"
             f"\n"
             f"Regels:\n"
