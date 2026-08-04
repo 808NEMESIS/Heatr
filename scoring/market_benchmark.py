@@ -73,13 +73,28 @@ def _peer_rows(db, workspace_id: str, sector: str, city: str | None, lead_id: st
     ids = [l["id"] for l in (q.execute().data or []) if l.get("id") != lead_id]
     rows: list[dict] = []
     for i in range(0, len(ids), 200):  # .in_() met te veel UUIDs → URL te lang (les 2026-08)
-        rows += (db.table("website_intelligence").select(f"lead_id, {score_col}, {details_col}")
+        rows += (db.table("website_intelligence").select(f"lead_id, {score_col}, {details_col}, visual_score")
                  .eq("workspace_id", workspace_id).in_("lead_id", ids[i:i + 200])
                  .gt(score_col, 0).execute().data or [])
     return rows
 
 
-def _top_gap(axis: str, lead_details: Any, peers: list[dict], details_col: str) -> dict | None:
+def _visual_gap(lead_visual: Any, peers: list[dict]) -> dict | None:
+    """Percentiel-gat op uitstraling (echte Claude-Vision-score 0-25). Geen kaal getal
+    richting de prospect — een rangschikking: 'oogt verouderder dan X% van de peers'.
+    Vuurt alleen als een duidelijke meerderheid er moderner uitziet."""
+    if lead_visual is None:
+        return None
+    peer_vis = [p["visual_score"] for p in peers if p.get("visual_score") is not None]
+    if len(peer_vis) < _MIN_PEERS:
+        return None
+    more_modern = sum(1 for v in peer_vis if v > lead_visual) / len(peer_vis)
+    if more_modern < 0.6:                        # lead ziet er niet duidelijk gedateerder uit
+        return None
+    return {"kind": "visual", "peer_pct": round(more_modern, 2)}
+
+
+def _feature_gap(axis: str, lead_details: Any, peers: list[dict], details_col: str) -> dict | None:
     """De feature die de meeste peers WEL hebben en de lead NIET — de 'wat opviel'."""
     lead_checks = _checks(lead_details)
     phrasing = _CHECK_PHRASING.get(axis, {})
@@ -92,7 +107,7 @@ def _top_gap(axis: str, lead_details: Any, peers: list[dict], details_col: str) 
             continue
         prev = sum(1 for p in have if _checks(p.get(details_col))[check]) / len(have)
         if prev >= _MIN_PREVALENCE and (best is None or prev > best["peer_pct"]):
-            best = {"check": check, "peer_pct": round(prev, 2), "phrasing": phrase}
+            best = {"kind": "feature", "check": check, "peer_pct": round(prev, 2), "phrasing": phrase}
     return best
 
 
@@ -105,11 +120,17 @@ def _one_axis(db, workspace_id: str, lead_id: str, sector: str, city: str | None
         return None
     scores = [r[score_col] for r in rows if r.get(score_col) is not None]
     avg = sum(scores) / len(scores) if scores else 0.0
+    # Website-as pitcht bij voorkeur op UITSTRALING (Vision-percentiel — dé rebuild-hoek),
+    # met laadsnelheid als terugval. Automations-as blijft feature-gebaseerd.
+    if axis == "website":
+        gap = _visual_gap(wi.get("visual_score"), rows) or _feature_gap(axis, wi.get(details_col), rows, details_col)
+    else:
+        gap = _feature_gap(axis, wi.get(details_col), rows, details_col)
     return {
         "scope": scope, "city": city, "sector": sector,
         "peer_count": len(rows), "market_avg": round(avg, 1),      # intern
         "score_vs_market": round(own_score - avg, 1),               # intern
-        "top_gap": _top_gap(axis, wi.get(details_col), rows, details_col),  # prospect-facing
+        "top_gap": gap,                                             # prospect-facing
     }
 
 
@@ -140,8 +161,13 @@ def benchmark_pitch(axis: str, bench: dict | None) -> str | None:
     n = bench["peer_count"]
     sector = _SECTOR_LABEL.get(bench.get("sector"), "vergelijkbare praktijken")
     waar = f"in {bench['city']}" if bench["scope"] == "stad" and bench.get("city") else "in de regio"
-    criteria = _CRITERIA_LABEL.get(axis, "een aantal vaste punten")
     pct = round(gap["peer_pct"] * 100)
+    if gap["kind"] == "visual":
+        # Uitstraling als percentiel — geen kaal getal, wél een rangschikking die raakt.
+        return (f"We vergeleken de uitstraling van jullie site met {n} {sector} {waar}. "
+                f"'ie oogt verouderder dan {pct}% daarvan — dat is vaak het eerste wat een "
+                f"nieuwe bezoeker ziet.")
+    criteria = _CRITERIA_LABEL.get(axis, "een aantal vaste punten")
     return (f"We legden jullie site naast {n} {sector} {waar} en keken naar {criteria}. "
             f"{pct}% daarvan {gap['phrasing']} — bij jullie zagen we dat (nog) niet.")
 

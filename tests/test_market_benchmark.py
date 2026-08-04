@@ -75,7 +75,7 @@ def test_top_gap_finds_majority_feature_lead_lacks():
 def test_pitch_is_criteria_grounded_not_a_number():
     b = {"scope": "stad", "city": "Breda", "sector": "cosmetische_behandelaars",
          "peer_count": 10, "market_avg": 12, "score_vs_market": -8,
-         "top_gap": {"check": "online_booking", "peer_pct": 0.8,
+         "top_gap": {"kind": "feature", "check": "online_booking", "peer_pct": 0.8,
                      "phrasing": "laat bezoekers direct online een afspraak inplannen"}}
     s = benchmark_pitch("automations", b)
     assert s and "10 cosmetische praktijken in Breda" in s
@@ -90,6 +90,22 @@ def test_no_gap_when_lead_has_the_feature():
     b = compute_benchmarks(db, "aerys", "L0", wi)
     assert b["automations"]["top_gap"] is None          # lead heeft booking al
     assert benchmark_pitch("automations", b["automations"]) is None
+
+
+def test_website_visual_percentile_pitch():
+    # 10 peers met hoge visual_score; lead laag → 'oogt verouderder dan X%'
+    leads = [{"id": "L0", "workspace_id": "aerys", "sector": "cosmetische_behandelaars", "city": "Breda"}]
+    wi = []
+    for i in range(10):
+        leads.append({"id": f"C{i}", "workspace_id": "aerys", "sector": "cosmetische_behandelaars", "city": "Breda"})
+        wi.append({"lead_id": f"C{i}", "workspace_id": "aerys", "total_score": 55,
+                   "visual_score": 18, "technical_details": {"details": []}})
+    db = _FakeDB({"leads": leads, "website_intelligence": wi})
+    b = compute_benchmarks(db, "aerys", "L0", {"total_score": 30, "visual_score": 6, "technical_details": {"details": []}})
+    gap = b["website"]["top_gap"]
+    assert gap and gap["kind"] == "visual" and gap["peer_pct"] == 1.0   # alle 10 moderner
+    s = benchmark_pitch("website", b["website"])
+    assert s and "uitstraling" in s and "verouderder dan 100%" in s and "punten" not in s
 
 
 def test_no_pitch_when_feature_is_minority():
