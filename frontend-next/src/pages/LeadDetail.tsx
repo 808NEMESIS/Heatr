@@ -36,6 +36,8 @@ interface WebsiteIntel {
   score_vs_market?: number | null;
   market_benchmark?: MarketBench | null;
   automations_benchmark?: MarketBench | null;
+  market_pitch?: string | null;
+  automations_pitch?: string | null;
 }
 interface AuditCategory { behaald: number; max: number; label: string; }
 interface AuditFinding {
@@ -740,12 +742,12 @@ function WebsiteView({ leadId }: { leadId: string }) {
             <div className="font-display text-5xl font-semibold" style={{ color: scoreColor(wi.total_score) }}>{wi.total_score}</div>
             <div className="text-xs text-[var(--color-stone-500)]">/ {wi.score_denominator ?? 100}</div>
             {wi.priority && <Badge variant="accent" className="mt-2">{wi.priority}</Badge>}
-            {([['website', wi.market_benchmark], ['automatisering', wi.automations_benchmark]] as const).map(([label, b]) =>
+            {([['website', wi.market_benchmark, wi.market_pitch], ['automatisering', wi.automations_benchmark, wi.automations_pitch]] as const).map(([label, b, pitch]) =>
               b ? (
                 <div
                   key={label}
                   className="mt-2 text-xs text-center"
-                  title={`${label}: gemiddelde van ${b.peer_count} geanalyseerde ${b.scope === 'stad' ? `praktijken in ${b.city}` : 'praktijken sector-breed'} = ${b.market_avg}`}
+                  title={pitch || `${label}: gemiddelde van ${b.peer_count} praktijken = ${b.market_avg} (intern getal; geen concrete feature-achterstand)`}
                 >
                   <span className="uppercase tracking-wider text-[10px] text-[var(--color-stone-400)]">{label}</span>{' '}
                   <span className={b.score_vs_market < 0 ? 'text-[var(--color-danger)] font-semibold' : 'text-[var(--color-success)] font-semibold'}>
