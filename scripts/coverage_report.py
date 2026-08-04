@@ -1,12 +1,11 @@
-"""scripts/coverage_report.py — dekkingsmeter: hoe volledig is de niche-voorraad? (stroom 1)
+"""scripts/coverage_report.py — dekkingsmeter per sector: hoe volledig is de niche-voorraad?
 
-Meet per doelstad (config/cities.NL_TOP_CITIES) de cosmetische voorraad: leads,
-sendable, en welke (subcategorie × stad)-combinaties al gescrapet zijn. Toont de
-gaten — dat stuurt de sweep-generator. READ-ONLY.
+Meet per doelstad (config/cities.NL_TOP_CITIES) de voorraad + welke discipline-keywords
+al gescrapet zijn (keyword-level, matcht de sweep-generator). Toont de gaten. READ-ONLY.
 
-Gebruik:
-    python3 scripts/coverage_report.py                 # overzicht doelsteden
-    python3 scripts/coverage_report.py --all-cities    # ook niet-doelsteden in de data
+    python3 scripts/coverage_report.py                                   # cosmetisch
+    python3 scripts/coverage_report.py --sector alternatieve_geneeskunde
+    python3 scripts/coverage_report.py --sector alternatieve_geneeskunde --all-cities
 """
 from __future__ import annotations
 
@@ -20,7 +19,6 @@ from dotenv import load_dotenv
 load_dotenv(str(Path(__file__).resolve().parent.parent / ".env"))
 
 WORKSPACE = "aerys"
-SECTOR = "cosmetische_behandelaars"
 
 
 def _fetch_all(db, table: str, cols: str) -> list[dict]:
@@ -42,75 +40,59 @@ def _sendable(l: dict) -> bool:
     return es in ("risky", "catchall_risky") and vm in ("smtp", "bouncer_api")
 
 
-def _kw_to_subcat() -> dict[str, str]:
-    """Map elk lead_keyword → subcategorie-key (om scrape-jobs te herleiden)."""
-    from config.sectors import get_sector, get_subcategory_keywords
-    m: dict[str, str] = {}
-    for sub in get_sector(SECTOR)["subcategories"]:
-        for kw in get_subcategory_keywords(SECTOR, sub):
-            m[kw.lower()] = sub
-    return m
-
-
-def main(all_cities: bool) -> int:
+def main(sector: str, all_cities: bool) -> int:
     from config.database import get_heatr_supabase
     from config.cities import NL_TOP_CITIES
-    from config.sectors import get_sector
+    from config.sectors import get_sector, get_subcategory_keywords
 
     db = get_heatr_supabase()
-    subcats = list(get_sector(SECTOR)["subcategories"].keys())
-    kwmap = _kw_to_subcat()
+    all_kw = {kw.strip().lower()
+              for sub in get_sector(sector)["subcategories"]
+              for kw in get_subcategory_keywords(sector, sub)}
+    n_kw = len(all_kw)
 
     leads = [l for l in _fetch_all(
-        db, "leads",
-        "city, sector, email, email_status, email_verification_method, score, icp_match, workspace_id")
-        if l.get("workspace_id") == WORKSPACE and l.get("sector") == SECTOR]
-    jobs = [j for j in _fetch_all(
-        db, "scraping_jobs", "search_query, city, status, workspace_id")
-        if j.get("workspace_id") == WORKSPACE and j.get("status") == "completed"]
+        db, "leads", "city, sector, email, email_status, email_verification_method, score, icp_match, status, workspace_id")
+        if l.get("workspace_id") == WORKSPACE and l.get("sector") == sector and l.get("status") != "archived"]
+    jobs = [j for j in _fetch_all(db, "scraping_jobs", "search_query, city, status, workspace_id")
+            if j.get("workspace_id") == WORKSPACE and j.get("status") == "completed"]
 
-    # (stad → set van gescrapete subcategorieën); query kan "keyword stad" zijn → strip stad
-    scraped: dict[str, set[str]] = {}
+    scraped_kw: dict[str, set[str]] = {}    # stad → set gescrapete keywords (van deze sector)
     for j in jobs:
-        q = (j.get("search_query") or "").lower()
-        city = j.get("city") or "?"
-        sub = kwmap.get(q) or kwmap.get(q.replace(city.lower(), "").strip())
-        if sub:
-            scraped.setdefault(city, set()).add(sub)
+        q = (j.get("search_query") or "").strip().lower()
+        if q in all_kw:
+            scraped_kw.setdefault(j.get("city") or "?", set()).add(q)
 
     by_city: dict[str, list[dict]] = {}
     for l in leads:
         by_city.setdefault(l.get("city") or "?", []).append(l)
 
-    cities = list(NL_TOP_CITIES)
-    if all_cities:
-        cities += sorted(set(by_city) - set(NL_TOP_CITIES))
-
-    print(f"DEKKINGSMETER — {SECTOR} · {len(subcats)} subcategorieën · {len(NL_TOP_CITIES)} doelsteden")
-    print(f"{'stad':<22}{'leads':>6}{'sendable':>9}{'launchbaar':>11}{'subcats gescrapet':>19}")
-    print("-" * 67)
-    tot_l = tot_s = covered = 0
+    cities = list(NL_TOP_CITIES) + (sorted(set(by_city) - set(NL_TOP_CITIES)) if all_cities else [])
+    print(f"DEKKINGSMETER — {sector} · {n_kw} discipline-keywords · {len(NL_TOP_CITIES)} doelsteden")
+    print(f"{'stad':<20}{'leads':>6}{'sendable':>9}{'launchbaar':>11}{'keywords gescrapet':>20}")
+    print("-" * 66)
+    tot_l = tot_s = 0
     for city in cities:
         ls = by_city.get(city, [])
         snd = sum(1 for l in ls if _sendable(l))
         lnch = sum(1 for l in ls if _sendable(l) and (l.get("score") or 0) >= 55 and (l.get("icp_match") or 0) >= 0.50)
-        subs_done = len(scraped.get(city, set()))
-        mark = "" if ls or subs_done else "  ← GAT"
-        print(f"{city:<22}{len(ls):>6}{snd:>9}{lnch:>11}{subs_done:>10}/{len(subcats)}{mark}")
+        kw_done = len(scraped_kw.get(city, set()))
+        mark = "  ← GAT" if not ls and not kw_done else ""
+        print(f"{city:<20}{len(ls):>6}{snd:>9}{lnch:>11}{kw_done:>13}/{n_kw}{mark}")
         tot_l += len(ls); tot_s += snd
-        if subs_done == len(subcats):
-            covered += 1
-    print("-" * 67)
-    empty = [c for c in NL_TOP_CITIES if not by_city.get(c) and not scraped.get(c)]
-    full_gap_combos = sum(len(subcats) - len(scraped.get(c, set())) for c in NL_TOP_CITIES)
-    print(f"totaal: {tot_l} leads · {tot_s} sendable · {covered}/{len(NL_TOP_CITIES)} doelsteden volledig geveegd")
-    print(f"open (subcat × stad)-combinaties in doelsteden: {full_gap_combos}")
+    print("-" * 66)
+    open_combos = sum(n_kw - len(scraped_kw.get(c, set())) for c in NL_TOP_CITIES)
+    empty = [c for c in NL_TOP_CITIES if not by_city.get(c) and not scraped_kw.get(c)]
+    print(f"totaal: {tot_l} leads · {tot_s} sendable")
+    print(f"open (keyword × doelstad)-combo's: {open_combos}  →  sweep-surface")
     print(f"doelsteden zonder enige data: {len(empty)} → {', '.join(empty[:10])}{'…' if len(empty) > 10 else ''}")
     return 0
 
 
 if __name__ == "__main__":
+    from config.sectors import ACTIVE_SECTORS
     ap = argparse.ArgumentParser()
+    ap.add_argument("--sector", choices=ACTIVE_SECTORS, default="cosmetische_behandelaars")
     ap.add_argument("--all-cities", action="store_true")
     args = ap.parse_args()
-    raise SystemExit(main(args.all_cities))
+    raise SystemExit(main(args.sector, args.all_cities))

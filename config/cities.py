@@ -13,8 +13,8 @@ NL_TOP_CITIES: list[str] = [
     "Emmen", "Delft", "Venlo", "Deventer", "Hilversum",
 ]
 
-# Subcategorie-prioriteit voor cosmetische_behandelaars: medisch/esthetisch eerst
-# (beste ICP-fit + laagste kosten per lead volgens cost-attribution), volume-beauty laatst.
+# Subcategorie-prioriteit per sector (medisch/erkend eerst = beste ICP-fit). Sectoren
+# zonder entry sweept de generator in config-volgorde. Cosmetisch: volume-beauty laatst.
 COSMETISCH_SUBCAT_PRIORITY: list[str] = [
     "injectables_anti_aging",
     "laser_huidverjonging",
@@ -28,3 +28,21 @@ COSMETISCH_SUBCAT_PRIORITY: list[str] = [
     "schoonheidssalons",
     "nagel_wimper",
 ]
+
+# Alt-zorg: RBCZ/vereniging-erkende, vergoedbare disciplines eerst (grootste kans op een
+# echte praktijk met website); holistisch coaching (niet-erkend) laatst.
+ALT_SUBCAT_PRIORITY: list[str] = [
+    "manueel_fysiek",          # osteopathie/craniosacraal — vaak vergoed
+    "natuurgeneeskunde",       # homeopathie/orthomoleculair/mesologie — NVKH/MBOG
+    "lichaam_energetisch",     # acupunctuur — NVA/ZHONG
+    "lichaamsgerichte_therapie",  # haptotherapie
+    "vaktherapie",             # VIT-vaktherapeuten
+    "reflexzone",
+    "integratieve_geest_lichaam",
+    "coaching_holistisch",     # niet-erkend → laatst
+]
+
+SUBCAT_PRIORITY: dict[str, list[str]] = {
+    "cosmetische_behandelaars": COSMETISCH_SUBCAT_PRIORITY,
+    "alternatieve_geneeskunde": ALT_SUBCAT_PRIORITY,
+}
