@@ -24,6 +24,8 @@ interface ReceptiePreview {
 const OPP_LABEL: Record<string, string> = {
   website_rebuild: 'Website', conversie_optimalisatie: 'Conversie', chatbot: 'Chatbot', ai_audit: 'AI Audit',
 };
+interface MarketBench { scope: string; city?: string | null; sector: string; peer_count: number; market_avg: number; score_vs_market: number }
+
 interface WebsiteIntel {
   total_score?: number | null; technical_score?: number | null; visual_score?: number | null;
   conversion_score?: number | null; sector_score?: number | null;
@@ -32,7 +34,8 @@ interface WebsiteIntel {
   screenshot_desktop_url?: string | null; screenshot_mobile_url?: string | null;
   review_status?: string | null;
   score_vs_market?: number | null;
-  market_benchmark?: { scope: string; city?: string | null; sector: string; peer_count: number; market_avg: number; score_vs_market: number } | null;
+  market_benchmark?: MarketBench | null;
+  automations_benchmark?: MarketBench | null;
 }
 interface AuditCategory { behaald: number; max: number; label: string; }
 interface AuditFinding {
@@ -737,18 +740,22 @@ function WebsiteView({ leadId }: { leadId: string }) {
             <div className="font-display text-5xl font-semibold" style={{ color: scoreColor(wi.total_score) }}>{wi.total_score}</div>
             <div className="text-xs text-[var(--color-stone-500)]">/ {wi.score_denominator ?? 100}</div>
             {wi.priority && <Badge variant="accent" className="mt-2">{wi.priority}</Badge>}
-            {wi.market_benchmark && (
-              <div
-                className="mt-2 text-xs text-center"
-                title={`Gemiddelde van ${wi.market_benchmark.peer_count} geanalyseerde ${wi.market_benchmark.scope === 'stad' ? `sites in ${wi.market_benchmark.city}` : 'sites sector-breed'}: ${wi.market_benchmark.market_avg}`}
-              >
-                <span className={wi.market_benchmark.score_vs_market < 0 ? 'text-[var(--color-danger)] font-semibold' : 'text-[var(--color-success)] font-semibold'}>
-                  {wi.market_benchmark.score_vs_market > 0 ? '+' : ''}{wi.market_benchmark.score_vs_market}
-                </span>{' '}
-                <span className="text-[var(--color-stone-500)]">
-                  vs {wi.market_benchmark.scope === 'stad' ? wi.market_benchmark.city : 'sector'}-gemiddelde ({wi.market_benchmark.market_avg}, n={wi.market_benchmark.peer_count})
-                </span>
-              </div>
+            {([['website', wi.market_benchmark], ['automatisering', wi.automations_benchmark]] as const).map(([label, b]) =>
+              b ? (
+                <div
+                  key={label}
+                  className="mt-2 text-xs text-center"
+                  title={`${label}: gemiddelde van ${b.peer_count} geanalyseerde ${b.scope === 'stad' ? `praktijken in ${b.city}` : 'praktijken sector-breed'} = ${b.market_avg}`}
+                >
+                  <span className="uppercase tracking-wider text-[10px] text-[var(--color-stone-400)]">{label}</span>{' '}
+                  <span className={b.score_vs_market < 0 ? 'text-[var(--color-danger)] font-semibold' : 'text-[var(--color-success)] font-semibold'}>
+                    {b.score_vs_market > 0 ? '+' : ''}{b.score_vs_market}
+                  </span>{' '}
+                  <span className="text-[var(--color-stone-500)]">
+                    vs {b.scope === 'stad' ? b.city : 'sector'} ({b.market_avg}, n={b.peer_count})
+                  </span>
+                </div>
+              ) : null,
             )}
           </div>
           <div className="flex-1 min-w-[240px] grid grid-cols-2 sm:grid-cols-4 gap-3">
