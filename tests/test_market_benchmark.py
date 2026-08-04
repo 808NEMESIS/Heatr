@@ -1,8 +1,7 @@
-"""tests/test_market_benchmark.py — score_vs_market uit eigen data, 2 assen + zinnen.
+"""tests/test_market_benchmark.py — marktvergelijking: 2 assen + criteria-gegronde pitch.
 
-Pint scoring.market_benchmark: website (total_score) + automations (conversion_score),
-sector×stad met sector-fallback <3 peers, lead zelf uitgesloten, en de deterministische
-NL-zinnen (alleen bij een echte achterstand).
+Pint scoring.market_benchmark: numerieke as (intern) + top_gap op peer-feature-prevalentie
+(prospect-facing), en de deterministische criteria-zin (nooit een kaal getal).
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scoring.market_benchmark import benchmark_sentence, compute_benchmarks
+from scoring.market_benchmark import benchmark_pitch, compute_benchmarks
 
 
 class _Chain:
@@ -45,42 +44,57 @@ class _FakeDB:
     def table(self, name): return _Chain(name, self.store)
 
 
-def _store(city_peers=4, total=50, conv=5):
+def _conv(booking, chatbot):
+    return {"details": [{"check": "online_booking", "passed": booking},
+                        {"check": "chatbot", "passed": chatbot}]}
+
+
+def _store(peers_with_booking=8, peers_total=10):
+    """peers_total cosmetische peers in Breda; 'peers_with_booking' hebben online_booking."""
     leads = [{"id": "L0", "workspace_id": "aerys", "sector": "cosmetische_behandelaars", "city": "Breda"}]
     wi = []
-    for i in range(city_peers):
+    for i in range(peers_total):
         leads.append({"id": f"C{i}", "workspace_id": "aerys", "sector": "cosmetische_behandelaars", "city": "Breda"})
-        wi.append({"lead_id": f"C{i}", "workspace_id": "aerys", "total_score": total + i, "conversion_score": conv + i})
+        wi.append({"lead_id": f"C{i}", "workspace_id": "aerys",
+                   "total_score": 55, "conversion_score": 12,
+                   "conversion_details": _conv(i < peers_with_booking, False),
+                   "technical_details": {"details": []}})
     return {"leads": leads, "website_intelligence": wi}
 
 
-def test_both_axes_city_scope():
-    db = _FakeDB(_store(city_peers=4, total=50, conv=10))     # website avg 51.5 / auto avg 11.5
-    b = compute_benchmarks(db, "aerys", "L0", {"total_score": 30, "conversion_score": 4})
-    assert b["website"]["scope"] == "stad" and b["website"]["score_vs_market"] == -21.5
-    assert b["automations"]["scope"] == "stad" and b["automations"]["score_vs_market"] == -7.5
-    assert b["website"]["peer_count"] == 4
+def test_top_gap_finds_majority_feature_lead_lacks():
+    db = _FakeDB(_store(peers_with_booking=8, peers_total=10))   # 80% heeft booking
+    # lead heeft GEEN booking:
+    wi = {"total_score": 30, "conversion_score": 4, "conversion_details": _conv(False, False),
+          "technical_details": {"details": []}}
+    b = compute_benchmarks(db, "aerys", "L0", wi)
+    gap = b["automations"]["top_gap"]
+    assert gap and gap["check"] == "online_booking" and gap["peer_pct"] == 0.8
 
 
-def test_axis_skipped_when_own_score_zero():
-    db = _FakeDB(_store())
-    b = compute_benchmarks(db, "aerys", "L0", {"total_score": 30, "conversion_score": 0})
-    assert b["website"] is not None
-    assert b["automations"] is None            # geen eigen conversion_score → geen as
+def test_pitch_is_criteria_grounded_not_a_number():
+    b = {"scope": "stad", "city": "Breda", "sector": "cosmetische_behandelaars",
+         "peer_count": 10, "market_avg": 12, "score_vs_market": -8,
+         "top_gap": {"check": "online_booking", "peer_pct": 0.8,
+                     "phrasing": "laat bezoekers direct online een afspraak inplannen"}}
+    s = benchmark_pitch("automations", b)
+    assert s and "10 cosmetische praktijken in Breda" in s
+    assert "80% daarvan laat bezoekers direct online een afspraak inplannen" in s
+    assert "punten" not in s          # géén kaal getal richting de prospect
 
 
-def test_sentences_only_on_deficit():
-    # website onder de markt → zin; automations boven de markt → geen zin
-    wb = {"scope": "stad", "city": "Breda", "sector": "x", "peer_count": 12, "market_avg": 60, "score_vs_market": -25}
-    ab = {"scope": "sector", "city": None, "sector": "x", "peer_count": 40, "market_avg": 8, "score_vs_market": 3}
-    s = benchmark_sentence("website", wb)
-    assert s and "25 punten onder" in s and "12 vergelijkbare praktijken in Breda" in s
-    assert benchmark_sentence("automations", ab) is None      # gelijk/beter → geen pitch
-    a2 = benchmark_sentence("automations", {**ab, "score_vs_market": -6})
-    assert a2 and "online afspraken, chat en WhatsApp" in a2 and "in de sector" in a2
+def test_no_gap_when_lead_has_the_feature():
+    db = _FakeDB(_store(peers_with_booking=8, peers_total=10))
+    wi = {"total_score": 30, "conversion_score": 10, "conversion_details": _conv(True, False),
+          "technical_details": {"details": []}}
+    b = compute_benchmarks(db, "aerys", "L0", wi)
+    assert b["automations"]["top_gap"] is None          # lead heeft booking al
+    assert benchmark_pitch("automations", b["automations"]) is None
 
 
-def test_none_when_too_few_peers():
-    db = _FakeDB(_store(city_peers=2))          # <3 stad én <3 sector
-    b = compute_benchmarks(db, "aerys", "L0", {"total_score": 30, "conversion_score": 4})
-    assert b["website"] is None and b["automations"] is None
+def test_no_pitch_when_feature_is_minority():
+    db = _FakeDB(_store(peers_with_booking=3, peers_total=10))   # maar 30% heeft booking
+    wi = {"total_score": 30, "conversion_score": 4, "conversion_details": _conv(False, False),
+          "technical_details": {"details": []}}
+    b = compute_benchmarks(db, "aerys", "L0", wi)
+    assert b["automations"]["top_gap"] is None          # geen meerderheid → geen differentiator

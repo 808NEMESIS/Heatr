@@ -186,9 +186,6 @@ async def generate_review_email(
                 website_bench, automations_bench = _b.get("website"), _b.get("automations")
             except Exception:
                 pass
-        comp_data = website_intelligence.get("competitor_data") or {}
-        score_vs_market = ((website_bench or {}).get("score_vs_market")
-                           if website_bench else (comp_data.get("score_vs_market") or 0))
 
         # Sector-poort: alt-zorg/chiro krijgen nooit een chat/AI-angle.
         from config.sectors import get_allowed_offers
@@ -216,18 +213,16 @@ async def generate_review_email(
 
         sender_name = os.environ.get("SENDER_NAME", "Sami")
 
-        # Build prompt exactly per CLAUDE.md regel 273-290. Marktpositie deterministisch
-        # uit de eigen-data-benchmark (nooit via Claude — respecteert de QA-gate).
-        from scoring.market_benchmark import benchmark_sentence
-        market_phrase = benchmark_sentence("website", website_bench) or (
-            f"{abs(score_vs_market)} punten onder concurrenten in {city}"
-            if score_vs_market < 0
-            else f"vergelijkbaar met concurrenten in {city}"
+        # Marktpositie deterministisch + CRITERIA-gegrond (nooit een kaal getal — een
+        # prospect weet niet waarmee je vergelijkt; nooit via Claude → QA-gate-veilig).
+        from scoring.market_benchmark import benchmark_pitch
+        market_phrase = benchmark_pitch("website", website_bench) or (
+            f"vergelijkbaar met andere praktijken in {city}"  # geen achterstand → geen cijfer
         )
         # Automatiserings-as apart — alleen als de sector-poort 'automatisering' toestaat
-        # (alt-zorg/chiro krijgen nooit een chat/AI-angle) én er een echte achterstand is.
-        auto_sentence = benchmark_sentence("automations", automations_bench) if _allow_auto else None
-        auto_line = f"Automatisering (conversie/chat/booking): {auto_sentence}\n" if auto_sentence else ""
+        # (alt-zorg/chiro krijgen nooit een chat/AI-angle) én er een concrete achterstand is.
+        auto_pitch = benchmark_pitch("automations", automations_bench) if _allow_auto else None
+        auto_line = f"Automatisering: {auto_pitch}\n" if auto_pitch else ""
 
         prompt = (
             f"Schrijf een email (max 90 woorden) in het Nederlands.\n"
