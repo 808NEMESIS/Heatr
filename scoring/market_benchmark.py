@@ -79,10 +79,13 @@ def _peer_rows(db, workspace_id: str, sector: str, city: str | None, lead_id: st
     return rows
 
 
-def _visual_gap(lead_visual: Any, peers: list[dict]) -> dict | None:
+def _visual_gap(wi: dict, peers: list[dict]) -> dict | None:
     """Percentiel-gat op uitstraling (echte Claude-Vision-score 0-25). Geen kaal getal
     richting de prospect — een rangschikking: 'oogt verouderder dan X% van de peers'.
-    Vuurt alleen als een duidelijke meerderheid er moderner uitziet."""
+    Vuurt alleen als een duidelijke meerderheid er moderner uitziet. Als er een verse
+    Vision-observatie is (visual_observations, migratie 046), hangt 'ie het concrete
+    verbeterpunt eraan zodat de pitch niet bij een percentiel blijft."""
+    lead_visual = wi.get("visual_score")
     if lead_visual is None:
         return None
     peer_vis = [p["visual_score"] for p in peers if p.get("visual_score") is not None]
@@ -91,7 +94,10 @@ def _visual_gap(lead_visual: Any, peers: list[dict]) -> dict | None:
     more_modern = sum(1 for v in peer_vis if v > lead_visual) / len(peer_vis)
     if more_modern < 0.6:                        # lead ziet er niet duidelijk gedateerder uit
         return None
-    return {"kind": "visual", "peer_pct": round(more_modern, 2)}
+    obs = wi.get("visual_observations") or {}
+    imps = obs.get("improvements") if isinstance(obs, dict) else None
+    detail = (imps[0] if isinstance(imps, list) and imps else None)
+    return {"kind": "visual", "peer_pct": round(more_modern, 2), "detail": detail}
 
 
 def _feature_gap(axis: str, lead_details: Any, peers: list[dict], details_col: str) -> dict | None:
@@ -123,7 +129,7 @@ def _one_axis(db, workspace_id: str, lead_id: str, sector: str, city: str | None
     # Website-as pitcht bij voorkeur op UITSTRALING (Vision-percentiel — dé rebuild-hoek),
     # met laadsnelheid als terugval. Automations-as blijft feature-gebaseerd.
     if axis == "website":
-        gap = _visual_gap(wi.get("visual_score"), rows) or _feature_gap(axis, wi.get(details_col), rows, details_col)
+        gap = _visual_gap(wi, rows) or _feature_gap(axis, wi.get(details_col), rows, details_col)
     else:
         gap = _feature_gap(axis, wi.get(details_col), rows, details_col)
     return {
@@ -164,9 +170,13 @@ def benchmark_pitch(axis: str, bench: dict | None) -> str | None:
     pct = round(gap["peer_pct"] * 100)
     if gap["kind"] == "visual":
         # Uitstraling als percentiel — geen kaal getal, wél een rangschikking die raakt.
-        return (f"We vergeleken de uitstraling van jullie site met {n} {sector} {waar}. "
-                f"'ie oogt verouderder dan {pct}% daarvan — dat is vaak het eerste wat een "
-                f"nieuwe bezoeker ziet.")
+        # Mét verse Vision-observatie (migratie 046) hangt er een concreet detail aan.
+        zin = (f"We vergeleken de uitstraling van jullie site met {n} {sector} {waar}. "
+               f"'ie oogt verouderder dan {pct}% daarvan — dat is vaak het eerste wat een "
+               f"nieuwe bezoeker ziet.")
+        if gap.get("detail"):
+            zin += f" Concreet viel ons op: {str(gap['detail']).rstrip('.').lower()}."
+        return zin
     criteria = _CRITERIA_LABEL.get(axis, "een aantal vaste punten")
     return (f"We legden jullie site naast {n} {sector} {waar} en keken naar {criteria}. "
             f"{pct}% daarvan {gap['phrasing']} — bij jullie zagen we dat (nog) niet.")

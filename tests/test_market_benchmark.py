@@ -108,6 +108,17 @@ def test_website_visual_percentile_pitch():
     assert s and "uitstraling" in s and "verouderder dan 100%" in s and "punten" not in s
 
 
+def test_visual_pitch_appends_concrete_observation():
+    # met verse Vision-observatie (migratie 046) hangt er een concreet detail aan de zin
+    b = {"scope": "stad", "city": "Breda", "sector": "cosmetische_behandelaars",
+         "peer_count": 10, "market_avg": 15, "score_vs_market": -9,
+         "top_gap": {"kind": "visual", "peer_pct": 0.9,
+                     "detail": "Gedateerde stockfoto's en weinig witruimte."}}
+    s = benchmark_pitch("website", b)
+    assert s and "verouderder dan 90%" in s
+    assert "concreet viel ons op: gedateerde stockfoto's en weinig witruimte" in s.lower()
+
+
 def test_no_pitch_when_feature_is_minority():
     db = _FakeDB(_store(peers_with_booking=3, peers_total=10))   # maar 30% heeft booking
     wi = {"total_score": 30, "conversion_score": 4, "conversion_details": _conv(False, False),
