@@ -88,9 +88,18 @@ def test_drip_proceeds_without_open_flag(monkeypatch):
 
 def test_blocks_when_rechtsvorm_onbepaald(monkeypatch):
     _set_tokens(monkeypatch)
-    lead = {**LEAD, "kvk_legal_form": None}      # KvK uit → onbepaald
+    lead = {**LEAD, "kvk_legal_form": None}      # KvK uit → onbepaald, geen site-adres
     out = _run(_render_receptie_marker(MARK, lead, _FakeSb(wi=WI)))
-    assert out["sendable"] is False and out["block_reason"] == "rechtsvorm_onbepaald"
+    assert out["sendable"] is False and out["block_reason"] == "rechtsvorm_onbepaald_geen_gepubliceerd_adres"
+
+
+def test_sendable_when_onbepaald_but_email_from_own_site(monkeypatch):
+    # Art. 11.7 lid 3: onbepaalde rechtsvorm maar adres van hun eigen website →
+    # gate laat door (deblokkeert de grote onbepaald-bucket).
+    _set_tokens(monkeypatch)
+    lead = {**LEAD, "kvk_legal_form": None, "email_discovery_source": "website"}
+    out = _run(_render_receptie_marker(MARK, lead, _FakeSb(wi=WI)))
+    assert out["sendable"] is True and out["block_reason"] == "ok"
 
 
 def test_sendable_when_rechtspersoon_and_not_suppressed(monkeypatch):

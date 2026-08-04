@@ -2,19 +2,29 @@
 utils/legal_form.py — rechtsvorm-risico voor koude B2B-mail (AVG-02).
 
 Audit-bevinding (2026-07-24): voor natuurlijke personen (zzp/eenmanszaak, groot
-deel van de ICP: 1-15 medewerkers, eigenaar=beslisser) is koude e-mail zonder
-toestemming opt-in-plichtig (Telecommunicatiewet art. 11.7 lid 1). De published-
-address-uitzondering is een rechtsPERSOON-concept en dekt eenmanszaak/zzp niet.
-De bestaande gdpr_safe-heuristiek kent de rechtsvorm niet en zet role-/onbekende
-adressen default op veilig — precies het gat.
+deel van de ICP: 1-15 medewerkers, eigenaar=beslisser) geldt het spamverbod voor
+natuurlijke personen (Telecommunicatiewet art. 11.7 lid 1) — anders dan voor een
+rechtspersoon (BV/NV/stichting), die vrij benaderbaar is.
 
-Deze module maakt de rechtsvorm EXPLICIET i.p.v. default-veilig. Aparte gate voor
-de receptie-campagne; raakt de globale gdpr_safe NIET (bestaande 493-flow blijft).
+CORRECTIE (2026-08-04, na online-onderzoek + Sami-beslissing): art. 11.7 **lid 3**
+Tw kent óók de natuurlijke-persoon-ondernemer een uitzondering toe. Koude B2B-mail
+mag ZONDER toestemming als de afzender contactgegevens gebruikt die de ontvanger
+"heeft bestemd en openbaar gemaakt voor dit doel", en overeenkomstig dat doel. In
+de praktijk: een e-mailadres dat de ondernemer ZELF op de eigen website publiceert
+voor zijn dienstverlening (waterval-stap 1 → email_discovery_source == 'website').
+Die grond werkt onafhankelijk van de rechtsvorm — een rechtspersoon mag toch al,
+een natuurlijk persoon mag mét zo'n gepubliceerd adres. De eerdere aanname ("de
+published-address-uitzondering is een rechtsPERSOON-concept") was dus onjuist.
 
-POLICY-VOORBEHOUD: dat 'onbepaald' blokkeert is Sami's uitgangspunt ("blokkeer
-tot de rechtsvorm bekend is") en staat onder juridisch advies. KvK is opt-in UIT
-(CLAUDE.md), dus kvk_legal_form is doorgaans leeg → vrijwel alles is 'onbepaald'
-→ de receptie-send blijft dicht tot KvK-data bestaat óf het advies dit versoepelt.
+Beleid nu (Sami 2026-08-04): "bekijk of ze een e-mail voor hun dienstverlening op
+de site gebruiken; zo ja, gewoon mailen." → een op de eigen site gepubliceerd adres
+opent de poort, óók bij eenmanszaak/VOF. Zonder zo'n adres blijft natuurlijk persoon/
+onbepaald geblokkeerd (fail-closed).
+
+JURIDISCH VOORBEHOUD: de ACM leest "overeenkomstig het doel" streng; een contact-
+adres gebruikt voor koude sales is pleitbaar maar niet risicovrij. Dit staat onder
+Spoor J (legal sign-off) vóór productie-verzending. Deze gate raakt de globale
+gdpr_safe NIET (bestaande 493-flow blijft); sends blijven achter de kill-switch.
 """
 from __future__ import annotations
 
@@ -70,16 +80,41 @@ def classify_legal_form(lead: dict, page_text: str | None = None) -> str:
     return "onbepaald"
 
 
+# Herkomst-vlag (leads.email_discovery_source) die telt als "door de ondernemer
+# zelf op de eigen site gepubliceerd voor zijn dienstverlening" (art. 11.7 lid 3).
+# ALLEEN waterval-stap 1 (de eigen website); een gegokt info@-patroon, een Google-
+# snippet of een KvK-adres is GEEN bewijs van publicatie-voor-dit-doel.
+_PUBLISHED_SITE_SOURCES = {"website"}
+
+
+def email_published_on_own_site(lead: dict) -> bool:
+    """True als het e-mailadres van de lead op hun EIGEN website is gevonden
+    (waterval-stap 1). Dat is de art. 11.7 lid 3-grond: een adres dat de
+    ondernemer zelf heeft bestemd en openbaar gemaakt voor contact over zijn
+    dienstverlening. Andere herkomsten (gok-patroon, google_search, kvk) tellen
+    NIET — die bewijzen geen publicatie-voor-dit-doel."""
+    return (lead.get("email_discovery_source") or "").strip().lower() in _PUBLISHED_SITE_SOURCES
+
+
 def receptie_avg_safe(lead: dict, page_text: str | None = None) -> tuple[bool, str]:
-    """Cold-mail-gate voor de receptie-campagne (AVG-02). Alleen een bevestigde
-    rechtspersoon is veilig; natuurlijk persoon vereist opt-in; onbepaald wordt
-    (conservatief, policy onder voorbehoud) geblokkeerd tot de rechtsvorm bekend is.
+    """Cold-mail-gate voor de receptie-campagne (AVG-02).
+
+    Twee zelfstandige gronden voor "veilig":
+      1. bevestigde RECHTSPERSOON (BV/NV/stichting) — vrij benaderbaar; of
+      2. een op de EIGEN SITE gepubliceerd zakelijk adres (art. 11.7 lid 3) —
+         geldt óók voor eenmanszaak/VOF/onbepaald.
+    Zonder één van beide: natuurlijk persoon/onbepaald blokt (fail-closed).
 
     `page_text` (optioneel) laat de gratis B.V.-afleiding ook de footer meenemen.
     Returns (ok, reason). Bewust GEEN raise: de send-gate leest de reason."""
     lf = classify_legal_form(lead, page_text=page_text)
     if lf == "rechtspersoon":
         return True, "rechtspersoon"
+    # Art. 11.7 lid 3 Tw: zelf-gepubliceerd zakelijk adres op de eigen site =
+    # "bestemd en openbaar gemaakt voor dit doel" → koude B2B-mail toegestaan,
+    # ongeacht de rechtsvorm (dekt dus ook eenmanszaak/VOF en 'onbepaald').
+    if email_published_on_own_site(lead):
+        return True, "gepubliceerd_zakelijk_adres_art_11_7_lid_3"
     if lf == "natuurlijk_persoon":
-        return False, "natuurlijk_persoon_opt_in_vereist"
-    return False, "rechtsvorm_onbepaald"
+        return False, "natuurlijk_persoon_geen_gepubliceerd_adres"
+    return False, "rechtsvorm_onbepaald_geen_gepubliceerd_adres"

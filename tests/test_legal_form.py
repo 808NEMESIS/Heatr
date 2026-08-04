@@ -1,9 +1,12 @@
 """
 tests/test_legal_form.py — rechtsvorm-risico-gate (AVG-02).
 
-Kernpunt: conservatief. Alleen een bevestigde rechtspersoon (BV/NV/stichting) is
-veilig voor koude mail; eenmanszaak/zzp = natuurlijk persoon → opt-in vereist;
-leeg/onbekend (KvK opt-in uit) → 'onbepaald' → geblokkeerd tot rechtsvorm bekend.
+Kernpunt: twee zelfstandige gronden voor veilig (Sami 2026-08-04):
+  1. bevestigde rechtspersoon (BV/NV/stichting) — vrij benaderbaar; of
+  2. een op de EIGEN SITE gepubliceerd zakelijk adres (art. 11.7 lid 3 Tw) —
+     geldt óók voor eenmanszaak/VOF/onbepaald.
+Zonder één van beide → geblokkeerd (fail-closed). Signaal voor (2) =
+leads.email_discovery_source == 'website' (waterval-stap 1, hun eigen site).
 """
 from __future__ import annotations
 
@@ -21,19 +24,52 @@ def test_bv_is_rechtspersoon_and_safe():
         assert receptie_avg_safe({"kvk_legal_form": lf})[0] is True
 
 
-def test_eenmanszaak_is_natuurlijk_persoon_and_blocked():
+def test_eenmanszaak_is_natuurlijk_persoon_and_blocked_without_published_addr():
+    # Natuurlijk persoon ZONDER op eigen site gepubliceerd adres → geblokkeerd.
     for lf in ("Eenmanszaak", "ZZP", "VOF", "Maatschap"):
         assert classify_legal_form({"kvk_legal_form": lf}) == "natuurlijk_persoon", lf
         ok, reason = receptie_avg_safe({"kvk_legal_form": lf})
-        assert ok is False and reason == "natuurlijk_persoon_opt_in_vereist"
+        assert ok is False and reason == "natuurlijk_persoon_geen_gepubliceerd_adres"
 
 
-def test_empty_legal_form_is_onbepaald_and_blocked():
-    # KvK opt-in uit → geen rechtsvorm → onbepaald → geblokkeerd (Sami's default).
+def test_empty_legal_form_is_onbepaald_and_blocked_without_published_addr():
+    # KvK opt-in uit → geen rechtsvorm → onbepaald → geblokkeerd zonder site-adres.
     for lead in ({}, {"kvk_legal_form": None}, {"kvk_legal_form": "  "}):
         assert classify_legal_form(lead) == "onbepaald"
         ok, reason = receptie_avg_safe(lead)
-        assert ok is False and reason == "rechtsvorm_onbepaald"
+        assert ok is False and reason == "rechtsvorm_onbepaald_geen_gepubliceerd_adres"
+
+
+# ── Art. 11.7 lid 3: op eigen site gepubliceerd zakelijk adres (2026-08-04) ────
+
+def test_eenmanszaak_with_published_site_email_is_safe():
+    # Eenmanszaak MÉT adres van hun eigen website → art. 11.7 lid 3 → veilig.
+    lead = {"kvk_legal_form": "Eenmanszaak", "email_discovery_source": "website"}
+    ok, reason = receptie_avg_safe(lead)
+    assert ok is True and reason == "gepubliceerd_zakelijk_adres_art_11_7_lid_3"
+
+
+def test_onbepaald_with_published_site_email_is_safe():
+    # Onbepaalde rechtsvorm + site-gepubliceerd adres → veilig (grond werkt
+    # ongeacht rechtsvorm). Dit deblokkeert de grote onbepaald-bucket.
+    lead = {"email_discovery_source": "website"}
+    ok, reason = receptie_avg_safe(lead)
+    assert ok is True and reason == "gepubliceerd_zakelijk_adres_art_11_7_lid_3"
+
+
+def test_non_site_email_sources_do_not_unlock():
+    # Alleen 'website' telt; gegokt patroon / google / kvk / leeg = GEEN grond.
+    for src in ("google", "kvk", "contact_crawl", "pre_existing", "", None):
+        lead = {"kvk_legal_form": "Eenmanszaak", "email_discovery_source": src}
+        ok, _ = receptie_avg_safe(lead)
+        assert ok is False, src
+
+
+def test_rechtspersoon_safe_regardless_of_email_source():
+    # Rechtspersoon is toch al vrij; reason blijft 'rechtspersoon' (niet lid 3).
+    lead = {"kvk_legal_form": "BV", "email_discovery_source": "google"}
+    ok, reason = receptie_avg_safe(lead)
+    assert ok is True and reason == "rechtspersoon"
 
 
 def test_unknown_form_string_is_onbepaald_not_optimistic():
