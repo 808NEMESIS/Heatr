@@ -47,6 +47,13 @@ _ELIGIBLE_EMAIL_STATUSES = ("valid", "risky", "catch_all", "catchall_risky")
 # Welke lead statuses zijn niet-eligible (terminal)
 _TERMINAL_LEAD_STATUSES = ("disqualified", "unsubscribed", "forgotten", "bounced")
 
+# Paginering van de eligible-selectie. We scannen de leads op score aflopend en
+# stoppen bij de eerste zónder verse WI-rij. Pagegrootte ≤ 200 houdt de
+# WI-dedup-query (.in_) onder de PostgREST-URL-limiet; _MAX_SCAN is een
+# veiligheidsplafond tegen een oneindige scan.
+_SELECT_PAGE = int(os.getenv("WEBSITE_ANALYSIS_SELECT_PAGE", "200"))
+_MAX_SCAN = int(os.getenv("WEBSITE_ANALYSIS_MAX_SCAN", "5000"))
+
 
 async def process_next_website_analysis(
     workspace_id: str,
@@ -210,72 +217,73 @@ async def _find_next_eligible_lead(
 ) -> dict | None:
     """Select one lead eligible for website analysis.
 
-    Priority: highest score eerst (leads die al enriched zijn en
-    dicht bij push-ready staan krijgen voorrang op website analyse).
+    Priority: hoogste score eerst — maar over de HELE eligible-populatie, niet
+    over een top-N-venster.
 
-    Implementation detail: we doen geen SQL-side anti-join tegen
-    website_intelligence — Supabase PostgREST ondersteunt dat niet zonder
-    RPC. In plaats daarvan fetchen we top-N eligible leads, filteren
-    Python-side op 'geen recente WI row', pakken de eerste.
+    Waarom paginerend: PostgREST kan geen SQL-side anti-join tegen
+    website_intelligence. De oude implementatie haalde top-20-op-score op en
+    filterde dán de al-geanalyseerde eruit — maar juist de hoogst scorende leads
+    zijn doorgaans het eerst verrijkt en dus al geanalyseerd, waardoor het venster
+    vol al-geanalyseerde leads zat en 'queue leeg' teruggaf terwijl verse, lager
+    scorende leads (bv. een nieuwe sweep) nooit bereikt werden — die verhongerden.
+    We pagineren nu door de score-gesorteerde eligible leads en stoppen bij de
+    eerste zónder verse WI-rij. Secundaire sortering op id maakt de paginering
+    deterministisch bij gelijke scores.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=_REANALYSIS_DAYS)).isoformat()
 
-    # Step 1: fetch top candidate leads for this workspace
-    leads_res = (
-        supabase_client.table("leads")
-        .select(
-            "id, company_name, domain, sector, email_status, status, score"
+    offset = 0
+    while offset < _MAX_SCAN:
+        leads_res = (
+            supabase_client.table("leads")
+            .select("id, company_name, domain, sector, email_status, status, score")
+            .eq("workspace_id", workspace_id)
+            .not_.is_("domain", "null")
+            .in_("email_status", list(_ELIGIBLE_EMAIL_STATUSES))
+            .order("score", desc=True)
+            .order("id", desc=False)
+            .range(offset, offset + _SELECT_PAGE - 1)
+            .execute()
         )
-        .eq("workspace_id", workspace_id)
-        .not_.is_("domain", "null")
-        .in_("email_status", list(_ELIGIBLE_EMAIL_STATUSES))
-        .order("score", desc=True)
-        .limit(20)
-        .execute()
+        page = leads_res.data or []
+        if not page:
+            return None                     # geen eligible leads meer → queue leeg
+
+        # Terminal statuses eruit (PostgREST kan NOT IN niet netjes uitdrukken)
+        candidates = [
+            lead for lead in page
+            if (lead.get("status") or "") not in _TERMINAL_LEAD_STATUSES
+        ]
+
+        if candidates:
+            # WI-rijen voor déze pagina (≤ _SELECT_PAGE ids → .in_ blijft binnen
+            # de URL-limiet). Een lead met een WI-rij binnen het reanalyse-venster
+            # is 'vers geanalyseerd' en wordt overgeslagen.
+            candidate_ids = [c["id"] for c in candidates]
+            wi_res = (
+                supabase_client.table("website_intelligence")
+                .select("lead_id, analyzed_at")
+                .eq("workspace_id", workspace_id)
+                .in_("lead_id", candidate_ids)
+                .execute()
+            )
+            recent_wi: set[str] = set()
+            for row in (wi_res.data or []):
+                lid = row.get("lead_id")
+                analyzed_at = row.get("analyzed_at") or ""
+                if lid and analyzed_at and analyzed_at > cutoff:
+                    recent_wi.add(lid)
+
+            for lead in candidates:         # al op (score desc, id) gesorteerd
+                if lead["id"] not in recent_wi:
+                    return lead
+
+        offset += _SELECT_PAGE
+
+    logger.warning(
+        "website_analysis_queue: _MAX_SCAN (%d) bereikt zonder eligible lead — "
+        "verhoog WEBSITE_ANALYSIS_MAX_SCAN als de voorraad groter is", _MAX_SCAN,
     )
-    candidates = leads_res.data or []
-
-    if not candidates:
-        return None
-
-    # Filter terminal statuses (cannot express NOT IN cleanly in PostgREST)
-    candidates = [
-        lead for lead in candidates
-        if (lead.get("status") or "") not in _TERMINAL_LEAD_STATUSES
-    ]
-
-    if not candidates:
-        return None
-
-    # Step 2: fetch existing WI rows for these candidates (single query)
-    candidate_ids = [c["id"] for c in candidates]
-    wi_res = (
-        supabase_client.table("website_intelligence")
-        .select("lead_id, analyzed_at")
-        .eq("workspace_id", workspace_id)
-        .in_("lead_id", candidate_ids)
-        .execute()
-    )
-    wi_rows = wi_res.data or []
-
-    # Map lead_id → most recent analyzed_at
-    recent_wi: dict[str, str] = {}
-    for row in wi_rows:
-        lid = row.get("lead_id")
-        if not lid:
-            continue
-        analyzed_at = row.get("analyzed_at") or ""
-        # Keep only if within reanalysis window
-        if analyzed_at and analyzed_at > cutoff:
-            prev = recent_wi.get(lid, "")
-            if analyzed_at > prev:
-                recent_wi[lid] = analyzed_at
-
-    # Pick first candidate that has no recent WI
-    for lead in candidates:
-        if lead["id"] not in recent_wi:
-            return lead
-
     return None
 
 

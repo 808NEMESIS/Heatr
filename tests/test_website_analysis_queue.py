@@ -29,35 +29,50 @@ def _lead(overrides: dict | None = None) -> dict:
     return base
 
 
-def _mk_db(leads: list, wi_rows: list | None = None):
-    """Build a Supabase client mock where the first table(leads) query returns `leads`
-    and the subsequent table(website_intelligence) query returns `wi_rows`.
+def _make_chain(execute_fn):
+    """One fluent Supabase-table mock. `.range(lo,hi)` records the slice bounds;
+    `.execute()` calls execute_fn(state) so leads-paging can be simulated
+    faithfully. Supports `.not_.is_(...)` (namespace access)."""
+    m = MagicMock()
+    for name in ("select", "eq", "in_", "order", "limit", "update"):
+        setattr(m, name, MagicMock(return_value=m))
+    not_ns = MagicMock()
+    not_ns.is_ = MagicMock(return_value=m)
+    m.not_ = not_ns
+    state = {"lo": 0, "hi": None}
 
-    Supports fluent chain including `.not_.is_(...)` (namespace access).
+    def _range(lo, hi):
+        state["lo"], state["hi"] = lo, hi
+        return m
+    m.range = MagicMock(side_effect=_range)
+    m.execute = lambda: execute_fn(state)
+    return m
+
+
+def _mk_db(leads: list, wi_rows: list | None = None):
+    """Query-aware Supabase mock. `table('leads')` pages through `leads` via
+    `.range()` (score-ordered as the DB would return them); `table(...)` for
+    website_intelligence returns `wi_rows`. Faithful to the paginated selector,
+    so a starved lead beyond the first page is reachable in tests.
     """
     wi_rows = wi_rows or []
-    table_mock = MagicMock()
 
-    # Fluent methods returning self
-    for m in ("select", "eq", "in_", "order", "limit", "update"):
-        setattr(table_mock, m, MagicMock(return_value=table_mock))
+    def _leads_exec(state):
+        lo = state["lo"]
+        hi = state["hi"]
+        page = leads[lo:(hi + 1)] if hi is not None else leads[lo:]
+        return MagicMock(data=page)
 
-    # `not_` is a namespace/property — its `.is_(...)` returns the chain
-    not_namespace = MagicMock()
-    not_namespace.is_ = MagicMock(return_value=table_mock)
-    table_mock.not_ = not_namespace
+    leads_chain = _make_chain(_leads_exec)
+    wi_chain = _make_chain(lambda _state: MagicMock(data=wi_rows))
 
-    results = [MagicMock(data=leads), MagicMock(data=wi_rows)]
-    idx = {"n": 0}
-
-    def exec_fn():
-        n = idx["n"]
-        idx["n"] += 1
-        return results[n] if n < len(results) else MagicMock(data=[])
-    table_mock.execute = exec_fn
+    def _table(name):
+        return leads_chain if name == "leads" else wi_chain
 
     db = MagicMock()
-    db.table = MagicMock(return_value=table_mock)
+    db.table = MagicMock(side_effect=_table)
+    db._leads_chain = leads_chain          # test-introspectie (workspace-filter)
+    db._wi_chain = wi_chain
     return db
 
 
@@ -181,5 +196,59 @@ class TestWorkspaceIsolation:
         # Verify leads table was queried with eq("workspace_id", "aerys")
         called_tables = [c.args[0] for c in db.table.call_args_list]
         assert "leads" in called_tables
-        eq_calls = db.table.return_value.eq.call_args_list
+        eq_calls = db._leads_chain.eq.call_args_list
         assert any(c.args == ("workspace_id", "aerys") for c in eq_calls)
+
+
+# ==============================================================================
+# Regressie: verse (lager scorende) leads mogen niet verhongeren achter een
+# venster vol al-geanalyseerde high-score leads (de top-20-bug).
+# ==============================================================================
+
+class TestNoStarvationBeyondFirstPage:
+    @pytest.mark.asyncio
+    async def test_unanalyzed_lead_beyond_page_is_selected(self, monkeypatch):
+        # Kleine pagegrootte forceert meerdere pagina's zoals in productie.
+        monkeypatch.setattr(waq, "_SELECT_PAGE", 2)
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        # Score-aflopend zoals de DB teruggeeft: 2 hoge-score AL geanalyseerd,
+        # daarna een verse lager scorende lead zonder WI-rij.
+        leads = [
+            _lead({"id": "old-A", "score": 90}),
+            _lead({"id": "old-B", "score": 85}),
+            _lead({"id": "fresh-C", "score": 40, "domain": "breda.nl"}),
+        ]
+        wi_rows = [
+            {"lead_id": "old-A", "analyzed_at": recent},
+            {"lead_id": "old-B", "analyzed_at": recent},
+        ]
+        db = _mk_db(leads=leads, wi_rows=wi_rows)
+        picked = await waq._find_next_eligible_lead("aerys", db)
+        assert picked is not None and picked["id"] == "fresh-C"
+
+    @pytest.mark.asyncio
+    async def test_highest_score_unanalyzed_wins_within_page(self):
+        # Prioriteit blijft: bij meerdere niet-geanalyseerde leads → hoogste score.
+        leads = [_lead({"id": "hi", "score": 90}), _lead({"id": "lo", "score": 50})]
+        db = _mk_db(leads=leads, wi_rows=[])
+        picked = await waq._find_next_eligible_lead("aerys", db)
+        assert picked["id"] == "hi"
+
+    @pytest.mark.asyncio
+    async def test_all_analyzed_returns_none(self, monkeypatch):
+        monkeypatch.setattr(waq, "_SELECT_PAGE", 2)
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        leads = [_lead({"id": "a", "score": 90}), _lead({"id": "b", "score": 80})]
+        wi_rows = [{"lead_id": "a", "analyzed_at": recent},
+                   {"lead_id": "b", "analyzed_at": recent}]
+        db = _mk_db(leads=leads, wi_rows=wi_rows)
+        assert await waq._find_next_eligible_lead("aerys", db) is None
+
+    @pytest.mark.asyncio
+    async def test_stale_wi_row_is_reanalyzed(self):
+        # WI-rij ouder dan het reanalyse-venster → lead telt als niet-vers → opnieuw.
+        stale = (datetime.now(timezone.utc) - timedelta(days=999)).isoformat()
+        leads = [_lead({"id": "stale-one", "score": 70})]
+        db = _mk_db(leads=leads, wi_rows=[{"lead_id": "stale-one", "analyzed_at": stale}])
+        picked = await waq._find_next_eligible_lead("aerys", db)
+        assert picked is not None and picked["id"] == "stale-one"
