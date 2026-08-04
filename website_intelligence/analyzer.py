@@ -229,6 +229,27 @@ async def analyze_website(
     except Exception as e:
         logger.warning("analyze_website: score-noemer opslaan faalde voor %s: %s", lead_id, e)
 
+    # --- Persisteer visual_observations APART (migratie-veilig, 046) ---
+    # De concrete Vision-observaties (verbeter-/sterke punten) voeden de
+    # benchmark-pitchzin; alleen visual_score staat al in de upsert hierboven.
+    # Zonder deze write moest run_vision_refresh dezelfde lead nóg eens door
+    # Vision halen (dubbele kosten). Zelfde vorm als run_vision_refresh; aparte
+    # update zodat een nog-niet-gedraaide migratie 046 alleen dit blok raakt.
+    _visual = result.get("visual") or {}
+    if result.get("visual_score") is not None:
+        try:
+            supabase_client.table("website_intelligence").update({
+                "visual_observations": {
+                    "improvements": _visual.get("top_improvements") or [],
+                    "strengths": _visual.get("top_strengths") or [],
+                    "overall": _visual.get("overall_score"),
+                    "at": result["analyzed_at"],
+                },
+            }).eq("lead_id", lead_id).eq("workspace_id", workspace_id).execute()
+        except Exception as e:
+            logger.info("analyze_website: visual_observations niet opgeslagen "
+                        "(migratie 046 nog niet gedraaid?) voor %s: %s", lead_id, str(e)[:80])
+
     # --- Persisteer capture-velden APART (migratie-veilig) ---
     # Aparte update i.p.v. in de score-upsert hierboven: als migratie 033 nog niet
     # gedraaid is, faalt alleen dit blok (fail-soft) en blijft de score-write heel.
