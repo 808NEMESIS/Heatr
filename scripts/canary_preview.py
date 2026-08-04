@@ -27,8 +27,10 @@ _ACTIVE_ICP = {"cosmetische_behandelaars", "chiropractoren", "alternatieve_genee
 def main(n: int = 20, json_out: str | None = None) -> int:
     import logging
     logging.disable(logging.INFO)
+    from collections import Counter
     from config.database import get_heatr_supabase
     from utils.launch_readiness import assess_launch_readiness
+    from utils.legal_form import receptie_avg_safe
 
     sb = get_heatr_supabase()
     rows = (sb.table("leads").select("*")
@@ -49,12 +51,14 @@ def main(n: int = 20, json_out: str | None = None) -> int:
         if r.get("pushed_to_warmr_at") or (r.get("contact_attempt_count") or 0) > 0:
             continue
         verdict = assess_launch_readiness(r)
+        avg_ok, avg_reason = receptie_avg_safe(r)
         cand.append({
             "company": r.get("company_name"), "city": r.get("city"),
             "sector": r.get("sector"), "contact": r.get("contact_first_name"),
             "email": r.get("email"), "score": r.get("score"),
             "icp": round(r.get("icp_match") or 0, 2),
             "verdict": verdict["verdict"], "reviews": verdict.get("reviews", []),
+            "avg_ok": avg_ok, "avg_grond": avg_reason,
             "opener": op,
         })
 
@@ -66,10 +70,22 @@ def main(n: int = 20, json_out: str | None = None) -> int:
     ready = sum(1 for c in cand if c["verdict"] == "ready")
     print(f"Canary-kandidaten (valid + gate + schone opener + in-ICP + niet benaderd): {len(cand)}")
     print(f"  waarvan 'ready' (volledige gate): {ready} | 'needs_review': {sum(1 for c in cand if c['verdict']=='needs_review')}\n")
+
+    # AVG-grond-verdeling (art. 11.7): waarom mag deze lead koud gemaild worden?
+    avg_pass = sum(1 for c in cand if c["avg_ok"])
+    gronden = Counter(c["avg_grond"] for c in cand)
+    print(f"AVG-grond (art. 11.7): {avg_pass}/{len(cand)} met geldige grond")
+    for grond, cnt in gronden.most_common():
+        mark = "✓" if grond in ("rechtspersoon", "gepubliceerd_zakelijk_adres_art_11_7_lid_3") else "✗"
+        print(f"  {mark} {grond}: {cnt}")
+    print()
+
     print(f"── TOP {len(top)} PREVIEW (geen verzending) ──\n")
     for i, c in enumerate(top, 1):
         first = c["contact"] or "—"
-        print(f"{i:2d}. {c['company']} · {c['city']} · {c['sector'][:14]} · score {c['score']}/icp {c['icp']} · [{c['verdict']}]")
+        avg = "AVG:" + ("rechtspersoon" if c["avg_grond"] == "rechtspersoon"
+                         else "site-adres" if c["avg_ok"] else f"GEBLOKT/{c['avg_grond']}")
+        print(f"{i:2d}. {c['company']} · {c['city']} · {c['sector'][:14]} · score {c['score']}/icp {c['icp']} · [{c['verdict']}] · {avg}")
         print(f"    {first} <{c['email']}>")
         print(f"    opener: {c['opener'][:200]}")
         print()
