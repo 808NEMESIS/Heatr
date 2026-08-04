@@ -39,11 +39,9 @@ Warmr is de motor onder de motorkap. De gebruiker ziet Heatr. Heatr roept Warmr 
 Bron van waarheid = `config/sectors.py` (`ACTIVE_SECTORS` + `get_active_sectors()`). Sectornamen NOOIT hardcoden — altijd via de config.
 
 **Actief (`ACTIVE_SECTORS`):**
-- `cosmetische_behandelaars` — botox/filler, laser, huidtherapie, plastisch chirurg, haartransplantatie, permanente cosmetiek, bodycontouring, schoonheidssalons. 11 subcategorieën, 7 SBI-codes. Instagram = positief signaal. **Primaire ICP.**
+- `cosmetische_behandelaars` — botox/filler, laser, huidtherapie, plastisch chirurg, haartransplantatie, permanente cosmetiek, bodycontouring, schoonheidssalons. 11 subcategorieën, 7 SBI-codes. Instagram = positief signaal. **Primaire ICP.** Volledige diensten (website + conversie + AI-audit).
+- `alternatieve_geneeskunde` — HERACTIVEERD 2026-08-04 (beslissing Sami): blijvende doelgroep voor de **WEBSITE**-dienst. 8 subcategorieën die de erkende disciplines dekken (acupunctuur, osteopathie/craniosacraal, homeopathie/natuurgeneeskunde/orthomoleculair/fytotherapie, haptotherapie, reflexzone, vaktherapie, integratief, holistisch coaching). Erkenning loopt via RBCZ/SRBAG + beroepsverenigingen (NVA, NVKH, MBOG, VIT…) → zorgverzekeraar-vergoeding. `allowed_offers` = website_rebuild + conversie_optimalisatie; **bewust GEEN automatisering/AI-audit** (gate in review_email_generator). ~426 leads.
 - `chiropractoren` — chiro/manueel. Klein, 0 SBI-codes (KvK opt-in uit).
-
-**Inactief maar in de data (~390 legacy-leads):**
-- `alternatieve_geneeskunde` — acupunctuur, osteopathie, natuurgeneeskunde, coaching e.d. Gedeactiveerd 2026-05-20; leads scoren nog wel door hetzelfde pad.
 
 **Verwijderd uit ICP (2026-07):** `makelaars`, `bouwbedrijven` — `get_sector()` raist ValueError → `icp_match=0` (worden niet benaderd). Oude leads staan er nog.
 

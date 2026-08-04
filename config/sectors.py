@@ -606,12 +606,16 @@ SECTORS: dict[str, SectorConfig] = {
 
 
 # Sectoren die op dit moment actief worden gescraped + getarget.
-# alternatieve_geneeskunde blijft in SECTORS dict voor backwards-compat met
-# bestaande leads (sector='alternatieve_geneeskunde' in DB), maar valt uit
-# list_sectors() zodat frontend-dropdown + scrape-flows alleen actieve ICP's
-# tonen.
+# alternatieve_geneeskunde: HERACTIVEERD 2026-08-04 (beslissing Sami) — blijft een
+# doelgroep voor de WEBSITE-dienst (allowed_offers = website_rebuild +
+# conversie_optimalisatie; bewust GEEN automatisering/AI-audit, die gate zit in
+# review_email_generator). De erkende disciplines lopen via RBCZ / SRBAG +
+# beroepsverenigingen per vak (acupunctuur: NVA/ZHONG; homeopathie: NVKH/NOKH;
+# orthomoleculair: MBOG; haptotherapie; vaktherapie: VIT) — die lidmaatschappen
+# bepalen de zorgverzekeraar-vergoeding en dus de professionaliteit van het doelwit.
 ACTIVE_SECTORS: list[str] = [
     "cosmetische_behandelaars",
+    "alternatieve_geneeskunde",
     "chiropractoren",
 ]
 
@@ -691,10 +695,10 @@ def classify_subcategory(sector_key: str, website_text: str) -> str | None:
 def list_sectors() -> list[str]:
     """Return only currently active sector keys (per ACTIVE_SECTORS).
 
-    alternatieve_geneeskunde is per 2026-05-20 inactief — blijft in SECTORS
-    dict (backwards-compat met bestaande leads) maar valt hier uit zodat
-    nieuwe scrape-flows + frontend-dropdowns alleen de actieve ICP's tonen.
-    Voor admin-zicht op alle sectoren: gebruik api/main.py /sectors/full
+    alternatieve_geneeskunde is per 2026-08-04 weer ACTIEF (website-dienst) en
+    valt hier dus mee. makelaars/bouwbedrijven blijven in SECTORS-dict
+    (backwards-compat met bestaande leads) maar staan niet in ACTIVE_SECTORS →
+    vallen hier uit. Voor admin-zicht op alle sectoren: api/main.py /sectors/full
     dat direct over SECTORS.items() itereert.
     """
     return [s for s in ACTIVE_SECTORS if s in SECTORS]
