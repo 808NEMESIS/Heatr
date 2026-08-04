@@ -30,6 +30,9 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 WORKSPACE = "aerys"
 _ABORT_ERROR_FRACTION = 0.5
+# Bouncer rate-limit: zonder pauze bursten de calls → 429's die als 'error' tellen en
+# de >50%-backstop laten afgaan (ontdekt 2026-08-04, met 1000 credits). 1.2s/call werkt.
+_CALL_DELAY_S = float(os.getenv("REVERIFY_CALL_DELAY_S", "1.2"))
 
 
 async def main(apply: bool = False, limit: int = 2000) -> int:
@@ -67,7 +70,11 @@ async def main(apply: bool = False, limit: int = 2000) -> int:
 
         coarse = coarse_email_status(status)
         st[coarse] += 1
-        if method in ("error", "disabled") or status == "not_checked":
+        # Alleen ECHTE API-fouten tellen voor de abort-guard. Een 'unknown'-verdict van
+        # een GESLAAGDE bouncer_api-call (→ coarse not_checked) is legitiem — de residu-
+        # bucket zit vol catch-all/greylisting, dus daar is not_checked normaal, geen
+        # reden om te stoppen (ontdekt 2026-08-04: guard stopte op echte verdicts).
+        if method in ("error", "disabled"):
             errors += 1
 
         if apply:
@@ -95,6 +102,7 @@ async def main(apply: bool = False, limit: int = 2000) -> int:
             except Exception:
                 pass
 
+        await asyncio.sleep(_CALL_DELAY_S)   # respecteer Bouncer-rate-limit
         if i % 25 == 0 or i == len(rows):
             print(f"  {i}/{len(rows)} verwerkt… {dict(st)}")
         if i >= 20 and errors / i >= _ABORT_ERROR_FRACTION:
