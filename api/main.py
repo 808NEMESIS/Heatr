@@ -4503,6 +4503,27 @@ def _mark_retarget_replied(db: Client, workspace_id: str, heatr_lead_id: str) ->
         logger.warning("_mark_retarget_replied faalde (lead=%s): %s", heatr_lead_id, e)
 
 
+async def _notify_slack_safe(
+    kind: str,
+    db: Client,
+    lead_id: str,
+    workspace_id: str,
+    payload: dict,
+    reply_kind: str = "replied",
+) -> None:
+    """Operationele Slack-melding bij reactie/afmelding. Volledig fail-soft: geen
+    webhook-URL → no-op; elke fout wordt geslikt (mag de webhook-verwerking, die
+    compliance-kritiek is, nooit laten crashen). `kind` = 'reply' | 'unsubscribe'."""
+    try:
+        from utils.slack_notify import notify_reply, notify_unsubscribe
+        if kind == "reply":
+            await notify_reply(db, lead_id, workspace_id, payload, reply_kind)
+        elif kind == "unsubscribe":
+            await notify_unsubscribe(db, lead_id, workspace_id, payload)
+    except Exception as e:
+        logger.debug("Slack-melding overgeslagen (%s, lead=%s): %s", kind, lead_id, e)
+
+
 def _register_suppression_from_webhook(
     db: Client,
     heatr_lead_id: str,
@@ -4665,6 +4686,7 @@ async def warmr_webhook(
                 db, workspace_id, heatr_lead_id, "reply_received",
                 f"Reply ontvangen: geïnteresseerd — {stopped} sequence(s) gestopt",
             )
+            await _notify_slack_safe("reply", db, heatr_lead_id, workspace_id, payload, "interested")
 
         elif event_type in ("replied", "lead.replied"):
             # 'gereageerd' i.p.v. het oude 'beantwoord' (2026-07-14): de
@@ -4678,6 +4700,7 @@ async def warmr_webhook(
                 db, workspace_id, heatr_lead_id, "reply_received",
                 f"Reply ontvangen — {stopped} sequence(s) gestopt",
             )
+            await _notify_slack_safe("reply", db, heatr_lead_id, workspace_id, payload, "replied")
 
         elif event_type in ("bounced", "lead.bounced"):
             # Fase 2-hotfix (audit v2 P0-2): óók leads.status zetten — de
@@ -4718,6 +4741,7 @@ async def warmr_webhook(
                 suppression_type="unsubscribe", event_type=event_type,
                 fallback_email=payload.get("from_email") or payload.get("email"),
             )
+            await _notify_slack_safe("unsubscribe", db, heatr_lead_id, workspace_id, payload)
             stopped = await stop_all_sequences_for_lead(heatr_lead_id, workspace_id, db)
             _insert_timeline_event(
                 db, workspace_id, heatr_lead_id, "unsubscribed",
