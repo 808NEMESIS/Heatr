@@ -33,3 +33,8 @@ htmlcov/
 # Backup files (do not commit)
 .env.bak
 .env.backup-*
+
+# AVG-bewijsbestanden: bevatten lead-e-mailadressen. NOOIT in git-historie
+# (botst met Art. 17-verwijderrecht — historie is niet te wissen). Lokaal
+# artefact voor Spoor J; regenereerbaar via scripts/confirm_published_email.py.
+docs/avg_publication_evidence_*.json
