@@ -54,6 +54,13 @@ _TERMINAL_LEAD_STATUSES = ("disqualified", "unsubscribed", "forgotten", "bounced
 _SELECT_PAGE = int(os.getenv("WEBSITE_ANALYSIS_SELECT_PAGE", "200"))
 _MAX_SCAN = int(os.getenv("WEBSITE_ANALYSIS_MAX_SCAN", "5000"))
 
+# Retry-cooldown voor een MISLUKTE analyse (timeout/prescreen-fail/redirect-loop).
+# Een gefaalde lead krijgt géén WI-rij, dus zonder deze cooldown selecteert de
+# pager 'm elke tick opnieuw (hoogste score, geen WI) en blokkeert die ene doomed
+# lead de hele queue — precies wat er gebeurde met een 301-redirect-loop-site.
+# Na de cooldown wordt 'ie één keer opnieuw geprobeerd (site kan hersteld zijn).
+_FAILURE_COOLDOWN_DAYS = int(os.getenv("WEBSITE_ANALYSIS_FAILURE_COOLDOWN_DAYS", "7"))
+
 
 async def process_next_website_analysis(
     workspace_id: str,
@@ -229,14 +236,22 @@ async def _find_next_eligible_lead(
     We pagineren nu door de score-gesorteerde eligible leads en stoppen bij de
     eerste zónder verse WI-rij. Secundaire sortering op id maakt de paginering
     deterministisch bij gelijke scores.
+
+    Bovendien slaan we leads over die BINNEN de failure-cooldown faalden: een
+    mislukte analyse schrijft geen WI-rij, dus zonder deze skip zou de pager
+    dezelfde doomde lead elke tick opnieuw kiezen en de queue blokkeren (echt
+    gebeurd: een 301-redirect-loop-site hield de worker 2 dagen bezig).
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=_REANALYSIS_DAYS)).isoformat()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=_REANALYSIS_DAYS)).isoformat()
+    fail_cutoff = (now - timedelta(days=_FAILURE_COOLDOWN_DAYS)).isoformat()
 
     offset = 0
     while offset < _MAX_SCAN:
         leads_res = (
             supabase_client.table("leads")
-            .select("id, company_name, domain, sector, email_status, status, score")
+            .select("id, company_name, domain, sector, email_status, status, score, "
+                    "website_analysis_failed_at")
             .eq("workspace_id", workspace_id)
             .not_.is_("domain", "null")
             .in_("email_status", list(_ELIGIBLE_EMAIL_STATUSES))
@@ -249,10 +264,13 @@ async def _find_next_eligible_lead(
         if not page:
             return None                     # geen eligible leads meer → queue leeg
 
-        # Terminal statuses eruit (PostgREST kan NOT IN niet netjes uitdrukken)
+        # Eruit: terminal statuses (PostgREST kan NOT IN niet netjes uitdrukken) én
+        # leads die recent faalden (binnen de cooldown) — anders monopoliseert een
+        # doomed hoogste-score lead de queue via oneindige re-selectie.
         candidates = [
             lead for lead in page
             if (lead.get("status") or "") not in _TERMINAL_LEAD_STATUSES
+            and (lead.get("website_analysis_failed_at") or "") <= fail_cutoff
         ]
 
         if candidates:

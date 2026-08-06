@@ -252,3 +252,25 @@ class TestNoStarvationBeyondFirstPage:
         db = _mk_db(leads=leads, wi_rows=[{"lead_id": "stale-one", "analyzed_at": stale}])
         picked = await waq._find_next_eligible_lead("aerys", db)
         assert picked is not None and picked["id"] == "stale-one"
+
+    @pytest.mark.asyncio
+    async def test_recently_failed_lead_is_skipped(self):
+        # Doomed hoogste-score lead die net faalde (redirect-loop/timeout) → skip;
+        # de worker gaat door naar de volgende. Voorkomt queue-monopolie.
+        recent_fail = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        leads = [
+            _lead({"id": "doomed", "score": 90, "website_analysis_failed_at": recent_fail}),
+            _lead({"id": "good", "score": 50}),
+        ]
+        db = _mk_db(leads=leads, wi_rows=[])
+        picked = await waq._find_next_eligible_lead("aerys", db)
+        assert picked["id"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_old_failure_is_retried_after_cooldown(self):
+        # Failure ouder dan de cooldown → opnieuw proberen (site kan hersteld zijn).
+        old_fail = (datetime.now(timezone.utc) - timedelta(days=999)).isoformat()
+        leads = [_lead({"id": "retry", "score": 90, "website_analysis_failed_at": old_fail})]
+        db = _mk_db(leads=leads, wi_rows=[])
+        picked = await waq._find_next_eligible_lead("aerys", db)
+        assert picked is not None and picked["id"] == "retry"
