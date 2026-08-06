@@ -77,11 +77,35 @@ def open_combos(db, sector: str, cities: list[str], kw_filter: str | None) -> li
     return todo
 
 
-async def run(sector: str, apply: bool, max_jobs: int, cities: list[str], kw_filter: str | None) -> int:
+def _spread_by_city(todo: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """Herordent een city-outer todo naar round-robin OVER de steden: ronde 0 =
+    de eerste openstaande niche van elke stad (steden in prioriteit = grootste
+    eerst), ronde 1 = de tweede, enz. Zo raakt een batch van N N verschillende
+    steden i.p.v. één stad te verdiepen — evenredige geografische dekking."""
+    from collections import OrderedDict
+    by_city: "OrderedDict[str, list]" = OrderedDict()
+    for item in todo:                         # todo is al stad-prioriteit-geordend
+        by_city.setdefault(item[0], []).append(item)
+    out: list[tuple[str, str, str]] = []
+    i = 0
+    while True:
+        added = False
+        for items in by_city.values():
+            if i < len(items):
+                out.append(items[i]); added = True
+        if not added:
+            return out
+        i += 1
+
+
+async def run(sector: str, apply: bool, max_jobs: int, cities: list[str], kw_filter: str | None,
+              spread: bool = False) -> int:
     from config.database import get_heatr_supabase
 
     db = get_heatr_supabase()
     todo = open_combos(db, sector, cities, kw_filter)
+    if spread:
+        todo = _spread_by_city(todo)          # round-robin over steden → evenredig
     lo = len(todo) * EST_LEADS_PER_JOB[0] * EST_COST_PER_LEAD_EUR
     hi = len(todo) * EST_LEADS_PER_JOB[1] * EST_COST_PER_LEAD_EUR
     print(f"sector={sector} · open (stad × keyword)-combo's: {len(todo)} · "
@@ -119,6 +143,9 @@ if __name__ == "__main__":
     ap.add_argument("--max-jobs", type=int, default=4)
     ap.add_argument("--cities", default=None, help="komma-gescheiden; default config/cities.NL_TOP_CITIES")
     ap.add_argument("--keyword-filter", default=None, help="alleen keywords die deze term bevatten")
+    ap.add_argument("--spread", action="store_true",
+                    help="round-robin over steden (evenredige geografische spreiding) i.p.v. stad-voor-stad")
     args = ap.parse_args()
     cities = [c.strip() for c in args.cities.split(",")] if args.cities else NL_TOP_CITIES
-    raise SystemExit(asyncio.run(run(args.sector, args.apply, args.max_jobs, cities, args.keyword_filter)))
+    raise SystemExit(asyncio.run(
+        run(args.sector, args.apply, args.max_jobs, cities, args.keyword_filter, spread=args.spread)))
