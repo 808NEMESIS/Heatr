@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +85,14 @@ async def mine_themes_from_reviews(
     joined = "\n\n".join(f"[{r.get('rating')}*] {r.get('text','').strip()}" for r in pos)[:6000]
     prompt = (
         f"Hieronder echte positieve Google-reviews van praktijk '{company_name}'. Geef 2 "
-        "SPECIFIEKE dingen waar klanten herhaaldelijk over te spreken zijn, elk als korte "
-        "kleine-letter Nederlandse frase die in een zin past (bv. 'hoe op hun gemak mensen "
-        "zich voelen vanaf het eerste consult'). Baseer je UITSLUITEND op wat er staat, "
-        "generaliseer niet, verzin niks. Geef PRECIES twee regels, elk één frase, zonder "
-        "opsomtekens.\n\n" + joined
+        "SPECIFIEKE dingen waar klanten herhaaldelijk over te spreken zijn.\n\n"
+        "Vormvereiste: elk thema is een KORTE ZELFSTANDIG-NAAMWOORD-FRASE (kleine letter) "
+        "die grammaticaal past in de zin: 'wat steeds terugkomt is <thema 1> en <thema 2>'. "
+        "Beide thema's in DEZELFDE vorm. Goed: 'de tijd en aandacht van de artsen', 'het "
+        "eerlijke advies over je wensen', 'de rust waarmee alles wordt uitgelegd'. Fout: een "
+        "hele zin of werkwoordsvorm zoals 'de artsen nemen de tijd' of 'eerlijk advies krijgen'.\n\n"
+        "Baseer je UITSLUITEND op wat er staat, generaliseer niet, verzin niks. Geef PRECIES "
+        "twee regels, elk één frase, zonder opsomtekens.\n\n" + joined
     )
     try:
         m = await client.messages.create(model=_MODEL, max_tokens=180,
