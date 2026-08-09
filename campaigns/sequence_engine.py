@@ -461,6 +461,51 @@ def build_site_observatie(wi: dict | None, website_score: int | None) -> str:
     return ""
 
 
+def _value_first_enabled() -> bool:
+    """Value-first mail-1 aan/uit (default AAN). Zet RECEPTIE_VALUE_FIRST=false om
+    terug te vallen op de puur-deterministische mail voor iedereen."""
+    return (os.getenv("RECEPTIE_VALUE_FIRST") or "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _try_value_first_mail1(
+    lead: dict, wi: dict, hook_code, hook_variant,
+    privacy_notice: str, unsubscribe: str, seed,
+) -> dict | None:
+    """Value-first mail-1 uit echte review-thema's (WI.personalization.review_themes).
+    Kiest brug op websitescore (<50 = conceptsite/gratis concept, anders workflow/
+    gemiste contacten). None → aanroeper valt terug op de deterministische render."""
+    try:
+        themes = (((wi or {}).get("personalization") or {}).get("review_themes")) or []
+        themes = [t for t in themes if isinstance(t, str) and t.strip()]
+        if len(themes) < 2:
+            return None
+        from campaigns.receptie_copywriter import build_value_first_mail1
+        from config.hook_templates import build_haakje
+        from config.receptie_sequence import receptie_unsubscribe_via_warmr
+        from utils.lead_naming import clean_company_name
+
+        score = wi.get("total_score")
+        bridge = "workflow" if isinstance(score, (int, float)) and score >= 50 else "conceptsite"
+        leak = ""
+        if bridge == "conceptsite":
+            naam, _ = clean_company_name(lead.get("company_name"))
+            leak = build_haakje(hook_code, seed or lead.get("id"), kliniek=naam or None,
+                                variant=hook_variant, stad=lead.get("city"))
+            if not leak:
+                return None                          # geen gegronde leak → fallback
+        out = build_value_first_mail1(
+            lead, bridge=bridge, themes=themes, privacy_notice=privacy_notice,
+            unsubscribe=unsubscribe, leak_line=leak,
+            warmr_owns_unsubscribe=receptie_unsubscribe_via_warmr())
+        if not out:
+            return None
+        return {"subject": out["subject"], "body": out["body"],
+                "sendable": True, "block_reason": "ok", "skipped": False}
+    except Exception as e:
+        logger.warning("value-first mail-1 faalde voor %s: %s", lead.get("id"), e)
+        return None
+
+
 async def _render_receptie_marker(
     marker: dict, lead: dict, supabase_client, *, seed: str | None = None,
 ) -> dict:
@@ -489,10 +534,20 @@ async def _render_receptie_marker(
         logger.warning("receptie WI-fetch faalde voor lead %s: %s", lead.get("id"), e)
 
     privacy_notice, unsubscribe = receptie_compliance_tokens(lead)
-    mail = render_receptie_mail(
-        mail_step, lead, hook_code=hook_code, second_hook=second_hook,
-        hook_variant=hook_variant, second_variant=second_variant,
-        privacy_notice=privacy_notice, unsubscribe=unsubscribe, seed=seed)
+
+    # Value-first mail-1 (Sami 2026-08-08): als er echte review-thema's per lead
+    # zijn, bouw de value-first mail (review-positief → lek → vergelijk → Founding
+    # Five → Loom). Lukt dat niet (geen 2 thema's / geen gegronde leak / gate),
+    # dan val terug op de deterministische template — fail-closed.
+    mail = None
+    if mail_step == 1 and _value_first_enabled():
+        mail = _try_value_first_mail1(lead, wi, hook_code, hook_variant,
+                                      privacy_notice, unsubscribe, seed)
+    if mail is None:
+        mail = render_receptie_mail(
+            mail_step, lead, hook_code=hook_code, second_hook=second_hook,
+            hook_variant=hook_variant, second_variant=second_variant,
+            privacy_notice=privacy_notice, unsubscribe=unsubscribe, seed=seed)
 
     out = {"subject": mail.get("subject") or "", "body": mail.get("body") or "",
            "delay_days": delay, "sendable": False, "block_reason": mail.get("block_reason") or "ok",

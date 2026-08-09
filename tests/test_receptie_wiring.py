@@ -93,6 +93,36 @@ def test_blocks_when_rechtsvorm_onbepaald(monkeypatch):
     assert out["sendable"] is False and out["block_reason"] == "rechtsvorm_onbepaald_geen_gepubliceerd_adres"
 
 
+def test_value_first_used_when_review_themes_present(monkeypatch):
+    # WI met echte review-thema's → value-first mail-1 (met Founding Five + Loom).
+    _set_tokens(monkeypatch)
+    wi = {"receptie_hook_code": "Q4", "receptie_second_hook": None, "total_score": 40,
+          "personalization": {"review_themes":
+                              ["de tijd en aandacht van het team", "het eerlijke advies"]}}
+    out = _run(_render_receptie_marker(MARK, LEAD, _FakeSb(wi=wi)))
+    assert out["sendable"] is True
+    assert "iets wat me opviel" in out["subject"]
+    assert "de tijd en aandacht van het team" in out["body"]
+    assert "Loom" in out["body"] and "gratis een concept" in out["body"]
+
+
+def test_falls_back_to_deterministic_without_review_themes(monkeypatch):
+    # Geen thema's → deterministische mail-1 (geen Loom/Founding Five) — fail-closed.
+    _set_tokens(monkeypatch)
+    wi = {"receptie_hook_code": "Q4", "receptie_second_hook": None, "total_score": 40}
+    out = _run(_render_receptie_marker(MARK, LEAD, _FakeSb(wi=wi)))
+    assert out["sendable"] is True and "Loom" not in out["body"]
+
+
+def test_value_first_off_via_env_falls_back(monkeypatch):
+    _set_tokens(monkeypatch)
+    monkeypatch.setenv("RECEPTIE_VALUE_FIRST", "false")
+    wi = {"receptie_hook_code": "Q4", "total_score": 40,
+          "personalization": {"review_themes": ["a-thema langer", "b-thema langer"]}}
+    out = _run(_render_receptie_marker(MARK, LEAD, _FakeSb(wi=wi)))
+    assert "Loom" not in out["body"]                    # value-first uit → deterministisch
+
+
 def test_sendable_when_onbepaald_but_email_from_own_site(monkeypatch):
     # Art. 11.7 lid 3: onbepaalde rechtsvorm maar adres van hun eigen website →
     # gate laat door (deblokkeert de grote onbepaald-bucket).
