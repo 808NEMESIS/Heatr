@@ -230,12 +230,13 @@ async def soften_design_flaw(raw: str, *, company: str = "", anthropic_client=No
         client = anthropic.AsyncAnthropic(api_key=key)
     prompt = (
         "Je bent Sami, websitebouwer. Hieronder een interne design-observatie over de "
-        f"site van praktijk '{company}'. Herschrijf 'm tot ÉÉN nette, constructieve "
-        "Nederlandse zin voor een koude mail aan de eigenaar: toon het symptoom concreet "
-        "en zelf-verifieerbaar, maar NOOIT beledigend (geen woorden als amateuristisch, "
-        "slecht, lelijk, chaotisch). Begin met iets als 'Wat meteen opvalt' of 'Als je "
-        "'m op je telefoon opent'. Eén zin, geen em-dash, geen vraagteken, geen "
-        "aanhef/ondertekening.\n\nObservatie: " + raw
+        f"site van praktijk '{company}'. Herschrijf 'm tot ÉÉN KORTE Nederlandse zin "
+        "(maximaal ongeveer 20 woorden) voor een koude mail aan de eigenaar: benoem "
+        "ALLEEN het concrete, zelf-verifieerbare symptoom, GEEN oplossing of advies erbij "
+        "(dat bewaren we voor het gesprek). Nooit beledigend (geen woorden als "
+        "amateuristisch, slecht, lelijk, chaotisch). Begin met iets als 'Wat meteen "
+        "opvalt' of 'Als je 'm op je telefoon opent'. Geen em-dash, geen vraagteken, "
+        "geen aanhef of ondertekening.\n\nObservatie: " + raw
     )
     try:
         m = await client.messages.create(model=_SOFTEN_MODEL, max_tokens=120,
