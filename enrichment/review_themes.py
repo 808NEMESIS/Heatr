@@ -14,8 +14,10 @@ worden geteld (zichtbaar voor de operator) maar niet in de opener gebruikt.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +56,30 @@ def split_by_sentiment(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
     return pos, crit
 
 
-def _parse_theme_lines(text: str) -> list[str]:
-    """Claude-output → max 2 schone thema-frases (kleine letter, geen opsomteken)."""
-    out: list[str] = []
-    for ln in (text or "").splitlines():
-        s = ln.strip().lstrip("-•*0123456789. ").strip().strip('"').rstrip(".")
-        if s:
-            out.append(s)
-    return out[:2]
+def _parse_themes(text: str) -> list[str]:
+    """Claude-output → max 2 schone thema-frases. JSON-array eerst (betrouwbaar),
+    dan regel-fallback, dan ' en '-split (Claude combineert de twee soms tot één zin)."""
+    # 1. JSON-array (het gevraagde formaat)
+    m = re.search(r"\[.*\]", text or "", re.S)
+    if m:
+        try:
+            arr = json.loads(m.group(0))
+            out = [str(x).strip().strip('"').rstrip(".") for x in arr if str(x).strip()]
+            if len(out) >= 2:
+                return out[:2]
+        except Exception:
+            pass
+    # 2. losse regels
+    lines = [ln.strip().lstrip("-•*0123456789. ").strip().strip('"').rstrip(".")
+             for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines) >= 2:
+        return lines[:2]
+    # 3. één regel met ' en ' → splitsen
+    if lines and " en " in lines[0]:
+        parts = [p.strip() for p in re.split(r"\s+en\s+", lines[0]) if p.strip()]
+        if len(parts) >= 2:
+            return parts[-2:]           # laatste twee = de eigenlijke thema's, niet de aanhef
+    return lines[:2]
 
 
 async def mine_themes_from_reviews(
@@ -91,13 +109,14 @@ async def mine_themes_from_reviews(
         "Beide thema's in DEZELFDE vorm. Goed: 'de tijd en aandacht van de artsen', 'het "
         "eerlijke advies over je wensen', 'de rust waarmee alles wordt uitgelegd'. Fout: een "
         "hele zin of werkwoordsvorm zoals 'de artsen nemen de tijd' of 'eerlijk advies krijgen'.\n\n"
-        "Baseer je UITSLUITEND op wat er staat, generaliseer niet, verzin niks. Geef PRECIES "
-        "twee regels, elk één frase, zonder opsomtekens.\n\n" + joined
+        "Baseer je UITSLUITEND op wat er staat, generaliseer niet, verzin niks.\n\n"
+        "Antwoord met EXACT een JSON-array van 2 strings en niets eromheen, bv:\n"
+        '["de tijd en aandacht van de artsen", "het eerlijke advies over je wensen"]\n\n' + joined
     )
     try:
         m = await client.messages.create(model=_MODEL, max_tokens=180,
                                          messages=[{"role": "user", "content": prompt}])
-        return _parse_theme_lines(m.content[0].text or "")
+        return _parse_themes(m.content[0].text or "")
     except Exception as e:
         logger.warning("mine_themes_from_reviews: Claude-call faalde: %s", e)
         return []

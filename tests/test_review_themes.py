@@ -30,9 +30,20 @@ def test_maps_url_encodes_query():
     assert "Face" in url and "Amsterdam" in url and " " not in url
 
 
-def test_parse_theme_lines_strips_bullets():
-    out = rt._parse_theme_lines("- hoe op je gemak je je voelt\n2. het mooie resultaat\nextra regel")
-    assert out == ["hoe op je gemak je je voelt", "het mooie resultaat"]  # max 2, schoon
+def test_parse_themes_json_array():
+    out = rt._parse_themes('Hier: ["de tijd en aandacht", "het eerlijke advies"]')
+    assert out == ["de tijd en aandacht", "het eerlijke advies"]
+
+
+def test_parse_themes_bullet_lines_fallback():
+    out = rt._parse_themes("- hoe op je gemak je je voelt\n2. het mooie resultaat\nextra")
+    assert out == ["hoe op je gemak je je voelt", "het mooie resultaat"]
+
+
+def test_parse_themes_combined_sentence_split():
+    # Claude gaf soms één zin terug i.p.v. twee → op ' en ' splitsen (laatste twee).
+    out = rt._parse_themes("wat steeds terugkomt is het eerlijke advies en de tijd en aandacht")
+    assert len(out) == 2 and out[-1] == "aandacht"
 
 
 @pytest.mark.asyncio
@@ -47,7 +58,7 @@ async def test_mine_themes_needs_min_two_positive():
 async def test_mine_themes_grounded_call():
     client = MagicMock()
     resp = MagicMock()
-    resp.content = [MagicMock(text="hoe persoonlijk het advies is\nhet nette eindresultaat")]
+    resp.content = [MagicMock(text='["hoe persoonlijk het advies is", "het nette eindresultaat"]')]
     client.messages = MagicMock()
     client.messages.create = AsyncMock(return_value=resp)
     revs = [{"text": "heel persoonlijk advies gekregen", "rating": 5},
