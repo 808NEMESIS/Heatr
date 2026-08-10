@@ -207,7 +207,48 @@ _VF_WORKFLOW = (
     "{privacy}\n{unsub}"
 )
 
-_VF_SUBJECT = {"conceptsite": "{naam}, iets wat me opviel", "workflow": "{naam}, één ding"}
+_VF_SUBJECT = {"conceptsite": "{naam}, iets aan jullie site", "workflow": "{naam}, één ding"}
+
+_SOFTEN_MODEL = os.getenv("DESIGN_HOOK_MODEL", "claude-haiku-4-5-20251001")
+# Woorden die nooit in een koude mail naar de eigenaar mogen (beledigend).
+_HARSH = ("amateuristisch", "amateur", "chaotisch", "slecht", "lelijk", "rommelig", "prutswerk")
+
+
+async def soften_design_flaw(raw: str, *, company: str = "", anthropic_client=None) -> str | None:
+    """Herschrijf een interne Vision-observatie tot ÉÉN nette, constructieve, zelf-
+    verifieerbare mail-zin (de {leak} van de conceptsite-brug). Geen beledigende
+    woorden, geen em-dash, geen vraag. None bij twijfel → aanroeper valt terug."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    client = anthropic_client
+    if client is None:
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            return None
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=key)
+    prompt = (
+        "Je bent Sami, websitebouwer. Hieronder een interne design-observatie over de "
+        f"site van praktijk '{company}'. Herschrijf 'm tot ÉÉN nette, constructieve "
+        "Nederlandse zin voor een koude mail aan de eigenaar: toon het symptoom concreet "
+        "en zelf-verifieerbaar, maar NOOIT beledigend (geen woorden als amateuristisch, "
+        "slecht, lelijk, chaotisch). Begin met iets als 'Wat meteen opvalt' of 'Als je "
+        "'m op je telefoon opent'. Eén zin, geen em-dash, geen vraagteken, geen "
+        "aanhef/ondertekening.\n\nObservatie: " + raw
+    )
+    try:
+        m = await client.messages.create(model=_SOFTEN_MODEL, max_tokens=120,
+                                         messages=[{"role": "user", "content": prompt}])
+        out = (m.content[0].text or "").strip().strip('"')
+    except Exception as e:
+        logger.warning("soften_design_flaw: Claude-call faalde: %s", e)
+        return None
+    if not out or "?" in out or "—" in out or "–" in out:
+        return None
+    if any(w in out.lower() for w in _HARSH):
+        return None                                   # nog te bot → liever niks
+    return out
 
 
 def _themes_phrase(themes: list[str]) -> str:

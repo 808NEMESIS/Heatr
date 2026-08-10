@@ -101,9 +101,23 @@ def test_value_first_used_when_review_themes_present(monkeypatch):
                               ["de tijd en aandacht van het team", "het eerlijke advies"]}}
     out = _run(_render_receptie_marker(MARK, LEAD, _FakeSb(wi=wi)))
     assert out["sendable"] is True
-    assert "iets wat me opviel" in out["subject"]
+    assert "iets aan jullie site" in out["subject"]
     assert "de tijd en aandacht van het team" in out["body"]
     assert "Loom" in out["body"] and "gratis een concept" in out["body"]
+
+
+def test_value_first_uses_design_hook_as_leak(monkeypatch):
+    # Gedetecteerd design-gebrek → conceptsite-brug met dat gebrek als haak,
+    # óók al is de total_score >=50 (design-hook wint van de score→workflow-regel).
+    _set_tokens(monkeypatch)
+    wi = {"receptie_hook_code": "Q4", "total_score": 54,
+          "personalization": {"review_themes": ["de rust en aandacht", "het eerlijke advies"],
+                              "design_hook": "Wat meteen opvalt: je site oogt qua vormgeving nog wat gedateerd."}}
+    out = _run(_render_receptie_marker(MARK, LEAD, _FakeSb(wi=wi)))
+    assert out["sendable"] is True
+    assert "iets aan jullie site" in out["subject"]           # conceptsite-onderwerp
+    assert "qua vormgeving nog wat gedateerd" in out["body"]   # design-gebrek is de haak
+    assert "gratis een concept" in out["body"]                 # conceptsite, niet workflow
 
 
 def test_falls_back_to_deterministic_without_review_themes(monkeypatch):

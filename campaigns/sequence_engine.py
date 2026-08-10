@@ -475,8 +475,8 @@ def _try_value_first_mail1(
     Kiest brug op websitescore (<50 = conceptsite/gratis concept, anders workflow/
     gemiste contacten). None → aanroeper valt terug op de deterministische render."""
     try:
-        themes = (((wi or {}).get("personalization") or {}).get("review_themes")) or []
-        themes = [t for t in themes if isinstance(t, str) and t.strip()]
+        pers = ((wi or {}).get("personalization") or {})
+        themes = [t for t in (pers.get("review_themes") or []) if isinstance(t, str) and t.strip()]
         if len(themes) < 2:
             return None
         from campaigns.receptie_copywriter import build_value_first_mail1
@@ -484,10 +484,17 @@ def _try_value_first_mail1(
         from config.receptie_sequence import receptie_unsubscribe_via_warmr
         from utils.lead_naming import clean_company_name
 
+        # Haak-keuze: een gedetecteerd, gesoften DESIGN-gebrek wint (conceptsite/
+        # site-rebuild — precies waar Aerys sterk in is). Anders: goede site → workflow
+        # (gemiste contacten), zwakke/onbekende site → conceptsite met de conversie-haak.
+        design_hook = (pers.get("design_hook") or "").strip()
         score = wi.get("total_score")
-        bridge = "workflow" if isinstance(score, (int, float)) and score >= 50 else "conceptsite"
-        leak = ""
-        if bridge == "conceptsite":
+        if design_hook:
+            bridge, leak = "conceptsite", design_hook
+        elif isinstance(score, (int, float)) and score >= 50:
+            bridge, leak = "workflow", ""
+        else:
+            bridge = "conceptsite"
             naam, _ = clean_company_name(lead.get("company_name"))
             leak = build_haakje(hook_code, seed or lead.get("id"), kliniek=naam or None,
                                 variant=hook_variant, stad=lead.get("city"))
