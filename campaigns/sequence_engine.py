@@ -467,6 +467,81 @@ def _value_first_enabled() -> bool:
     return (os.getenv("RECEPTIE_VALUE_FIRST") or "true").strip().lower() not in ("0", "false", "no", "off")
 
 
+def _frictie_enabled() -> bool:
+    """Frictie-engine (Frame A/C, heatr-copy skill) aan/uit (default AAN). Vervangt de
+    value-first mail-1 en levert mail 2 (bewijs, conditioneel) + mail 3 (shrink-ask).
+    Zet RECEPTIE_FRICTIE=false om terug te vallen op value-first/deterministisch."""
+    return (os.getenv("RECEPTIE_FRICTIE") or "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _try_frictie_mail(mail_step: int, lead: dict, wi: dict,
+                      privacy_notice: str, unsubscribe: str) -> dict | None:
+    """Render mail 1/2/3 via de frictie-engine (heatr-copy skill). Returned een
+    {subject, body, sendable, block_reason, skipped}-dict, of None bij een fout
+    (aanroeper valt terug). Send-gate: een frictieCLAIM (mail 1 Frame A / mail 2)
+    wordt geweigerd als conversion_checks niet VANDAAG opnieuw is geverifieerd
+    (checked_at) — de ochtend-herverificatie is zo een gate, geen procedure.
+    Mail 3 (shrink-ask) maakt geen claim → geen vers-eis."""
+    try:
+        from campaigns.frictie_copywriter import (
+            build_frictie_mail2, build_frictie_mail3, friction_reverified_today,
+            niche_for_sector, render_frictie_mail, select_leak, select_second_finding,
+        )
+        from config.receptie_sequence import receptie_unsubscribe_via_warmr
+
+        warmr_owns = receptie_unsubscribe_via_warmr()
+        cd = (wi or {}).get("conversion_details") or {}
+        sector = lead.get("sector")
+        niche = niche_for_sector(sector)
+
+        if mail_step == 1:
+            # Friction-kandidaat (opgeslagen geen-boeking, niet-onzeker) → weiger te
+            # verzenden zónder vandaag-herverificatie (gate, geen procedure). Geen
+            # kandidaat (boeking bestaat/onzeker) → claimloze Frame C, geen vers-eis.
+            if select_leak(cd) is not None and not friction_reverified_today(cd):
+                return {"subject": "", "body": "", "skipped": False,
+                        "sendable": False, "block_reason": "frictie_not_reverified_today"}
+            mail = render_frictie_mail(
+                lead, sector=sector, conversion_details=cd,
+                privacy_notice=privacy_notice, unsubscribe=unsubscribe,
+                warmr_owns_unsubscribe=warmr_owns, analyzed_at=(wi or {}).get("analyzed_at"))
+            if mail is None:
+                return None
+            return {"subject": mail["subject"], "body": mail["body"], "skipped": False,
+                    "sendable": True, "block_reason": "ok"}
+
+        if mail_step == 2:
+            second = select_second_finding(cd)
+            if second is None:
+                # Gemeten keuze (Sami 2026-08-11): geen niet-generieke tweede vondst →
+                # mail 2 overslaan (→ mail 3), NOOIT een inhoudsloze bump.
+                logger.info("frictie mail2 overgeslagen: geen niet-generieke tweede vondst (lead=%s)",
+                            lead.get("id"))
+                return {"subject": "", "body": "", "skipped": True, "sendable": False,
+                        "block_reason": "no_second_finding"}
+            if not friction_reverified_today(cd):
+                return {"subject": "", "body": "", "skipped": False, "sendable": False,
+                        "block_reason": "frictie_not_reverified_today"}
+            mail = build_frictie_mail2(lead, niche=niche, second=second,
+                                       privacy_notice=privacy_notice, unsubscribe=unsubscribe,
+                                       warmr_owns_unsubscribe=warmr_owns)
+            if mail is None:
+                return None
+            return {"subject": mail["subject"], "body": mail["body"], "skipped": False,
+                    "sendable": True, "block_reason": "ok"}
+
+        # mail 3 — shrink-ask, geen claim, geen vers-gate
+        mail = build_frictie_mail3(lead, niche=niche, privacy_notice=privacy_notice,
+                                   unsubscribe=unsubscribe, warmr_owns_unsubscribe=warmr_owns)
+        if mail is None:
+            return None
+        return {"subject": mail["subject"], "body": mail["body"], "skipped": False,
+                "sendable": True, "block_reason": "ok"}
+    except Exception as e:
+        logger.warning("frictie-mail faalde voor %s (step %s): %s", lead.get("id"), mail_step, e)
+        return None
+
+
 def _try_value_first_mail1(
     lead: dict, wi: dict, hook_code, hook_variant,
     privacy_notice: str, unsubscribe: str, seed,
@@ -542,12 +617,15 @@ async def _render_receptie_marker(
 
     privacy_notice, unsubscribe = receptie_compliance_tokens(lead)
 
-    # Value-first mail-1 (Sami 2026-08-08): als er echte review-thema's per lead
-    # zijn, bouw de value-first mail (review-positief → lek → vergelijk → Founding
-    # Five → Loom). Lukt dat niet (geen 2 thema's / geen gegronde leak / gate),
-    # dan val terug op de deterministische template — fail-closed.
+    # Frictie-engine (Sami 2026-08-11, heatr-copy skill): primaire mail-1/2/3-render.
+    # Frame A (verse geen-boeking-frictie) of Frame C (kale ask); mail 2 conditioneel
+    # op een niet-generieke tweede vondst; mail 3 shrink-ask. Send-gate op checked_at
+    # (vandaag herverifieerd) zit in _try_frictie_mail. Bij een fout → value-first →
+    # deterministisch (fail-closed, geen stille naad).
     mail = None
-    if mail_step == 1 and _value_first_enabled():
+    if _frictie_enabled():
+        mail = _try_frictie_mail(mail_step, lead, wi, privacy_notice, unsubscribe)
+    if mail is None and mail_step == 1 and _value_first_enabled():
         mail = _try_value_first_mail1(lead, wi, hook_code, hook_variant,
                                       privacy_notice, unsubscribe, seed)
     if mail is None:
