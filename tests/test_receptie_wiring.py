@@ -96,6 +96,7 @@ def test_blocks_when_rechtsvorm_onbepaald(monkeypatch):
 def test_value_first_used_when_review_themes_present(monkeypatch):
     # WI met echte review-thema's → value-first mail-1 (met Founding Five + Loom).
     _set_tokens(monkeypatch)
+    monkeypatch.setenv("RECEPTIE_FRICTIE", "false")     # test de value-first-fallback
     wi = {"receptie_hook_code": "Q4", "receptie_second_hook": None, "total_score": 40,
           "personalization": {"review_themes":
                               ["de tijd en aandacht van het team", "het eerlijke advies"]}}
@@ -110,6 +111,7 @@ def test_value_first_uses_design_hook_as_leak(monkeypatch):
     # Gedetecteerd design-gebrek → conceptsite-brug met dat gebrek als haak,
     # óók al is de total_score >=50 (design-hook wint van de score→workflow-regel).
     _set_tokens(monkeypatch)
+    monkeypatch.setenv("RECEPTIE_FRICTIE", "false")     # test de value-first-fallback
     wi = {"receptie_hook_code": "Q4", "total_score": 54,
           "personalization": {"review_themes": ["de rust en aandacht", "het eerlijke advies"],
                               "design_hook": "Wat meteen opvalt: je site oogt qua vormgeving nog wat gedateerd."}}
@@ -123,6 +125,7 @@ def test_value_first_uses_design_hook_as_leak(monkeypatch):
 def test_falls_back_to_deterministic_without_review_themes(monkeypatch):
     # Geen thema's → deterministische mail-1 (geen Loom/Founding Five) — fail-closed.
     _set_tokens(monkeypatch)
+    monkeypatch.setenv("RECEPTIE_FRICTIE", "false")     # test de deterministische fallback
     wi = {"receptie_hook_code": "Q4", "receptie_second_hook": None, "total_score": 40}
     out = _run(_render_receptie_marker(MARK, LEAD, _FakeSb(wi=wi)))
     assert out["sendable"] is True and "Loom" not in out["body"]
@@ -130,6 +133,7 @@ def test_falls_back_to_deterministic_without_review_themes(monkeypatch):
 
 def test_value_first_off_via_env_falls_back(monkeypatch):
     _set_tokens(monkeypatch)
+    monkeypatch.setenv("RECEPTIE_FRICTIE", "false")     # test de deterministische fallback
     monkeypatch.setenv("RECEPTIE_VALUE_FIRST", "false")
     wi = {"receptie_hook_code": "Q4", "total_score": 40,
           "personalization": {"review_themes": ["a-thema langer", "b-thema langer"]}}
@@ -177,4 +181,44 @@ def test_mail2_skipped_without_second_hook(monkeypatch):
     _set_tokens(monkeypatch)
     mark2 = {"faseA_brug": "receptie", "faseA_step": 1, "delay_days": 3}
     out = _run(_render_receptie_marker(mark2, LEAD, _FakeSb(wi=WI)))
+    assert out["skipped"] is True and out["sendable"] is False
+
+
+# ── frictie-engine als primair pad (Sami 2026-08-11) ─────────────────────────
+import datetime as _dt
+
+_TODAY = _dt.date.today().isoformat()
+FRIC_LEAD = {**LEAD, "domain": "kliniekvrijdag.nl", "sector": "cosmetische_behandelaars"}
+
+
+def test_frictie_mail1_sendable_when_reverified_today(monkeypatch):
+    _set_tokens(monkeypatch)
+    wi = {"conversion_details": {"has_online_booking": False, "checked_at": _TODAY}}
+    out = _run(_render_receptie_marker(MARK, FRIC_LEAD, _FakeSb(wi=wi)))
+    assert out["sendable"] is True and out["block_reason"] == "ok"
+    assert "op mobiel" in out["subject"]
+    assert "Wie wil boeken, moet bellen." in out["body"]      # Frame A frictie-leak
+
+
+def test_frictie_mail1_blocked_when_not_reverified_today(monkeypatch):
+    _set_tokens(monkeypatch)
+    wi = {"conversion_details": {"has_online_booking": False, "checked_at": "2020-01-01"}}
+    out = _run(_render_receptie_marker(MARK, FRIC_LEAD, _FakeSb(wi=wi)))
+    assert out["sendable"] is False and out["block_reason"] == "frictie_not_reverified_today"
+
+
+def test_frictie_mail2_proof_with_second_finding(monkeypatch):
+    _set_tokens(monkeypatch)
+    mark2 = {"faseA_brug": "receptie", "faseA_step": 1, "delay_days": 3}
+    wi = {"conversion_details": {"has_online_booking": False, "has_phone_clickable": False,
+                                 "checked_at": _TODAY}}
+    out = _run(_render_receptie_marker(mark2, FRIC_LEAD, _FakeSb(wi=wi)))
+    assert out["sendable"] is True and "niet aantikken" in out["body"]
+
+
+def test_frictie_mail2_skipped_without_second_finding(monkeypatch):
+    _set_tokens(monkeypatch)
+    mark2 = {"faseA_brug": "receptie", "faseA_step": 1, "delay_days": 3}
+    wi = {"conversion_details": {"has_online_booking": False, "checked_at": _TODAY}}
+    out = _run(_render_receptie_marker(mark2, FRIC_LEAD, _FakeSb(wi=wi)))
     assert out["skipped"] is True and out["sendable"] is False
