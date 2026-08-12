@@ -13,12 +13,54 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Booking platforms to detect
+# ── Boekdetectie: TWEE gescheiden soorten ────────────────────────────────────
+# KIND 1 — externe boekPLATFORMS (domein-substring). Internationaal + NL-markt.
+# Zorgdomein/Zorgmail BEWUST NIET: dat zijn verwijs- (huisarts→specialist) en
+# beveiligde-berichtenplatforms, geen publieke patiënt-zelf-boekwidget (Sami 2026-08-12).
 _BOOKING_PLATFORMS = [
+    # internationaal (bestaand)
     "calendly.com", "acuityscheduling.com", "simplybook.me",
     "reservio.com", "setmore.com", "squareup.com/appointments",
     "tidycal.com", "zcal.co", "booksy.com", "treatwell.nl",
     "planyo.com",
+    # NL-markt (inventaris meetrapport 2026-08-12; crossuite/clientomgeving gemeten)
+    "crossuite.com", "clientomgeving.nl", "onlineafspraken.nl",
+    "supersaas.com", "supersaas.nl", "skedify.", "timify.com",
+    "salonized.com", "appointer.", "boekjeafspraak.",
 ]
+
+# KIND 2 — tekst-/URL-patronen (self-hosted boekpagina's + NL-knopteksten). PATROON,
+# geen exacte string: "Maak een afspraak" / "afspraak maken" / "afspraak-maken" raken alle.
+# Alleen href-waarden en klikbare elementen tellen — GEEN losse zinstekst (vals-positief-gate).
+_BOOKING_URL_RE = re.compile(
+    r'(?:href|src)=["\'][^"\']*'
+    # [/-]boeken vangt /boeken én -boeken (bv. /nl/online-boeken) — patroon, geen exacte string
+    r'(?:[/-]boeken|/boek-afspraak|/afspraak-maken|/afspraak-inplannen|/online-afspraak'
+    r'|/reserveren|/plan-afspraak|afspraak-maken|clientomgeving\.nl)'
+    r'[^"\']*["\']', re.I)
+_BOOKING_ANCHOR_RE = re.compile(
+    r'<(?:a|button)[^>]*>[^<]{0,40}?'
+    r'(?:maak (?:een|je) afspraak|afspraak maken|boek (?:direct|nu|hier|een afspraak|online|meteen)'
+    r'|online (?:een )?afspraak|afspraak inplannen|plan (?:een|je) afspraak|reserveer nu)'
+    r'[^<]{0,25}?</(?:a|button)>', re.I)
+
+
+def detect_booking(page_html: str):
+    """Return (has_booking, platform_label, evidence). Houdt 'boeking aanwezig' (de CLAIM)
+    los van 'welk platform' (CONTEXT). Prioriteit: bekend platform → self-hosted boek-URL →
+    boekKNOP in een klikbaar element. Losse zinstekst ('maak een afspraak' in een alinea)
+    telt niet — dat voorkomt vals-positieven op contactpagina's."""
+    low = page_html.lower()
+    for platform in _BOOKING_PLATFORMS:
+        if platform.lower() in low:
+            return True, platform.split("/")[0].split(".")[0].capitalize(), platform
+    m = _BOOKING_URL_RE.search(page_html)
+    if m:
+        return True, "self-hosted", m.group(0)[:90]
+    m = _BOOKING_ANCHOR_RE.search(page_html)
+    if m:
+        return True, "custom", re.sub(r"\s+", " ", m.group(0))[:90]
+    return False, None, None
 
 # Chat widget scripts to detect
 _CHAT_WIDGETS = {
@@ -112,23 +154,16 @@ async def check_conversion(
         result["details"].append({"check": "whatsapp", "passed": False})
 
     # --- Online booking (6 pts) ---
-    for platform in _BOOKING_PLATFORMS:
-        if platform.lower() in html_lower:
-            result["has_online_booking"] = True
-            result["booking_platform"] = platform.split(".")[0].capitalize()
-            score += 6
-            result["details"].append({"check": "online_booking", "passed": True, "value": result["booking_platform"]})
-            break
+    # 'boeking aanwezig' (de claim) los van 'welk platform' (context) — zie detect_booking.
+    has_booking, booking_label, booking_evidence = detect_booking(page_html)
+    if has_booking:
+        result["has_online_booking"] = True
+        result["booking_platform"] = booking_label
+        score += 6
+        result["details"].append({"check": "online_booking", "passed": True,
+                                   "value": booking_label, "evidence": booking_evidence})
     else:
-        # Check for generic booking indicators
-        booking_keywords = ["booking", "reserveren", "afspraak maken", "boek nu", "plan je afspraak"]
-        if any(kw in html_lower for kw in booking_keywords):
-            result["has_online_booking"] = True
-            result["booking_platform"] = "custom"
-            score += 6
-            result["details"].append({"check": "online_booking", "passed": True, "value": "custom"})
-        else:
-            result["details"].append({"check": "online_booking", "passed": False})
+        result["details"].append({"check": "online_booking", "passed": False})
 
     # --- Chatbot / live chat (4 pts) ---
     for platform, patterns in _CHAT_WIDGETS.items():
