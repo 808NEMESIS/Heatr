@@ -27,6 +27,14 @@ Als een frame een meting nodig heeft die niet bestaat, is dat een bouwopdracht, 
 
 **Bij twijfel of een veld de bewering echt draagt: markeer als `onbepaald` en gebruik het niet.** Gokken is hier duurder dan een saaiere mail.
 
+### Regel 0a — Detectorclaims zijn geen metingen
+
+Een negatieve detectoruitkomst (`has_online_booking=False`, `phone_not_clickable`, en dergelijke) betekent **"niet gevonden", niet "niet aanwezig".** Die twee zien er in de database identiek uit. Een negatieve uitkomst mag alleen een claim dragen als de detector **aantoonbaar dekt wat hij zoekt** — dus als er een test bestaat die bewijst dat hij dit patroon vindt wanneer het er is. (Ontstaan 2026-08-12: `has_online_booking=False` was backlog-breed onbetrouwbaar omdat de detector NL-boekpatronen als Crossuite en self-hosted boekpagina's miste — vier van vijf cohort-1-leads hadden aantoonbaar wél een boekoptie.)
+
+### Regel 0b — Steekproef vóór elke verzending
+
+Ongeacht cohortgrootte: **minimaal vijf leads handmatig op mobiel controleren op de exacte claim die in hun mail staat.** Bij één fout: die lead eruit en oorzaak melden. Bij twee of meer: **cohort dicht, geen verzending, oorzaak eerst uitzoeken.** Deze regel geldt óók als alle geautomatiseerde gates groen staan — vier-van-vijf-fout is precies zo ontstaan.
+
 ---
 
 ## Regel 1 — Het probleem is frictie, geen smaak
