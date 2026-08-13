@@ -639,6 +639,14 @@ async def _render_receptie_marker(
            "skipped": bool(mail.get("skipped"))}
     if out["skipped"] or not mail.get("sendable"):
         return out                                        # geen 2e haak / token-gate
+    # Selectie-uitsluiting (Sami 2026-08-12): beroepsverenigingen/koepels + uit de
+    # bedrijfsnaam afgeleide voornamen horen niet in de pool, ONAFHANKELIJK van de
+    # meting — anders komen ze terug zodra hun conversion-fetch wél slaagt.
+    from utils.lead_selection import selection_exclusion
+    excl = selection_exclusion(lead)
+    if excl:
+        out["block_reason"] = f"selection_excluded:{excl}"
+        return out
     # AVG-02: alleen bevestigde rechtspersoon; natuurlijk persoon/onbepaald blokt.
     avg_ok, avg_reason = receptie_avg_safe(lead)
     if not avg_ok:

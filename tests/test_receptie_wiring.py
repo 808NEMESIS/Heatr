@@ -222,3 +222,13 @@ def test_frictie_mail2_skipped_without_second_finding(monkeypatch):
     wi = {"conversion_details": {"has_online_booking": False, "checked_at": _TODAY}}
     out = _run(_render_receptie_marker(mark2, FRIC_LEAD, _FakeSb(wi=wi)))
     assert out["skipped"] is True and out["sendable"] is False
+
+
+def test_selection_excludes_association(monkeypatch):
+    # Beroepsvereniging (acroniem) rendert wel een mail maar wordt in de gate-stack
+    # geweigerd — onafhankelijk van de meting (Sami 2026-08-12).
+    _set_tokens(monkeypatch)
+    lead = {**FRIC_LEAD, "company_name": "De AVIG"}
+    wi = {"conversion_details": {"has_online_booking": False, "checked_at": _TODAY}}
+    out = _run(_render_receptie_marker(MARK, lead, _FakeSb(wi=wi)))
+    assert out["sendable"] is False and out["block_reason"] == "selection_excluded:beroepsvereniging"
