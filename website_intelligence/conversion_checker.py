@@ -27,6 +27,8 @@ _BOOKING_PLATFORMS = [
     "crossuite.com", "clientomgeving.nl", "onlineafspraken.nl",
     "supersaas.com", "supersaas.nl", "skedify.", "timify.com",
     "salonized.com", "appointer.", "boekjeafspraak.",
+    # handcheck-gaten (Sami 2026-08-13): kliniek-EPD's met publieke boekflow
+    "clinicminds.com", "mijndiad.nl",
 ]
 
 # KIND 2 — tekst-/URL-patronen (self-hosted boekpagina's + NL-knopteksten). PATROON,
@@ -36,13 +38,20 @@ _BOOKING_URL_RE = re.compile(
     r'(?:href|src)=["\'][^"\']*'
     # [/-]boeken vangt /boeken én -boeken (bv. /nl/online-boeken) — patroon, geen exacte string
     r'(?:[/-]boeken|/boek-afspraak|/afspraak-maken|/afspraak-inplannen|/online-afspraak'
-    r'|/reserveren|/plan-afspraak|afspraak-maken|clientomgeving\.nl)'
+    r'|/reserveren|/plan-afspraak|afspraak-maken|maak-een-afspraak|clientomgeving\.nl)'
     r'[^"\']*["\']', re.I)
+# Knopteksten: lidwoord optioneel ("Maak Afspraak" — MIDI) en geneste elementen
+# tussen de tag en de tekst toegestaan (<a><span>Maak een afspraak</span></a> —
+# fusion/elementor-thema's). Vereist wél een a/button-context: losse zinstekst
+# ("u kunt een afspraak maken") telt nooit (Laarman-guardrail).
 _BOOKING_ANCHOR_RE = re.compile(
-    r'<(?:a|button)[^>]*>[^<]{0,40}?'
-    r'(?:maak (?:een|je) afspraak|afspraak maken|boek (?:direct|nu|hier|een afspraak|online|meteen)'
-    r'|online (?:een )?afspraak|afspraak inplannen|plan (?:een|je) afspraak|reserveer nu)'
-    r'[^<]{0,25}?</(?:a|button)>', re.I)
+    r'<(?:a|button)[^>]*>(?:\s*<[^>]+>)*\s*[^<]{0,40}?'
+    r'(?:maak (?:een |je )?afspraak|afspraak maken|boek (?:direct|nu|hier|een afspraak|online|meteen)'
+    r'|online (?:een )?afspraak|afspraak inplannen|plan (?:een|je) afspraak|reserveer nu)',
+    re.I)
+# WhatsApp-boekpad (Osteopathie Anna: wa.me onder de hero) — APART veld, flipt
+# has_online_booking niet: appen is een boekPAD, geen online-boeksysteem.
+_WHATSAPP_LINK_RE = re.compile(r"wa\.me/|api\.whatsapp\.com|whatsapp://", re.I)
 
 
 def detect_booking(page_html: str):
@@ -146,6 +155,10 @@ async def check_conversion(
 
     # --- WhatsApp (4 pts) ---
     whatsapp_patterns = ["wa.me/", "api.whatsapp.com", "whatsapp.com/send", "whatsapp-widget"]
+    # Expliciete tap-link (wa.me/nummer) = een BOEKPAD (Osteopathie Anna: "Snel een
+    # afspraak? App ..."). Apart veld naast has_whatsapp (dat ook widgets telt) en
+    # naast has_online_booking (appen is geen online-boeksysteem, flipt die niet).
+    result["has_whatsapp_link"] = bool(_WHATSAPP_LINK_RE.search(page_html))
     if any(p in html_lower for p in whatsapp_patterns):
         result["has_whatsapp"] = True
         score += 4

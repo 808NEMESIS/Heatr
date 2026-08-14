@@ -64,8 +64,60 @@ async def test_doctors_at_soap_online_boeken_url():
     assert ok is True and platform
 
 
-# ── negatieve controle: geen boekoptie → moet False BLIJVEN na de fix ────────────
+# ── handcheck-gaten (Sami 2026-08-13): drie gemiste boekopties ───────────────────
+@pytest.mark.asyncio
+async def test_jeannette_hessels_clinicminds_platform():
+    # schedule.clinicminds.com 3× op de homepage + "Boek online een afspraak"
+    ok, platform = await _booking("jeannette_hessels", "jeannettehessels.nl")
+    assert ok is True and platform and "clinicminds" in platform.lower()
+
+
+@pytest.mark.asyncio
+async def test_midi_maak_afspraak_without_article():
+    # <a class="menu-link">Maak Afspraak</a> — zonder lidwoord
+    ok, platform = await _booking("midi", "midi-acupunctuur.nl")
+    assert ok is True and platform
+
+
+@pytest.mark.asyncio
+async def test_beautyslim_maak_een_afspraak_url():
+    # href="/maak-een-afspraak/" + knoptekst (fusion-theme, mogelijk geneste markup)
+    ok, platform = await _booking("beautyslim", "beautyslim.nl")
+    assert ok is True and platform
+
+
+# ── wa.me als boekpad-VELD (apart van has_online_booking; Osteopathie Anna) ──────
+@pytest.mark.asyncio
+async def test_osteopathie_anna_whatsapp_link_field():
+    r = await check_conversion("osteopathie-anna.nl", _html("osteopathie_anna"),
+                               "alternatieve_geneeskunde")
+    assert r.get("has_whatsapp_link") is True          # wa.me/31616534508 onder de hero
+    # wa.me is een boekPAD maar geen online-boeksysteem: flipt has_online_booking NIET
+    assert "wa.me" not in str(r.get("booking_platform") or "").lower()
+
+
+# ── negatieve controles: mogen NIET omslaan als de detector verruimt ─────────────
 @pytest.mark.asyncio
 async def test_centrum_osteopathie_no_booking_stays_false():
     ok, _platform = await _booking("centrum_osteopathie", "osteodenhaag.nl")
     assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_laarman_button_to_contact_counts_as_booking():
+    # <a class="ui builder_button">Maak een afspraak</a> → /contact/ — structureel
+    # identiek aan MIDI die Sami hand-fout verklaarde: de claim gaat over "een knop
+    # om een afspraak te maken", ongeacht waar die heen leidt. Dus True. (Correctie
+    # 2026-08-14: eerder onterecht als oude-vals-positief geklasseerd.)
+    ok, platform = await _booking("laarman", "osteopathielaarman.nl")
+    assert ok is True and platform
+
+
+@pytest.mark.asyncio
+async def test_loose_sentence_text_stays_false():
+    # Zuivere guardrail: "afspraak maken" in lopende tekst zonder knop → False.
+    html = ("<html><body><p>U kunt telefonisch een afspraak maken via 010-1234567. "
+            "Wij zijn bereikbaar op werkdagen.</p><a href='/contact/'>Contact</a>"
+            "</body></html>")
+    r = await check_conversion("voorbeeld.nl", html, "alternatieve_geneeskunde")
+    assert r.get("has_online_booking") is False
