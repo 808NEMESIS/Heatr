@@ -32,42 +32,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
-import httpx
-
 from config.database import get_heatr_supabase
 from campaigns.frictie_copywriter import niche_for_sector, select_leak
 from utils.legal_form import receptie_avg_safe
 from utils.lead_naming import clean_company_name, display_first_name
 from utils.lead_selection import selection_exclusion
-from website_intelligence.conversion_checker import check_conversion
 
 WS = "aerys"
 ACTIVE = {"cosmetische_behandelaars", "alternatieve_geneeskunde", "chiropractoren"}
-_UA = {"User-Agent": "Mozilla/5.0 (compatible; AerysBot/1.0; +https://aeryssolution.nl)"}
-# Documenteerbare challenge-/wall-interstitials (Cloudflare e.d.): een pagina die dit
-# als hoofdinhoud draagt is niet de site.
-_WALL = ("just a moment", "checking your browser", "enable javascript",
-         "attention required", "cf-browser-verification", "cf_chl_opt")
 
-
-def _richness(cd: dict) -> int:
-    """Aantal POSITIEVE content-signalen in een check_conversion-resultaat. 0 = geen
-    herkenbare pagina-inhoud (geblokkeerd / JS-gerenderd / echt kaal)."""
-    if not cd:
-        return 0
-    sig = [
-        bool(cd.get("cta_texts")),
-        cd.get("has_phone_clickable") is True,
-        cd.get("has_whatsapp") is True,
-        cd.get("has_contact_form") is True,
-        (cd.get("form_field_count") or 0) > 0,
-        cd.get("has_chatbot") is True,
-        bool(cd.get("booking_platform")),
-        (cd.get("conversion_score") or 0) > 0,
-        cd.get("has_cta_above_fold") is True,
-        any(d.get("passed") is True for d in (cd.get("details") or [])),
-    ]
-    return sum(1 for s in sig if s)
+# Canonieke meetlaag (2026-08-19): fetch/bruikbaarheid/rijkheid wonen in
+# website_intelligence.measurement — dit script her-exporteert de namen zodat
+# bestaande importeurs (verify_gate, revert_empty_reverify) blijven werken.
+from website_intelligence.measurement import (          # noqa: E402
+    fetch_httpx as _get, richness as _richness, usable_measurement,
+)
 
 
 def _fetch_all(db, table, cols):
@@ -86,38 +65,6 @@ def _launchable(l, sector_filter):
     return (l.get("email_status") == "valid" and (l.get("score") or 0) >= 55
             and (l.get("icp_match") or 0) >= 0.50 and (l.get("sector") or "") in ACTIVE
             and not l.get("pushed_to_warmr_at") and not (l.get("contact_attempt_count") or 0))
-
-
-async def _get(dom: str):
-    """Return (status, text). Geeft óók een 4xx/5xx terug (met body), zodat de gate de
-    statuscode kan zien i.p.v. 'm als geslaagd te tellen. (None, '') bij netwerkfout."""
-    url = dom if dom.startswith("http") else f"https://{dom}"
-    for u in (url, url.replace("https://", "http://")):
-        try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=_UA) as c:
-                r = await c.get(u)
-                return r.status_code, (r.text or "")
-        except Exception:
-            continue
-    return None, ""
-
-
-async def usable_measurement(dom: str, status, text: str, sector: str):
-    """Bepaal of een respons een bruikbare meting is. Returned (usable, result, richness,
-    reden). result = check_conversion-output (of None bij status/leeg/wall)."""
-    if status is None:
-        return False, None, 0, "fetch_error"
-    if not (200 <= status <= 299):
-        return False, None, 0, f"http_{status}"
-    if not text or not text.strip():
-        return False, None, 0, "empty_body"
-    if any(w in text.lower()[:4000] for w in _WALL):
-        return False, None, 0, "challenge_wall"
-    result = await check_conversion(dom, text, sector)
-    rich = _richness(result)
-    if rich == 0:
-        return False, result, 0, "no_content_signals"   # JS-gerenderd/kaal → geen geldige meting
-    return True, result, rich, "ok"
 
 
 def classify(f1, f2):
