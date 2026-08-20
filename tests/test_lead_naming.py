@@ -108,3 +108,29 @@ def test_clean_company_name_flags_still_polluted():
     assert clean_company_name("Kliniek voor Esthetiek Botox Filler Laser Rotterdam")[1] is True
     assert clean_company_name("")[1] is True
     assert clean_company_name(None)[1] is True
+
+
+def test_safe_first_name_allows_local_part_when_independently_sourced():
+    # 2026-08-19: naam ONAFHANKELIJK gevonden (name-sweep: teampagina, resolver
+    # gebruikt nooit e-mail) en toevallig gelijk aan de local-part (voornaam@domein)
+    # → sterkste bevestiging, niet onderdrukken.
+    lead = {"contact_first_name": "Steven", "email": "steven@opnb.nl",
+            "contact_why_chosen": "Eigenaar via over_ons_role (role=osteopaat) "
+                                  "[name-sweep-2026-08] (confidence: 80%)"}
+    from utils.lead_naming import safe_first_name
+    assert safe_first_name(lead) == "Steven"
+
+
+def test_safe_first_name_still_blocks_local_part_without_marker():
+    # Zónder onafhankelijke bron blijft de legacy-guard staan.
+    lead = {"contact_first_name": "Steven", "email": "steven@opnb.nl",
+            "contact_why_chosen": "gevonden via e-mail"}
+    from utils.lead_naming import safe_first_name
+    assert safe_first_name(lead) == ""
+
+
+def test_safe_first_name_blocks_title_as_name():
+    # name-sweep 2026-08-20: 'Dokter' glipte door als voornaam bij gemiste titel-strip.
+    from utils.lead_naming import safe_first_name
+    for t in ("Dokter", "Drs", "Prof", "Arts"):
+        assert safe_first_name({"contact_first_name": t}) == ""

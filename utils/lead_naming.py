@@ -23,7 +23,10 @@ _GENERIC_NAME_RE = re.compile(
     r"^(afspraak|contact|informatie|info|kliniek|clinic|praktijk|receptie|balie|"
     r"admin|noreply|no-reply|team|mail|e-?mail|hallo|hello|webshop|order|orders|"
     r"sales|support|aanmelden|nieuwsbrief|boeking|booking|klantenservice|"
-    r"welkom|website|home)$", re.IGNORECASE)
+    r"welkom|website|home|"
+    # titels die als 'voornaam' doorglippen als de titel-strip faalt (name-sweep
+    # 2026-08-20: extractor leverde letterlijk 'Dokter' als first_name)
+    r"dokter|dr|drs|prof|arts|mevrouw|meneer|mevr|dhr)$", re.IGNORECASE)
 # Een echte voornaam bevat geen business-/sectorwoord. Vangt domein-/merkfragmenten
 # als 'Glowclinicnl' zonder eponieme namen (Joost, Frodo, Liem) te raken.
 _BUSINESS_WORD_RE = re.compile(
@@ -66,7 +69,13 @@ def safe_first_name(lead: dict) -> str:
     email = (lead.get("email") or "").strip()
     if "@" in email:
         local = email.split("@")[0]
-        if raw.lower() == local.lower():
+        # Local-part-regel: blokkeert legacy e-mail-inferentie ('Ceciledebooij').
+        # UITZONDERING (2026-08-19): een naam die aantoonbaar ONAFHANKELIJK van de
+        # e-mail is gevonden (name-sweep-marker in why_chosen: teampagina/bedrijfsnaam,
+        # resolver gebruikt nooit e-mail) én toevallig de local-part matcht
+        # (voornaam@domein) is juist de stérkste bevestiging — niet onderdrukken.
+        independent = "[name-sweep" in (lead.get("contact_why_chosen") or "")
+        if raw.lower() == local.lower() and not independent:
             return ""
     if len(raw) > 12 and " " not in raw:
         return ""
