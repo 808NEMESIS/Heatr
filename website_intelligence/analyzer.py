@@ -17,7 +17,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
 
 from utils.cost_guard import LeadCostAccumulator
 from website_intelligence.technical_checker import check_technical
@@ -67,28 +66,16 @@ async def analyze_website(
         "analyzed_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Fetch homepage HTML once — reused by multiple layers
-    page_html = ""
-    try:
-        async with httpx.AsyncClient(
-            timeout=15.0,
-            follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; Heatr/1.0)"},
-        ) as client:
-            r = await client.get(f"https://{domain}")
-            if r.status_code == 200:
-                page_html = r.text
-    except Exception as e:
-        logger.warning("analyze_website: failed to fetch %s: %s", domain, e)
-
-    if not page_html:
-        try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                r = await client.get(f"http://{domain}")
-                if r.status_code == 200:
-                    page_html = r.text
-        except Exception:
-            pass
+    # Fetch homepage HTML once — reused by multiple layers. Via de canonieke
+    # meetlaag (2026-08-24): accepteert de hele 2xx-range (een 202-botmuur die
+    # later content serveert werd hier eerst als lege pagina behandeld) en geeft
+    # de status terug zodat het meting-contract verderop kan bepalen of dit een
+    # geldige meting was — nooit meer alles-False-op-lege-fetch als "gemeten".
+    from website_intelligence.measurement import fetch_httpx
+    page_status, page_html = await fetch_httpx(domain)
+    if page_status is not None and not (200 <= page_status <= 299):
+        logger.warning("analyze_website: %s gaf HTTP %s", domain, page_status)
+        page_html = ""          # foutpagina nooit als site-inhoud de lagen in
 
     # --- Crawl-instrumentatie (ONGATED, los van enable_vision) ---
     # Het ENIGE capture-pad: screenshots (desktop+mobiel), pre/post-consent
@@ -135,6 +122,10 @@ async def analyze_website(
 
     # --- Layer 3: Conversion (max 30 pts) ---
     conversion = await check_conversion(domain, page_html, sector, supabase_client)
+    # Meting-contract (2026-08-24): geblokkeerd/leeg/JS-shell → reverify_uncertain=True
+    # + provenance, zodat alles-False nooit als gemeten de DB in gaat (W1).
+    from website_intelligence.measurement import attach_measurement_contract
+    attach_measurement_contract(conversion, status=page_status, text=page_html)
     result["conversion"] = conversion
     result["conversion_score"] = conversion["conversion_score"]
 

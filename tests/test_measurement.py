@@ -111,3 +111,29 @@ def test_provenance_contract_fields():
 
 def test_richness_zero_on_empty():
     assert richness(None) == 0 and richness({}) == 0
+
+
+# ── attach_measurement_contract (inline analyzer-pad) ────────────────────────
+def test_contract_marks_blocked_as_uncertain():
+    from website_intelligence.measurement import attach_measurement_contract
+    conv = {"has_online_booking": False, "conversion_score": 0}
+    out = attach_measurement_contract(conv, status=403, text="<html>blok" + "x" * 500)
+    assert out["reverify_uncertain"] is True
+    assert out["reverify_probe"]["reason"] == "http_403"
+
+
+def test_contract_marks_shell_as_uncertain():
+    from website_intelligence.measurement import attach_measurement_contract
+    conv = {"has_online_booking": False, "conversion_score": 0, "cta_texts": []}
+    out = attach_measurement_contract(conv, status=200, text="<div></div>" * 200)
+    assert out["reverify_uncertain"] is True
+    assert out["reverify_probe"]["reason"] == "no_content_signals"
+
+
+def test_contract_accepts_rich_page():
+    from website_intelligence.measurement import attach_measurement_contract
+    conv = {"has_online_booking": True, "booking_platform": "Crossuite",
+            "conversion_score": 6}
+    out = attach_measurement_contract(conv, status=202, text="echte inhoud " * 100)
+    assert out["reverify_uncertain"] is False           # 202 mét content = geldig (2xx)
+    assert out["reverify_probe"]["content_seen"] is True

@@ -100,6 +100,31 @@ def provenance(*, method: str | None, status, body_size: int, content_seen: bool
             "detector_version": DETECTOR_VERSION, "measured_at": ts}
 
 
+def attach_measurement_contract(conversion: dict, *, status, text: str) -> dict:
+    """Hang het meting-contract aan een check_conversion-resultaat (voor het INLINE
+    analyzer-pad, dat geen aparte meet-call doet). Bepaalt bruikbaarheid uit
+    status/wall/rijkheid en zet reverify_uncertain + reverify_probe — zodat een
+    geblokkeerde/lege/JS-shell-pagina NOOIT als gemeten 'alles-False' de DB in
+    gaat (W1). Muteert en returned `conversion`."""
+    if status is None:
+        usable, reason = False, "fetch_error"
+    elif not (200 <= status <= 299):
+        usable, reason = False, f"http_{status}"
+    elif not text or len(text.strip()) < _MIN_BODY:
+        usable, reason = False, "empty_body"
+    elif any(w in text.lower()[:4000] for w in _WALL):
+        usable, reason = False, "challenge_wall"
+    elif richness(conversion) == 0:
+        usable, reason = False, "no_content_signals"
+    else:
+        usable, reason = True, "ok"
+    conversion["reverify_uncertain"] = not usable
+    conversion["reverify_probe"] = provenance(
+        method="httpx" if status is not None else None, status=status,
+        body_size=len(text or ""), content_seen=usable, reason=reason)
+    return conversion
+
+
 async def measure_conversion(domain: str, sector: str, *, renderer=None) -> dict:
     """Domein → geldige conversie-meting via het ene pad (httpx → Playwright-fallback).
 
