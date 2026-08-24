@@ -117,8 +117,15 @@ async def measure_conversion(domain: str, sector: str, *, renderer=None) -> dict
             status, text, usable, result, rich, reason = (
                 r_status, r_text, r_usable, r_result, r_rich, r_reason)
             method = "playwright"
+    import re as _re
+    title = ""
+    if usable and text:
+        m = _re.search(r"<title[^>]*>(.*?)</title>", text, _re.I | _re.S)
+        if m:
+            title = _re.sub(r"\s+", " ", _re.sub(r"<[^>]+>", " ", m.group(1))).strip()[:160]
     return {
         "usable": usable, "result": result if usable else None, "richness": rich,
+        "title": title,
         "provenance": provenance(method=method if status is not None else None,
                                  status=status, body_size=len(text or ""),
                                  content_seen=usable, reason=reason),
