@@ -134,3 +134,10 @@ def test_safe_first_name_blocks_title_as_name():
     from utils.lead_naming import safe_first_name
     for t in ("Dokter", "Drs", "Prof", "Arts"):
         assert safe_first_name({"contact_first_name": t}) == ""
+
+
+def test_safe_first_name_blocks_unknown_placeholder():
+    # legacy-audit 2026-08-24: letterlijk 'Unknown' stond als voornaam in de pool.
+    from utils.lead_naming import safe_first_name
+    assert safe_first_name({"contact_first_name": "Unknown"}) == ""
+    assert safe_first_name({"contact_first_name": "onbekend"}) == ""

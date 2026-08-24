@@ -26,7 +26,7 @@ _GENERIC_NAME_RE = re.compile(
     r"welkom|website|home|"
     # titels die als 'voornaam' doorglippen als de titel-strip faalt (name-sweep
     # 2026-08-20: extractor leverde letterlijk 'Dokter' als first_name)
-    r"dokter|dr|drs|prof|arts|mevrouw|meneer|mevr|dhr)$", re.IGNORECASE)
+    r"dokter|dr|drs|prof|arts|mevrouw|meneer|mevr|dhr|unknown|onbekend)$", re.IGNORECASE)
 # Een echte voornaam bevat geen business-/sectorwoord. Vangt domein-/merkfragmenten
 # als 'Glowclinicnl' zonder eponieme namen (Joost, Frodo, Liem) te raken.
 _BUSINESS_WORD_RE = re.compile(
