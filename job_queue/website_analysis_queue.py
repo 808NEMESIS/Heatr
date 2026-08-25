@@ -41,8 +41,20 @@ _REANALYSIS_DAYS = int(os.getenv("WEBSITE_REANALYSIS_DAYS", "30"))
 # Vangt async hangs af zodat de dedicated worker doorgaat naar de volgende lead.
 _ANALYSIS_TIMEOUT_SECONDS = int(os.getenv("WEBSITE_ANALYSIS_TIMEOUT", "180"))
 
-# Welke email_status waardes gelden als "worth analyzing"
-_ELIGIBLE_EMAIL_STATUSES = ("valid", "risky", "catch_all", "catchall_risky")
+# Welke email_status waardes gelden als "worth analyzing".
+# HEATR_ANALYZE_UNVERIFIED=true (Sami 2026-08-25) ontkoppelt analyse van e-mail-
+# verificatie: ook not_checked/not_found gaan de analyse in. Rationale: analyses
+# hebben zelfstandige waarde als marktdata (benchmark-dataset per stad), en bij een
+# Bouncer-tegoed-muur landt élke nieuwe lead op not_checked — de gate zou dan de
+# hele analyse-productie stilleggen. Verzendbaarheid blijft ONVERANDERD Bouncer-
+# gegate (is_sendable); dit raakt alleen wat de website-worker mag analyseren.
+def _eligible_email_statuses() -> tuple[str, ...]:
+    if (os.getenv("HEATR_ANALYZE_UNVERIFIED") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return ("valid", "risky", "catch_all", "catchall_risky", "not_checked", "not_found")
+    return ("valid", "risky", "catch_all", "catchall_risky")
+
+
+_ELIGIBLE_EMAIL_STATUSES = _eligible_email_statuses()
 
 # Welke lead statuses zijn niet-eligible (terminal)
 _TERMINAL_LEAD_STATUSES = ("disqualified", "unsubscribed", "forgotten", "bounced")

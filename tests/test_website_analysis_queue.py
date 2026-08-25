@@ -274,3 +274,18 @@ class TestNoStarvationBeyondFirstPage:
         db = _mk_db(leads=leads, wi_rows=[])
         picked = await waq._find_next_eligible_lead("aerys", db)
         assert picked is not None and picked["id"] == "retry"
+
+
+def test_eligible_statuses_default_requires_verified(monkeypatch):
+    monkeypatch.delenv("HEATR_ANALYZE_UNVERIFIED", raising=False)
+    from job_queue.website_analysis_queue import _eligible_email_statuses
+    assert "not_checked" not in _eligible_email_statuses()
+
+
+def test_eligible_statuses_widen_when_unverified_allowed(monkeypatch):
+    # Sami 2026-08-25: analyses ontkoppeld van e-mailverificatie (Bouncer-muur);
+    # verzendbaarheid blijft elders Bouncer-gegate.
+    monkeypatch.setenv("HEATR_ANALYZE_UNVERIFIED", "true")
+    from job_queue.website_analysis_queue import _eligible_email_statuses
+    s = _eligible_email_statuses()
+    assert "not_checked" in s and "not_found" in s and "valid" in s
