@@ -117,7 +117,9 @@ def test_frame_c_passes_selfcheck():
     assert "Waarom gratis" in b                         # Hormozi: reden voor gratis
     assert "hoeft op te nemen" in b                     # uitkomst, geen mechaniek
     assert "op mijn lijstje" in b                       # why-you zonder site-claim
-    assert "vijf tegelijk aan, want ik bouw ze zelf" in b
+    assert "concept is de richting" in b                # concept != opgeleverde site
+    assert "mag ik dan de foto" in b                    # foto/info-toestemmingsvraag
+    assert "want ik bouw ze zelf" in b
     sc = copy_selfcheck(out["body"], subject=out["subject"], niche="cosmetisch", domain="skin8.nl",
                         name="Skin8", frame="C", privacy_notice=PRIV, unsubscribe="")
     assert sc["passed"], sc["detail"]

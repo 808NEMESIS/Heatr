@@ -266,23 +266,35 @@ def build_kale_ask_mail1(
     naam = display_company_name((naam or "").strip())
     if not naam or needs_review:
         return None
-    # Hormozi-boog (Sami 2026-08-26, docs/besluit_template_herschrijf.md):
-    # uitkomst i.p.v. mechaniek + expliciete waarom-gratis + risk-reversal +
-    # capaciteits-schaarste. Binnen de eigen regels: nul claims over hún site.
+    # Hormozi-boog (Sami 2026-08-26, docs/besluit_template_herschrijf.md) + drie
+    # aanscherpingen van Sami: (1) persoonlijke, GEGRONDE waarom-jij (reviews uit
+    # Maps-data, stad-fallback — nooit een site-claim), (2) concept expliciet ≠
+    # opgeleverde site, (3) foto/info-toestemming als de ene vraag van de mail.
     wat = "cosmetische klinieken" if niche == _COSM else "zorgpraktijken"
     uitkomst = ("zo dat iemand om half elf 's avonds zijn afspraak zet, zonder dat er "
                 "iemand hoeft op te nemen" if niche == _COSM else
                 "zo dat mensen meteen weten waar ze aan beginnen en direct kunnen boeken")
+    rating = lead.get("google_rating"); count = lead.get("google_review_count")
+    stad = (lead.get("city") or "").strip()
+    if isinstance(rating, (int, float)) and rating >= 4.5 and (count or 0) >= 10:
+        r_txt = f"{float(rating):.1f}".replace(".", ",")
+        omdat = f" omdat je patiënten je een {r_txt} geven, en dat soort werk wil ik erbij"
+    elif stad:
+        omdat = f" omdat er nog geen praktijk uit {stad} bij zit"
+    else:
+        omdat = ""
     blocks = [
-        f"Dit najaar bouw ik voor vijf {wat} een nieuwe site. {naam} heb ik op mijn lijstje gezet.",
-        ("Het eerste ontwerp maak ik vooraf en gratis: in vier minuten Loom zie je je "
-         f"eigen homepage opnieuw opgezet, {uitkomst}. Daarna pas beslis je."),
-        ("Waarom gratis: dit worden mijn eerste vijf in deze hoek, en die wil ik "
-         "kunnen laten zien. Jij krijgt het ontwerp, hij gaat mijn portfolio in. "
-         "Bevalt het niet, dan houd je het ontwerp en hoor je niets meer van me."),
-        ("Bevalt het wel: drie weken van akkoord tot live. Het kost je één gesprek en "
-         "je bestaande foto's, de teksten schrijf ik."),
-        "Ik neem er vijf tegelijk aan, want ik bouw ze zelf.",
+        f"Dit najaar bouw ik voor vijf {wat} een nieuwe site. {naam} staat op mijn lijstje{omdat}.",
+        ("Het eerste concept is vooraf en gratis: in vier minuten Loom zie je je "
+         f"nieuwe homepage, {uitkomst}. Let op: het concept is de richting, de echte "
+         "site bouwen we daarna pas af."),
+        ("Waarom gratis: dit worden mijn eerste vijf in deze hoek. Jij krijgt het "
+         "concept, hij gaat mijn portfolio in. Bevalt het niet, dan houd je het en "
+         "hoor je niets meer van me."),
+        ("Bevalt het wel: drie weken van akkoord tot live, één gesprek en je "
+         "bestaande foto's, de teksten schrijf ik."),
+        ("Zeg je ja, mag ik dan de foto's en info van je huidige site voor het "
+         "concept gebruiken? Vijf tegelijk, want ik bouw ze zelf."),
         _CTA,
     ]
     body = _assemble(greeting=_greeting(lead), blocks=blocks,
@@ -383,9 +395,16 @@ def render_frictie_mail(
         return None
     mail["niche"] = niche
     mail["stale_friction"] = stale
+    allowed = []
+    if lead.get("google_rating"):
+        r = f"{float(lead['google_rating']):.1f}"
+        allowed += [r, r.replace(".", ",")]
+    if lead.get("google_review_count"):
+        allowed.append(str(int(lead["google_review_count"])))
     mail["selfcheck"] = copy_selfcheck(
         mail["body"], subject=mail["subject"], niche=niche, domain=_domain(lead),
         frame=mail["frame"], name=mail.get("naam", ""),
+        allowed_numbers=tuple(allowed),
         privacy_notice=privacy_notice, unsubscribe=unsubscribe)
     return mail
 
@@ -419,6 +438,7 @@ def _pitch(body: str, privacy_notice: str, unsubscribe: str) -> str:
 
 def copy_selfcheck(body: str, *, subject: str, niche: str, domain: str = "", name: str = "",
                    frame: str = "A", require_value_vars: bool = True,
+                   allowed_numbers: tuple = (),
                    privacy_notice: str = "", unsubscribe: str = "") -> dict:
     """Draai de 10-punts pass/fail-lijst uit de skill. Returned
     {passed: bool, fails: [int], detail: {int: reden}, words: int, iks: int}."""
@@ -434,6 +454,8 @@ def copy_selfcheck(body: str, *, subject: str, niche: str, domain: str = "", nam
         if tok:
             scan = scan.replace(tok, "")
     nums = re.findall(r"\b\d+(?:[.,]\d+)?\b", scan)
+    allowed = {str(a) for a in allowed_numbers}
+    nums = [n for n in nums if n not in allowed]       # gegronde DB-getallen (reviews) mogen
     if nums:
         fails[1] = f"ongedekt getal: {nums}"
     # 2 — observatie binnen 30s zelf te checken: Frame A moet de frictie-leak dragen.
