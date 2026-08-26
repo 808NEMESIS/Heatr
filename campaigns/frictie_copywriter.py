@@ -187,10 +187,27 @@ def _greeting(lead: dict) -> str:
     return f"Hoi {first}," if first else "Hallo,"
 
 
-def _subject(pattern: str, naam: str) -> str:
-    """Onderwerpregel van max zes woorden (Regel 4); naam ingekort als nodig."""
+_LEGAL_SUFFIX = ("b.v.", "bv", "n.v.", "nv", "v.o.f.", "vof")
+_DANGLING = ("den", "de", "van", "het", "'t", "ter", "ten", "&")
+
+
+def display_company_name(naam: str) -> str:
+    """Display-variant voor mail/onderwerp: zonder juridisch achtervoegsel
+    ("Kliniek Ebbelaar B.V." → "Kliniek Ebbelaar"). ALLEEN display — de AVG-
+    rechtsvorm-inferentie leest de ruwe naam en blijft onaangeroerd."""
     toks = naam.split()
+    while toks and toks[-1].lower().rstrip(".,") in [x.rstrip(".") for x in _LEGAL_SUFFIX]:
+        toks = toks[:-1]
+    return " ".join(toks) or naam
+
+
+def _subject(pattern: str, naam: str) -> str:
+    """Onderwerpregel van max zes woorden (Regel 4); naam ingekort als nodig.
+    Nooit eindigen op een bungel-token ("…CadanCe Huidinstituut Den" — 2026-08-26)."""
+    toks = display_company_name(naam).split()
     while toks:
+        if toks[-1].lower() in _DANGLING:
+            toks = toks[:-1]; continue
         subj = pattern.format(naam=" ".join(toks))
         if len(subj.split()) <= 6:
             return subj
@@ -246,7 +263,7 @@ def build_kale_ask_mail1(
     from config.receptie_sequence import receptie_mail_sendable
 
     naam, needs_review = clean_company_name(lead.get("company_name"))
-    naam = (naam or "").strip()
+    naam = display_company_name((naam or "").strip())
     if not naam or needs_review:
         return None
     wat = "cosmetische klinieken" if niche == _COSM else "praktijken in de zorg"

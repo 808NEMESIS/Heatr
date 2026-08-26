@@ -219,3 +219,16 @@ def test_build_frictie_mail3_shrink_ask():
     assert out is not None and out["frame"] == "3"
     assert "stuur maar" in out["body"] and out["body"].count("?") == 0
     assert out["selfcheck"]["passed"], out["selfcheck"]["detail"]
+
+
+def test_display_company_name_strips_legal_suffix():
+    from campaigns.frictie_copywriter import display_company_name, _subject
+    assert display_company_name("Kliniek Ebbelaar B.V.") == "Kliniek Ebbelaar"
+    assert _subject("gratis ontwerp voor {naam}", "Kliniek Ebbelaar B.V.") == \
+        "gratis ontwerp voor Kliniek Ebbelaar"
+
+
+def test_subject_never_ends_on_dangling_token():
+    from campaigns.frictie_copywriter import _subject
+    s = _subject("gratis ontwerp voor {naam}", "CadanCe Huidinstituut Den Haag")
+    assert not s.endswith(" Den") and len(s.split()) <= 6      # "…Huidinstituut", niet "…Den"
