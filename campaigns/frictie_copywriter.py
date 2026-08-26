@@ -266,13 +266,23 @@ def build_kale_ask_mail1(
     naam = display_company_name((naam or "").strip())
     if not naam or needs_review:
         return None
-    wat = "cosmetische klinieken" if niche == _COSM else "praktijken in de zorg"
+    # Hormozi-boog (Sami 2026-08-26, docs/besluit_template_herschrijf.md):
+    # uitkomst i.p.v. mechaniek + expliciete waarom-gratis + risk-reversal +
+    # capaciteits-schaarste. Binnen de eigen regels: nul claims over hún site.
+    wat = "cosmetische klinieken" if niche == _COSM else "zorgpraktijken"
+    uitkomst = ("zo dat iemand om half elf 's avonds zijn afspraak zet, zonder dat er "
+                "iemand hoeft op te nemen" if niche == _COSM else
+                "zo dat mensen meteen weten waar ze aan beginnen en direct kunnen boeken")
     blocks = [
-        f"Ik bouw websites voor {wat}. Ik neem er vijf tegelijk aan, want ik bouw ze zelf.",
-        ("Het eerste ontwerp is gratis. In vier minuten Loom zie je je eigen homepage "
-         "opnieuw opgezet, naast wat er nu staat. Bevalt het niet, dan hoor je niets meer."),
-        ("Drie weken van akkoord tot live. Het kost je één gesprek en je bestaande foto's, "
-         f"de teksten schrijf ik. {naam} heb ik er alvast bij gezet."),
+        f"Dit najaar bouw ik voor vijf {wat} een nieuwe site. {naam} heb ik op mijn lijstje gezet.",
+        ("Het eerste ontwerp maak ik vooraf en gratis: in vier minuten Loom zie je je "
+         f"eigen homepage opnieuw opgezet, {uitkomst}. Daarna pas beslis je."),
+        ("Waarom gratis: dit worden mijn eerste vijf in deze hoek, en die wil ik "
+         "kunnen laten zien. Jij krijgt het ontwerp, hij gaat mijn portfolio in. "
+         "Bevalt het niet, dan houd je het ontwerp en hoor je niets meer van me."),
+        ("Bevalt het wel: drie weken van akkoord tot live. Het kost je één gesprek en "
+         "je bestaande foto's, de teksten schrijf ik."),
+        "Ik neem er vijf tegelijk aan, want ik bouw ze zelf.",
         _CTA,
     ]
     body = _assemble(greeting=_greeting(lead), blocks=blocks,

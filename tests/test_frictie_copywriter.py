@@ -113,6 +113,11 @@ def test_frame_c_passes_selfcheck():
     out = build_kale_ask_mail1(COSM, niche="cosmetisch", **_kw())
     assert out is not None and out["frame"] == "C"
     assert out["subject"] == "gratis ontwerp voor Skin8"
+    b = out["body"]
+    assert "Waarom gratis" in b                         # Hormozi: reden voor gratis
+    assert "hoeft op te nemen" in b                     # uitkomst, geen mechaniek
+    assert "op mijn lijstje" in b                       # why-you zonder site-claim
+    assert "vijf tegelijk aan, want ik bouw ze zelf" in b
     sc = copy_selfcheck(out["body"], subject=out["subject"], niche="cosmetisch", domain="skin8.nl",
                         name="Skin8", frame="C", privacy_notice=PRIV, unsubscribe="")
     assert sc["passed"], sc["detail"]
