@@ -257,6 +257,7 @@ def build_frictie_mail1(
 def build_kale_ask_mail1(
     lead: dict, *, niche: str,
     privacy_notice: str, unsubscribe: str, warmr_owns_unsubscribe: bool = False,
+    personalization: dict | None = None,
 ) -> dict | None:
     """Frame C — kale ask, geen diagnose. Vereist niets behalve een schone naam."""
     from utils.lead_naming import clean_company_name
@@ -276,7 +277,13 @@ def build_kale_ask_mail1(
                 "zo dat mensen meteen weten waar ze aan beginnen en direct kunnen boeken")
     rating = lead.get("google_rating"); count = lead.get("google_review_count")
     stad = (lead.get("city") or "").strip()
-    if isinstance(rating, (int, float)) and rating >= 4.5 and (count or 0) >= 10:
+    # Voorrang (Sami 2026-08-26: 'niet persoonlijk genoeg'): een GEVERIFIEERD
+    # persoonlijk feit van hun eigen site (personalization.why_you — citaat-
+    # geborgd opgeslagen, handmatig gereviewd) wint van rating wint van stad.
+    why_you = ((personalization or {}).get("why_you") or "").strip()
+    if why_you:
+        omdat = f" omdat {why_you.rstrip('.')}"
+    elif isinstance(rating, (int, float)) and rating >= 4.5 and (count or 0) >= 10:
         r_txt = f"{float(rating):.1f}".replace(".", ",")
         omdat = f" omdat je patiënten je een {r_txt} geven"
     elif stad:
@@ -369,6 +376,7 @@ def render_frictie_mail(
     lead: dict, *, sector: str | None, conversion_details: dict | None,
     privacy_notice: str, unsubscribe: str, warmr_owns_unsubscribe: bool = False,
     analyzed_at=None, max_age_days: int = 30, now: _dt.date | None = None,
+    personalization: dict | None = None,
 ) -> dict | None:
     """High-level: kies frame (A bij een VERSE geen-boeking-frictie, anders C) en
     render mail-1 mét zelfcontrole. Vers-gate: stale/onbekende analyzed_at → geen
@@ -390,7 +398,8 @@ def render_frictie_mail(
     if mail is None:
         mail = build_kale_ask_mail1(lead, niche=niche, privacy_notice=privacy_notice,
                                     unsubscribe=unsubscribe,
-                                    warmr_owns_unsubscribe=warmr_owns_unsubscribe)
+                                    warmr_owns_unsubscribe=warmr_owns_unsubscribe,
+                                    personalization=personalization)
     if mail is None:
         return None
     mail["niche"] = niche

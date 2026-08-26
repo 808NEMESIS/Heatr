@@ -504,7 +504,8 @@ def _try_frictie_mail(mail_step: int, lead: dict, wi: dict,
             mail = render_frictie_mail(
                 lead, sector=sector, conversion_details=cd,
                 privacy_notice=privacy_notice, unsubscribe=unsubscribe,
-                warmr_owns_unsubscribe=warmr_owns, analyzed_at=(wi or {}).get("analyzed_at"))
+                warmr_owns_unsubscribe=warmr_owns, analyzed_at=(wi or {}).get("analyzed_at"),
+                personalization=(wi or {}).get("personalization"))
             if mail is None:
                 return None
             return {"subject": mail["subject"], "body": mail["body"], "skipped": False,

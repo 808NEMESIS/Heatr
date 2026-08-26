@@ -239,3 +239,13 @@ def test_subject_never_ends_on_dangling_token():
     from campaigns.frictie_copywriter import _subject
     s = _subject("gratis ontwerp voor {naam}", "CadanCe Huidinstituut Den Haag")
     assert not s.endswith(" Den") and len(s.split()) <= 6      # "…Huidinstituut", niet "…Den"
+
+
+def test_frame_c_personal_why_you_wins_over_rating():
+    # Sami 2026-08-26: geverifieerd persoonlijk feit > rating > stad.
+    lead = {**COSM, "google_rating": 4.9, "google_review_count": 40}
+    out = build_kale_ask_mail1(lead, niche="cosmetisch",
+                               personalization={"why_you": "je als een van de weinigen alleen met plexr werkt"},
+                               **_kw())
+    assert "omdat je als een van de weinigen alleen met plexr werkt." in out["body"]
+    assert "4,9" not in out["body"]                    # feit wint van rating
