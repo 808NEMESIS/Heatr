@@ -278,7 +278,7 @@ def build_kale_ask_mail1(
     stad = (lead.get("city") or "").strip()
     if isinstance(rating, (int, float)) and rating >= 4.5 and (count or 0) >= 10:
         r_txt = f"{float(rating):.1f}".replace(".", ",")
-        omdat = f" omdat je patiënten je een {r_txt} geven, en dat soort werk wil ik erbij"
+        omdat = f" omdat je patiënten je een {r_txt} geven"
     elif stad:
         omdat = f" omdat er nog geen praktijk uit {stad} bij zit"
     else:
@@ -286,15 +286,15 @@ def build_kale_ask_mail1(
     blocks = [
         f"Dit najaar bouw ik voor vijf {wat} een nieuwe site. {naam} staat op mijn lijstje{omdat}.",
         ("Het eerste concept is vooraf en gratis: in vier minuten Loom zie je je "
-         f"nieuwe homepage, {uitkomst}. Let op: het concept is de richting, de echte "
-         "site bouwen we daarna pas af."),
-        ("Waarom gratis: dit worden mijn eerste vijf in deze hoek. Jij krijgt het "
-         "concept, hij gaat mijn portfolio in. Bevalt het niet, dan houd je het en "
-         "hoor je niets meer van me."),
+         f"nieuwe homepage, {uitkomst}. Het concept is de richting; de echte site "
+         "bouwen we daarna pas af."),
+        ("Waarom gratis: dit worden mijn eerste vijf in deze hoek, en die gaan mijn "
+         "portfolio in. Bevalt het niet, dan houd je het concept en hoor je niets "
+         "meer van me."),
         ("Bevalt het wel: drie weken van akkoord tot live, één gesprek en je "
          "bestaande foto's, de teksten schrijf ik."),
-        ("Zeg je ja, mag ik dan de foto's en info van je huidige site voor het "
-         "concept gebruiken? Vijf tegelijk, want ik bouw ze zelf."),
+        ("Zeg je ja, mag ik dan de foto's en info van je huidige site gebruiken? "
+         "Vijf tegelijk, want ik bouw ze zelf."),
         _CTA,
     ]
     body = _assemble(greeting=_greeting(lead), blocks=blocks,
