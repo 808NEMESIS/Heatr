@@ -284,8 +284,11 @@ def build_kale_ask_mail1(
     if why_you:
         omdat = f" omdat {why_you.rstrip('.')}"
     elif isinstance(rating, (int, float)) and rating >= 4.5 and (count or 0) >= 10:
+        # Coherent met het portfolio-motief (Sami 2026-08-28): de reden waarom een
+        # portfoliobouwer JOU kiest is dat het werk al klopt — en dat bewijzen je
+        # patiënten. Geen klinische feiten uit een designer-mond.
         r_txt = f"{float(rating):.1f}".replace(".", ",")
-        omdat = f" omdat je patiënten je een {r_txt} geven"
+        omdat = f" omdat je patiënten je een {r_txt} geven, en dat werk wil ik tonen"
     elif stad:
         omdat = f" omdat er nog geen praktijk uit {stad} bij zit"
     else:
@@ -296,10 +299,10 @@ def build_kale_ask_mail1(
          f"nieuwe homepage, {uitkomst}. Het concept is de richting; de echte site "
          "bouwen we daarna pas af."),
         ("Waarom gratis: dit worden mijn eerste vijf in deze hoek, en die gaan mijn "
-         "portfolio in. Bevalt het niet, dan houd je het concept en hoor je niets "
-         "meer van me."),
-        ("Bevalt het wel: drie weken van akkoord tot live, één gesprek en je "
-         "bestaande foto's, de teksten schrijf ik."),
+         "portfolio in. Bevalt het niet, dan houd je het concept en hoor je "
+         "niets meer."),
+        ("Bevalt het wel: drie weken tot live, één gesprek en je bestaande "
+         "foto's, de teksten schrijf ik."),
         ("Zeg je ja, mag ik dan de foto's en info van je huidige site gebruiken? "
          "Vijf tegelijk, want ik bouw ze zelf."),
         _CTA,
