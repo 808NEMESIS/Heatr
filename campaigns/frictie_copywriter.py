@@ -288,7 +288,7 @@ def build_kale_ask_mail1(
         # portfoliobouwer JOU kiest is dat het werk al klopt — en dat bewijzen je
         # patiënten. Geen klinische feiten uit een designer-mond.
         r_txt = f"{float(rating):.1f}".replace(".", ",")
-        omdat = f" omdat je patiënten je een {r_txt} geven, en dat werk wil ik tonen"
+        omdat = f" omdat je patiënten je een {r_txt} geven, en dat verdient een podium"
     elif stad:
         omdat = f" omdat er nog geen praktijk uit {stad} bij zit"
     else:
