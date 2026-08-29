@@ -52,6 +52,8 @@ _BOOKING_ANCHOR_RE = re.compile(
 # WhatsApp-boekpad (Osteopathie Anna: wa.me onder de hero) — APART veld, flipt
 # has_online_booking niet: appen is een boekPAD, geen online-boeksysteem.
 _WHATSAPP_LINK_RE = re.compile(r"wa\.me/|api\.whatsapp\.com|whatsapp://", re.I)
+# Klikbaar telefoonnummer: href naar tel:/callto:, tolerant voor spaties/quotes.
+_PHONE_LINK_RE = re.compile(r'href\s*=\s*["\']?\s*(?:tel|callto):', re.I)
 
 
 def detect_booking(page_html: str):
@@ -146,7 +148,10 @@ async def check_conversion(
         result["details"].append({"check": "cta_above_fold", "passed": False})
 
     # --- Phone clickable (3 pts) ---
-    if 'href="tel:' in html_lower or "href='tel:" in html_lower:
+    # 0a-gevalideerd 2026-08-29: grondwaarheid 20 leads (0 vals-False, 5/5 True) +
+    # fixture-recall hieronder. Regex i.p.v. exacte string: vangt callto:, spaties
+    # rond =, ongequote attributen en hoofdletters.
+    if _PHONE_LINK_RE.search(page_html):
         result["has_phone_clickable"] = True
         score += 3
         result["details"].append({"check": "phone_clickable", "passed": True})

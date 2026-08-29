@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Bump bij ELKE patroonwijziging in conversion_checker (platforms/regex): zo is in
 # de opgeslagen provenance te zien met welke detector-generatie een waarde ontstond.
-DETECTOR_VERSION = 2      # v2 = NL-boekpatronen + wa.me-veld (2026-08-14)
+DETECTOR_VERSION = 3      # v3 = telefoon-regex 0a-gevalideerd (2026-08-29); v2 = NL-boekpatronen
 
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; AerysBot/1.0; +https://aeryssolution.nl)"}
 _WALL = ("just a moment", "checking your browser", "enable javascript",

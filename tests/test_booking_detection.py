@@ -121,3 +121,28 @@ async def test_loose_sentence_text_stays_false():
             "</body></html>")
     r = await check_conversion("voorbeeld.nl", html, "alternatieve_geneeskunde")
     assert r.get("has_online_booking") is False
+
+
+# ── telefoon-klikbaar: 0a-recall op patroonvarianten (2026-08-29) ────────────────
+@pytest.mark.asyncio
+async def test_phone_clickable_pattern_variants():
+    base = "<html><body>" + "x" * 400 + "{link}<form><input name='n'></form></body></html>"
+    for link in ('<a href="tel:0101234567">bel</a>',
+                 "<a href='tel:+31612345678'>bel</a>",
+                 '<a href = "tel:010-123">bel</a>',          # spaties rond =
+                 '<a href=tel:0101234567>bel</a>',            # ongequote
+                 '<a href="callto:0101234567">bel</a>',       # callto-schema
+                 '<a HREF="TEL:0101234567">bel</a>'):         # hoofdletters
+        r = await check_conversion("x.nl", base.format(link=link), "alternatieve_geneeskunde")
+        assert r["has_phone_clickable"] is True, link
+
+
+@pytest.mark.asyncio
+async def test_phone_text_only_is_not_clickable():
+    # nummer als kale tekst (of 'tel:' in lopende tekst) is GEEN klikbare link —
+    # dit is de afwezigheid waarop de mail-2-claim mag leunen.
+    html = ("<html><body>" + "x" * 400 +
+            "<p>Bel ons op 010-1234567 of via tel: 0612345678</p>"
+            "<a href='/contact'>contact</a></body></html>")
+    r = await check_conversion("x.nl", html, "alternatieve_geneeskunde")
+    assert r["has_phone_clickable"] is False

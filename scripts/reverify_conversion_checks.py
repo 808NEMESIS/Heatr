@@ -81,7 +81,7 @@ def classify(f1, f2):
     return "uncertain", None, "fetch_disagreement"
 
 
-async def _double_check(sem, l):
+async def _double_check(sem, l, renderer=None):
     dom = (l.get("domain") or "").strip()
     async with sem:
         s1, t1 = await _get(dom)
@@ -89,7 +89,23 @@ async def _double_check(sem, l):
     f1 = await usable_measurement(dom, s1, t1, l["sector"])
     f2 = await usable_measurement(dom, s2, t2, l["sector"])
     verdict, result, reason = classify(f1, f2)
-    probe = {"status": s1, "body_size": len(t1 or ""), "content_seen": bool(f1[0]), "reason": reason}
+    probe = {"status": s1, "body_size": len(t1 or ""), "content_seen": bool(f1[0]),
+             "reason": reason, "method": "httpx"}
+    # Playwright-vangnet (2026-08-29): httpx-onzeker (botmuur/JS-shell) → één render
+    # via de bestaande anti-detectie; een bruikbare gerenderde DOM levert alsnog een
+    # verdict (method=playwright in de provenance). Blijft 'ie onbruikbaar → onzeker.
+    if verdict == "uncertain" and renderer is not None:
+        async with sem:
+            rs, rt = await renderer.fetch(dom)
+        fr = await usable_measurement(dom, rs, rt, l["sector"])
+        if fr[0]:
+            booked = fr[1].get("has_online_booking") is not False
+            verdict = "now_booking" if booked else "confirmed_no_booking"
+            result = fr[1]
+            probe = {"status": rs, "body_size": len(rt or ""), "content_seen": True,
+                     "reason": "ok", "method": "playwright"}
+        else:
+            probe["reason"] = fr[3]
     return l, verdict, result, probe
 
 
@@ -124,7 +140,9 @@ async def run(apply: bool, limit: int, sector_filter, min_richness: int = 0):
           f"({'APPLY — prod-write' if apply else 'DRY-RUN — read-only'}).\n")
 
     sem = asyncio.Semaphore(8)
-    results = await asyncio.gather(*[_double_check(sem, l) for l in targets])
+    from website_intelligence.rendered_fetch import RenderedFetcher
+    async with RenderedFetcher() as _rf:
+        results = await asyncio.gather(*[_double_check(sem, l, renderer=_rf) for l in targets])
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
 
     confirmed_leads, now_b, uncertain_leads, changes, applied = [], [], [], [], 0
