@@ -102,6 +102,29 @@ def main():
              "",
              "Canary: 14 leads klaar (logs/0b_checklist_canary.md) · faseplan bevroren tot arming.",
              "Hendels bij Sami: Bouncer-tegoed · canary-arming · inbox-capaciteit."]
+    # delta's t.o.v. vorige digest + alarmdrempels → stuurinstrument, geen verslag
+    import json
+    state_p = Path("logs/digest_state.json")
+    prev = json.loads(state_p.read_text()) if state_p.exists() else {}
+    cur = {"tot": tot, "pool": pool, "not_checked": es.get("not_checked", 0), "cells": cells,
+           "valid_wi": valid_wi}
+    def d(k):
+        return f" ({cur[k]-prev[k]:+d})" if k in prev else ""
+    alarms = []
+    if cur["not_checked"] > 500:
+        alarms.append(f"⚠ Bouncer-wachtrij {cur['not_checked']} (>500) — elke week zonder tegoed groeit de ontgrendeling")
+    if have_wi and (have_wi - valid_wi - prov) < 0:
+        pass
+    onz = sum(1 for l in leads if l["id"] in wi and wi[l["id"]].get("reverify_uncertain"))
+    if have_wi and onz / max(1, have_wi) > 0.15:
+        alarms.append(f"⚠ onzeker-ratio {100*onz//have_wi}% (>15%) — meetkwaliteit daalt")
+    if nieuw7 == 0:
+        alarms.append("⚠ 0 nieuwe leads in 7 dagen — discovery-daemon/schedules checken")
+    if alarms:
+        lines[2:2] = ["> " + a for a in alarms] + [""]
+    lines[4:4] = []
+    lines = [lines[0], ""] + [f"Deltas: lijst{d('tot')} · pool{d('pool')} · bouncer-rij{d('not_checked')} · benchmark-cellen{d('cells')}", ""] + lines[2:]
+    state_p.write_text(json.dumps(cur))
     out = Path("logs/weekly_digest.md")
     out.parent.mkdir(exist_ok=True)
     out.write_text("\n".join(lines))

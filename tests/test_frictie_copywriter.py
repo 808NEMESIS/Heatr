@@ -249,3 +249,42 @@ def test_frame_c_personal_why_you_wins_over_rating():
                                **_kw())
     assert "omdat je als een van de weinigen alleen met plexr werkt." in out["body"]
     assert "4,9" not in out["body"]                    # feit wint van rating
+
+
+def test_frame_c_outcome_congruent_with_booking_status():
+    # 2026-08-29: boeking-True krijgt de overtuigings-uitkomst, nooit een boek-belofte.
+    booked = build_kale_ask_mail1(COSM, niche="cosmetisch",
+                                  conversion_details={"has_online_booking": True}, **_kw())
+    assert "waarom hij bij jou moet zijn" in booked["body"]
+    assert "afspraak zet" not in booked["body"] and "kunnen boeken" not in booked["body"]
+    unbooked = build_kale_ask_mail1(COSM, niche="cosmetisch",
+                                    conversion_details={"has_online_booking": False}, **_kw())
+    assert "afspraak zet" in unbooked["body"]
+
+
+def test_selfcheck_blocks_booking_promise_to_booked_lead():
+    body = "Hallo,\n\nzo dat mensen direct kunnen boeken.\n\nklaar."
+    sc = copy_selfcheck(body, subject="x", niche="alt", frame="C", recipient_has_booking=True)
+    assert 8 in sc["fails"]
+
+
+def test_no_aging_time_words():
+    body = "Hallo,\n\nDit najaar bouw ik iets.\n\nklaar."
+    sc = copy_selfcheck(body, subject="x", niche="alt", frame="C")
+    assert 5 in sc["fails"]                             # seizoenswoord op de blacklist
+    out = build_kale_ask_mail1(COSM, niche="cosmetisch", **_kw())
+    assert "najaar" not in out["body"] and "komende maanden" in out["body"]
+
+
+def test_canary_copy_frozen_v11():
+    """COPY-FREEZE (2026-08-29): de canary-copy is regel-voor-regel door Sami gekeurd.
+    Elke wijziging hierna is een bewuste ont-vriezing: pas de hash aan MET een nieuwe
+    review-cyclus, nooit stilzwijgend."""
+    import hashlib
+    lead = {"id": "frozen", "company_name": "Testpraktijk", "domain": "testpraktijk.nl",
+            "sector": "alternatieve_geneeskunde", "contact_first_name": "Test",
+            "city": "Utrecht", "google_rating": 4.8, "google_review_count": 40}
+    out = build_kale_ask_mail1(lead, niche="alt", privacy_notice="PRIVACY", unsubscribe="",
+                               warmr_owns_unsubscribe=True,
+                               conversion_details={"has_online_booking": True})
+    assert hashlib.sha256(out["body"].encode()).hexdigest() == "194ba58ec3b0508cf55d3be9f5fe477d1bbb4ab8cb495836f572c8ff864d6190"

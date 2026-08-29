@@ -258,6 +258,7 @@ def build_kale_ask_mail1(
     lead: dict, *, niche: str,
     privacy_notice: str, unsubscribe: str, warmr_owns_unsubscribe: bool = False,
     personalization: dict | None = None,
+    conversion_details: dict | None = None,
 ) -> dict | None:
     """Frame C — kale ask, geen diagnose. Vereist niets behalve een schone naam."""
     from utils.lead_naming import clean_company_name
@@ -272,9 +273,17 @@ def build_kale_ask_mail1(
     # Maps-data, stad-fallback — nooit een site-claim), (2) concept expliciet ≠
     # opgeleverde site, (3) foto/info-toestemming als de ene vraag van de mail.
     wat = "cosmetische klinieken" if niche == _COSM else "zorgpraktijken"
-    uitkomst = ("zo dat iemand om half elf 's avonds zijn afspraak zet, zonder dat er "
-                "iemand hoeft op te nemen" if niche == _COSM else
-                "zo dat mensen meteen weten waar ze aan beginnen en direct kunnen boeken")
+    # Uitkomst congruent op boekstatus (2026-08-29): wie al online boeken hééft mag
+    # geen boek-belofte krijgen ("dat kan al bij mij") — die krijgt de overtuigings-
+    # uitkomst. Alleen bij geen/onbekende boeking blijft de boek-uitkomst staan.
+    has_booking = (conversion_details or {}).get("has_online_booking") is True
+    if has_booking:
+        uitkomst = "zo dat een nieuwe patiënt in één oogopslag ziet waarom hij bij jou moet zijn"
+    elif niche == _COSM:
+        uitkomst = ("zo dat iemand om half elf 's avonds zijn afspraak zet, zonder dat er "
+                    "iemand hoeft op te nemen")
+    else:
+        uitkomst = "zo dat mensen meteen weten waar ze aan beginnen en direct kunnen boeken"
     rating = lead.get("google_rating"); count = lead.get("google_review_count")
     stad = (lead.get("city") or "").strip()
     # Voorrang (Sami 2026-08-26: 'niet persoonlijk genoeg'): een GEVERIFIEERD
@@ -294,7 +303,7 @@ def build_kale_ask_mail1(
     else:
         omdat = ""
     blocks = [
-        f"Dit najaar bouw ik voor vijf {wat} een nieuwe site. {naam} staat op mijn lijstje{omdat}.",
+        f"De komende maanden bouw ik voor vijf {wat} een nieuwe site. {naam} staat op mijn lijstje{omdat}.",
         ("Het eerste concept is vooraf en gratis: in vier minuten Loom zie je je "
          f"nieuwe homepage, {uitkomst}. Het concept is de richting; de echte site "
          "bouwen we daarna pas af."),
@@ -402,7 +411,8 @@ def render_frictie_mail(
         mail = build_kale_ask_mail1(lead, niche=niche, privacy_notice=privacy_notice,
                                     unsubscribe=unsubscribe,
                                     warmr_owns_unsubscribe=warmr_owns_unsubscribe,
-                                    personalization=personalization)
+                                    personalization=personalization,
+                                    conversion_details=conversion_details)
     if mail is None:
         return None
     mail["niche"] = niche
@@ -417,6 +427,7 @@ def render_frictie_mail(
         mail["body"], subject=mail["subject"], niche=niche, domain=_domain(lead),
         frame=mail["frame"], name=mail.get("naam", ""),
         allowed_numbers=tuple(allowed),
+        recipient_has_booking=(conversion_details or {}).get("has_online_booking") is True,
         privacy_notice=privacy_notice, unsubscribe=unsubscribe)
     return mail
 
@@ -424,7 +435,8 @@ def render_frictie_mail(
 # ── geautomatiseerde zelfcontrole (de 10-punts pass/fail-lijst) ───────────────
 _TASTE = ("2010", "stockfoto", "stock foto", "witruimte", "designelement", "ouderwets",
           "gedateerd", "lelijk", "kleurgebruik", "typografie", "amateur", "rommelig")
-_BLACKLIST = ("wat steeds terugkomt", "de basis zit goed", "nergens aan vast",
+_BLACKLIST = ("dit najaar", "dit voorjaar", "deze zomer", "deze winter",   # verouderende tijdwoorden (2026-08-29)
+              "wat steeds terugkomt", "de basis zit goed", "nergens aan vast",
               "winnen 'm van de buurpraktijk", "winnen van de buurpraktijk",
               "iets eenmaligs", "wat ik in gedachten heb",
               "ik hoop dat deze mail je goed bereikt", "even sparren", "vrijblijvend")
@@ -435,7 +447,8 @@ _GROWTH_FORBIDDEN_ALT = ("buurpraktijk", "concurrent", "meer aanvragen", "meer k
                          "nieuwe aanvragen", "groei", "winnen")
 _LOOM_COLD = ("loom.com", "http://", "https://", "bijlage")
 # Uitkomst-ankers (Regel 2, punt 4): concreet beeld i.p.v. feature.
-_VALUE_OUTCOME = ("hoeft op te nemen", "op de pagina", "waar ze aan beginnen", "opnieuw opgezet")
+_VALUE_OUTCOME = ("hoeft op te nemen", "op de pagina", "waar ze aan beginnen", "opnieuw opgezet",
+                  "waarom hij bij jou moet zijn")
 
 
 def _pitch(body: str, privacy_notice: str, unsubscribe: str) -> str:
@@ -450,7 +463,7 @@ def _pitch(body: str, privacy_notice: str, unsubscribe: str) -> str:
 
 def copy_selfcheck(body: str, *, subject: str, niche: str, domain: str = "", name: str = "",
                    frame: str = "A", require_value_vars: bool = True,
-                   allowed_numbers: tuple = (),
+                   allowed_numbers: tuple = (), recipient_has_booking: bool = False,
                    privacy_notice: str = "", unsubscribe: str = "") -> dict:
     """Draai de 10-punts pass/fail-lijst uit de skill. Returned
     {passed: bool, fails: [int], detail: {int: reden}, words: int, iks: int}."""
@@ -500,10 +513,14 @@ def copy_selfcheck(body: str, *, subject: str, niche: str, domain: str = "", nam
     ik = len(re.findall(r"\bik\b", low))
     if ik > 7:
         fails[7] = f'{ik}x "ik"'
-    # 8 — houdt stand bij iemand die zijn cijfers kent (geen onbewijsbare claim)
+    # 8 — houdt stand bij iemand die zijn cijfers kent (geen onbewijsbare claim);
+    #     én: geen belofte van iets dat de ontvanger aantoonbaar al heeft (2026-08-29:
+    #     boek-uitkomst naar een boeking-True-lead leest als "dat kan al bij mij").
     unprov = [p for p in _UNPROVABLE if p in low]
     if unprov:
         fails[8] = f"onbewijsbare claim: {unprov}"
+    elif recipient_has_booking and any(x in low for x in ("kunnen boeken", "afspraak zet")):
+        fails[8] = "boek-belofte aan lead die al online boeken heeft"
     # 9 — frame past bij niche (alt/chiro: geen groei-/concurrentieframe)
     if niche == _ALT:
         g = [p for p in _GROWTH_FORBIDDEN_ALT if p in low]
