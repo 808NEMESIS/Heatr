@@ -36,7 +36,25 @@ MARKER = "name-sweep-2026-08"
 _CONFIDENCE = {"company_name": 90, "over_ons_role": 80}
 
 
+# Sweep-geheugen (2026-08-31, stopregel-fix): eerder geadjudiceerde extracties
+# mogen nooit terugkomen. (a) leads die de naam-audit expliciet leegmaakte
+# ([name-audit-marker]) — bv. 'Wever'; (b) selectie-uitgesloten leads (Ben Cao
+# e.d.); (c) bekende slechte extractie-doelen (achternaam-/merk-klasse).
+_SWEEP_SUPPRESS = ("nova aesthetics", "chiropractor amsterdam", "mijn roos",
+                   "doctors karar", "ben cao")
+# Rollen die géén eigenaar/behandelaar zijn → naam weigeren (skins/'Amal'-les).
+_BAD_ROLE = ("customer experience", "recept", "assistent", "marketing",
+             "stagiair", "administrat", "front desk", "office")
+
+
 def _launchable_nameless(l, safe_first_name):
+    from utils.lead_selection import selection_exclusion
+    if "[name-audit" in (l.get("contact_why_chosen") or ""):
+        return False                                   # audit-cleared: nooit heropvoeren
+    if selection_exclusion(l):
+        return False
+    if any(x in (l.get("company_name") or "").lower() for x in _SWEEP_SUPPRESS):
+        return False
     return (l.get("email_status") == "valid" and (l.get("score") or 0) >= 55
             and (l.get("icp_match") or 0) >= 0.50 and (l.get("sector") or "") in ACTIVE
             and not l.get("pushed_to_warmr_at") and not (l.get("contact_attempt_count") or 0)
@@ -77,7 +95,8 @@ async def main(apply: bool, limit: int) -> int:
         finally:
             await br.close()
 
-    found = [r for r in res if r["first_name"]]
+    found = [r for r in res if r["first_name"]
+             and not any(b in (r.get("detail") or "").lower() for b in _BAD_ROLE)]
     by_source = Counter(r["source"] for r in found)
     onbep = Counter(r["detail"] for r in res if not r["first_name"])
     print(f"\n{'=' * 62}")
