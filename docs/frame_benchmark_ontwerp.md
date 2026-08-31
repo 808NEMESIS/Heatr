@@ -53,3 +53,30 @@ falsificeren, en hij is waar omdat wíj hem gemeten hebben.
 2. Eén variabele: benchmark-variant tegen C-controle, zelfde onderwerp-stijl.
 3. Celdrempel N≥30 gehaald voor de steden in de batch.
 4. Skill-zelfcontrole uitgebreid (punt 4 hierboven) vóór de eerste render.
+
+---
+
+## Fase-2-experiment: mail 2 als gecontroleerde variabele (ontwerp 2026-08-31)
+
+Drie plan-items versmolten tot één experiment (verbeterplan Sami): de canary
+draait mail 1+3 zónder mail 2 (frame-coherentie: een claimloze mail 1 kan geen
+"nog iets wat me opviel"-vervolg dragen). Mail 2 wordt daarmee de natuurlijke
+plek voor het éérste gecontroleerde experiment ná de baseline:
+
+**Arm A — concept-tease (claimloos):** mail 2 maakt het aanbod concreter zonder
+één woord over hun site: "De Loom laat je homepage zien met jullie eigen foto's
+en een kop die in één zin zegt waar je goed in bent. Zelfde ask." Waarde = het
+concept voorstelbaar maken.
+
+**Arm B — benchmark-claim (eigen data):** mail 2 draagt de eigen-dataset-zin
+("van de ruim {N} praktijken die we in {stad} bekeken heeft ongeveer {X op de Y}
+online boeken — jij zit aan de goede kant; waar het verschil nu zit is wat de
+site daarmee doet"). Waarde = exclusieve informatie; test meteen claim-klasse B2
+op de veiligste positie (mail 2, ná een claimloze opening).
+
+**Regels:** één variabele (mail 2-inhoud; mail 1/3 en onderwerpen identiek en
+bevroren) · cel-drempel N≥30 voor arm B · beide armen door de zelfcontrole
+(arm B met benchmark-getallen als allowed_numbers) · omdat-variatieset (3–4
+formuleringen, deterministisch op lead-id) gaat in DEZELFDE release zodat
+massa-uniformiteit vóór fase 2 is opgelost · succesmaat vooraf: reply-rate per
+arm bij ≥35/arm, anders alleen kwalitatief lezen.
