@@ -232,3 +232,14 @@ def test_selection_excludes_association(monkeypatch):
     wi = {"conversion_details": {"has_online_booking": False, "checked_at": _TODAY}}
     out = _run(_render_receptie_marker(MARK, lead, _FakeSb(wi=wi)))
     assert out["sendable"] is False and out["block_reason"] == "selection_excluded:beroepsvereniging"
+
+
+def test_frictie_mail2_skipped_for_c_frame(monkeypatch):
+    # 2026-08-31: mail 1 was claimloos Frame C (boeking bestaat) → mail 2 mag nooit
+    # een 'wat me opviel'-vervolg zijn; skip naar mail 3 (preflight: canary = 1+3).
+    _set_tokens(monkeypatch)
+    mark2 = {"faseA_brug": "receptie", "faseA_step": 1, "delay_days": 3}
+    wi = {"conversion_details": {"has_online_booking": True, "has_phone_clickable": False,
+                                 "checked_at": _TODAY}}
+    out = _run(_render_receptie_marker(mark2, FRIC_LEAD, _FakeSb(wi=wi)))
+    assert out["skipped"] is True and out["block_reason"] == "c_frame_geen_mail2"

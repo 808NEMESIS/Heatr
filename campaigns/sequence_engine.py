@@ -512,6 +512,13 @@ def _try_frictie_mail(mail_step: int, lead: dict, wi: dict,
                     "sendable": True, "block_reason": "ok"}
 
         if mail_step == 2:
+            # Frame-coherentie (2026-08-31): was mail 1 de claimloze Frame C (geen
+            # frictie-kandidaat), dan mag mail 2 nooit met "wat me opviel" komen —
+            # skip naar mail 3. Mail 2-varianten zijn het fase-2-experiment
+            # (docs/frame_benchmark_ontwerp.md).
+            if select_leak(cd) is None:
+                return {"subject": "", "body": "", "skipped": True, "sendable": False,
+                        "block_reason": "c_frame_geen_mail2"}
             second = select_second_finding(cd)
             if second is None:
                 # Gemeten keuze (Sami 2026-08-11): geen niet-generieke tweede vondst →
