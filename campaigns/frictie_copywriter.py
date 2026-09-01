@@ -369,9 +369,13 @@ def build_frictie_mail2(
 def build_frictie_mail3(
     lead: dict, *, niche: str,
     privacy_notice: str, unsubscribe: str, warmr_owns_unsubscribe: bool = False,
+    mail1_frame: str = "A",
 ) -> dict | None:
-    """Frame A, mail 3 — krimp de ask (geen nieuwe claim, dus geen vers-gate nodig)."""
-    mail, naam = _build_followup(lead, block=_MAIL3, subject_pattern="{naam} op mobiel",
+    """Mail 3 — krimp de ask (geen nieuwe claim, dus geen vers-gate). Onderwerp
+    threadt op mail 1 (2026-09-01: '…op mobiel' na een C-mail-1 was incoherent)."""
+    pattern = ("Re: gratis ontwerp voor {naam}" if mail1_frame == "C"
+               else "Re: {naam} op mobiel")
+    mail, naam = _build_followup(lead, block=_MAIL3, subject_pattern=pattern,
                                  niche=niche, privacy_notice=privacy_notice, unsubscribe=unsubscribe,
                                  warmr_owns_unsubscribe=warmr_owns_unsubscribe)
     if mail is None:

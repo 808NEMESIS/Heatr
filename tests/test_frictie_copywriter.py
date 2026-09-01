@@ -288,3 +288,11 @@ def test_canary_copy_frozen_v11():
                                warmr_owns_unsubscribe=True,
                                conversion_details={"has_online_booking": True})
     assert hashlib.sha256(out["body"].encode()).hexdigest() == "194ba58ec3b0508cf55d3be9f5fe477d1bbb4ab8cb495836f572c8ff864d6190"
+
+
+def test_mail3_subject_threads_on_mail1_frame():
+    # 2026-09-01: '…op mobiel' na een claimloze C-mail-1 was incoherent.
+    c = build_frictie_mail3(COSM, niche="cosmetisch", mail1_frame="C", **_kw())
+    assert c["subject"] == "Re: gratis ontwerp voor Skin8"
+    a = build_frictie_mail3(COSM, niche="cosmetisch", mail1_frame="A", **_kw())
+    assert a["subject"] == "Re: Skin8 op mobiel"

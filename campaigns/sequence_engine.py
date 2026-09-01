@@ -538,9 +538,12 @@ def _try_frictie_mail(mail_step: int, lead: dict, wi: dict,
             return {"subject": mail["subject"], "body": mail["body"], "skipped": False,
                     "sendable": True, "block_reason": "ok"}
 
-        # mail 3 — shrink-ask, geen claim, geen vers-gate
+        # mail 3 — shrink-ask, geen claim, geen vers-gate. Onderwerp threadt op het
+        # frame dat mail 1 kreeg (frictie-kandidaat → A-onderwerp; anders C).
+        m1_frame = "A" if select_leak(cd) is not None else "C"
         mail = build_frictie_mail3(lead, niche=niche, privacy_notice=privacy_notice,
-                                   unsubscribe=unsubscribe, warmr_owns_unsubscribe=warmr_owns)
+                                   unsubscribe=unsubscribe, warmr_owns_unsubscribe=warmr_owns,
+                                   mail1_frame=m1_frame)
         if mail is None:
             return None
         return {"subject": mail["subject"], "body": mail["body"], "skipped": False,
